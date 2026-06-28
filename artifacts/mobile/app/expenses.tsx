@@ -1,10 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal, ScrollView } from "react-native";
 import { useListExpenses, getListExpensesQueryKey, Expense, useCreateExpense, ExpenseInputCategory, useListProperties, getListPropertiesQueryKey } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { Feather, MaterialIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function ExpensesScreen() {
@@ -29,17 +29,23 @@ export default function ExpensesScreen() {
 
   const createMutation = useCreateExpense();
 
+  useFocusEffect(useCallback(() => { refetch(); }, []));
+
   const handleSave = () => {
-    if (!title || !amount || !date) {
+    if (!title.trim() || !amount || !date) {
       Alert.alert("Error", "Please fill in all required fields");
       return;
     }
-    
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      Alert.alert("Error", "Enter a valid amount");
+      return;
+    }
     createMutation.mutate(
       {
         data: {
-          title,
-          amount: parseFloat(amount),
+          title: title.trim(),
+          amount: parsedAmount,
           category,
           date: new Date(date).toISOString(),
           propertyId: propertyId || undefined,
@@ -49,12 +55,11 @@ export default function ExpensesScreen() {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: ["/api/expenses"] });
           setIsAddModalVisible(false);
-          // reset
           setTitle("");
           setAmount("");
           setPropertyId(null);
         },
-        onError: () => Alert.alert("Error", "Failed to add expense")
+        onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to add expense")
       }
     );
   };

@@ -32,23 +32,26 @@ export default function LoanDetailScreen() {
       Alert.alert("Error", "Please fill in all required fields");
       return;
     }
-    
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      Alert.alert("Error", "Enter a valid payment amount");
+      return;
+    }
     createPaymentMutation.mutate(
       {
         id: loanId,
         data: {
-          amount: parseFloat(amount),
+          amount: parsedAmount,
           paymentDate: new Date(paymentDate).toISOString(),
         }
       },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: ["/api/loans"] });
-          queryClient.invalidateQueries({ queryKey: ["/api/loans", loanId] });
           setIsPaymentModalVisible(false);
           setAmount("");
         },
-        onError: () => Alert.alert("Error", "Failed to record payment")
+        onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to record payment")
       }
     );
   };

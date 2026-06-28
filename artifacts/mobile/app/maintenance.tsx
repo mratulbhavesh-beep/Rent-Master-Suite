@@ -1,10 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal, ScrollView } from "react-native";
 import { useListMaintenanceRequests, getListMaintenanceRequestsQueryKey, MaintenanceRequest, useCreateMaintenanceRequest, MaintenanceRequestInputPriority, useListProperties, getListPropertiesQueryKey, useListTenants, getListTenantsQueryKey } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { Feather, MaterialIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function MaintenanceScreen() {
@@ -24,17 +24,18 @@ export default function MaintenanceScreen() {
 
   const createMutation = useCreateMaintenanceRequest();
 
+  useFocusEffect(useCallback(() => { refetch(); }, []));
+
   const handleSave = () => {
-    if (!title || !description || !propertyId) {
+    if (!title.trim() || !description.trim() || !propertyId) {
       Alert.alert("Error", "Please fill in all required fields (Property is required)");
       return;
     }
-    
     createMutation.mutate(
       {
         data: {
-          title,
-          description,
+          title: title.trim(),
+          description: description.trim(),
           priority,
           propertyId,
         }
@@ -43,13 +44,12 @@ export default function MaintenanceScreen() {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: ["/api/maintenance"] });
           setIsAddModalVisible(false);
-          // reset
           setTitle("");
           setDescription("");
           setPropertyId(null);
           setPriority("medium");
         },
-        onError: () => Alert.alert("Error", "Failed to add request")
+        onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to add request")
       }
     );
   };

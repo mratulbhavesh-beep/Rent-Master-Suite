@@ -1,10 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal, ScrollView } from "react-native";
 import { useListLoans, getListLoansQueryKey, Loan, useCreateLoan, useListProperties, getListPropertiesQueryKey } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function LoansScreen() {
@@ -27,21 +27,52 @@ export default function LoansScreen() {
 
   const createMutation = useCreateLoan();
 
+  useFocusEffect(useCallback(() => { refetch(); }, []));
+
+  const resetForm = () => {
+    setLenderName("");
+    setPrincipalAmount("");
+    setInterestRate("");
+    setEmiAmount("");
+    setStartDate(new Date().toISOString().split('T')[0]);
+    setTotalMonths("");
+    setPropertyId(null);
+  };
+
   const handleSave = () => {
-    if (!lenderName || !principalAmount || !interestRate || !emiAmount || !startDate || !totalMonths) {
+    if (!lenderName.trim() || !principalAmount || !interestRate || !emiAmount || !startDate || !totalMonths) {
       Alert.alert("Error", "Please fill in all required fields");
       return;
     }
-    
+    const principal = parseFloat(principalAmount);
+    const rate = parseFloat(interestRate);
+    const emi = parseFloat(emiAmount);
+    const months = parseInt(totalMonths, 10);
+    if (isNaN(principal) || principal <= 0) {
+      Alert.alert("Error", "Enter a valid principal amount");
+      return;
+    }
+    if (isNaN(rate) || rate < 0) {
+      Alert.alert("Error", "Enter a valid interest rate");
+      return;
+    }
+    if (isNaN(emi) || emi <= 0) {
+      Alert.alert("Error", "Enter a valid EMI amount");
+      return;
+    }
+    if (isNaN(months) || months <= 0) {
+      Alert.alert("Error", "Enter a valid number of months");
+      return;
+    }
     createMutation.mutate(
       {
         data: {
-          lenderName,
-          principalAmount: parseFloat(principalAmount),
-          interestRate: parseFloat(interestRate),
-          emiAmount: parseFloat(emiAmount),
+          lenderName: lenderName.trim(),
+          principalAmount: principal,
+          interestRate: rate,
+          emiAmount: emi,
           startDate: new Date(startDate).toISOString(),
-          totalMonths: parseInt(totalMonths, 10),
+          totalMonths: months,
           propertyId: propertyId || undefined,
         }
       },
@@ -49,8 +80,9 @@ export default function LoansScreen() {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: ["/api/loans"] });
           setIsAddModalVisible(false);
+          resetForm();
         },
-        onError: () => Alert.alert("Error", "Failed to add loan")
+        onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to add loan")
       }
     );
   };
