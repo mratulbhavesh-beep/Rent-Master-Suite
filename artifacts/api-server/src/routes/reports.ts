@@ -18,12 +18,12 @@ router.get("/reports/monthly", requireAuth, async (req, res): Promise<void> => {
     .leftJoin(propertiesTable, eq(paymentsTable.propertyId, propertiesTable.id))
     .where(sql`${paymentsTable.year} = ${y} AND ${paymentsTable.month} = ${m}`);
 
-  const monthStr = `${y}-${String(m).padStart(2, "0")}`;
+  // Use extract(year/month) to avoid invalid dates (e.g. June 31st)
   const expenses = await db
     .select({ expense: expensesTable, propertyName: propertiesTable.name })
     .from(expensesTable)
     .leftJoin(propertiesTable, eq(expensesTable.propertyId, propertiesTable.id))
-    .where(sql`${expensesTable.date} LIKE ${monthStr + "%"}`);
+    .where(sql`EXTRACT(year FROM ${expensesTable.date}) = ${y} AND EXTRACT(month FROM ${expensesTable.date}) = ${m}`);
 
   const totalIncome = payments.filter(p => p.payment.status === "paid").reduce((s, p) => s + parseFloat(String(p.payment.amount)), 0);
   const totalExpenses = expenses.reduce((s, e) => s + parseFloat(String(e.expense.amount)), 0);
@@ -51,7 +51,10 @@ router.get("/reports/yearly", requireAuth, async (req, res): Promise<void> => {
   const y = parseInt(year, 10);
 
   const payments = await db.select().from(paymentsTable).where(sql`${paymentsTable.year} = ${y}`);
-  const expenses = await db.select().from(expensesTable).where(sql`${expensesTable.date} LIKE ${y + "-%"}`);
+  const yearStart = `${y}-01-01`;
+  const yearEnd = `${y}-12-31`;
+  const expenses = await db.select().from(expensesTable)
+    .where(and(gte(expensesTable.date, yearStart), lte(expensesTable.date, yearEnd)));
 
   const monthlyBreakdown = Array.from({ length: 12 }, (_, i) => {
     const m = i + 1;
