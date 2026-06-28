@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import { useListTenants, getListTenantsQueryKey } from "@workspace/api-client-re
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 
 type TenantWithBalance = {
   id: number;
@@ -40,6 +40,12 @@ export default function TenantsScreen() {
   const { data: tenants, isLoading, isFetching, refetch } = useListTenants(
     { search },
     { query: { queryKey: getListTenantsQueryKey({ search }) } }
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
   );
 
   const getStatusColor = (status: string) => {

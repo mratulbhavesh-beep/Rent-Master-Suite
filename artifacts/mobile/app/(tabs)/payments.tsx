@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -16,7 +16,7 @@ import {
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 
 const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -44,6 +44,12 @@ export default function PaymentsScreen() {
   const { data: allPayments, isLoading, isFetching, refetch } = useListPayments(
     { month: monthStr },
     { query: { queryKey: getListPaymentsQueryKey({ month: monthStr }) } }
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
   );
 
   const stats = useMemo(() => {

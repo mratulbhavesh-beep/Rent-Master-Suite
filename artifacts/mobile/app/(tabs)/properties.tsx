@@ -1,10 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, TextInput } from "react-native";
 import { useListProperties, getListPropertiesQueryKey, Property } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 
 export default function PropertiesScreen() {
   const colors = useColors();
@@ -15,6 +15,12 @@ export default function PropertiesScreen() {
   const { data: properties, isLoading, isFetching, refetch } = useListProperties(
     { search },
     { query: { queryKey: getListPropertiesQueryKey({ search }) } }
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
   );
 
   const formatCurrency = (amount: number) => `₹${amount.toLocaleString("en-IN")}`;

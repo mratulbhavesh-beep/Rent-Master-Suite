@@ -15,6 +15,8 @@ import {
   useListTenants,
   getListTenantsQueryKey,
   getListPaymentsQueryKey,
+  getGetDashboardSummaryQueryKey,
+  getGetTenantQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
@@ -112,8 +114,11 @@ export default function PaymentAddScreen() {
       {
         onSuccess: (payment) => {
           queryClient.invalidateQueries({ queryKey: getListPaymentsQueryKey() });
-          queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
-          // Navigate to receipt screen
+          queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+          if (tenantId) {
+            queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(tenantId) });
+          }
           router.replace(`/payment-receipt?id=${payment.id}` as any);
         },
         onError: (err: any) => {

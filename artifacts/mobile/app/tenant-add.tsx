@@ -16,6 +16,7 @@ import {
   useListProperties,
   getListPropertiesQueryKey,
   getListTenantsQueryKey,
+  getGetDashboardSummaryQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
@@ -124,7 +125,7 @@ export default function TenantAddScreen() {
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
-          queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+          queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
           Alert.alert("Success", "Tenant added successfully!", [
             { text: "OK", onPress: () => router.back() },
           ]);

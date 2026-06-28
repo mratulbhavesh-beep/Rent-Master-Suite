@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
 import { useRouter } from "expo-router";
-import { useCreateProperty, PropertyInputStatus, PropertyInputType } from "@workspace/api-client-react";
+import { useCreateProperty, PropertyInputStatus, PropertyInputType, getListPropertiesQueryKey, getGetDashboardSummaryQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
@@ -43,8 +43,8 @@ export default function PropertyAddScreen() {
       },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
-          queryClient.invalidateQueries({ queryKey: ["/api/dashboard/summary"] });
+          queryClient.invalidateQueries({ queryKey: getListPropertiesQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
           router.back();
         },
         onError: () => Alert.alert("Error", "Failed to add property")
