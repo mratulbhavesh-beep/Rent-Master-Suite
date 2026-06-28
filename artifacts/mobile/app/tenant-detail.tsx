@@ -167,6 +167,7 @@ export default function TenantDetailScreen() {
 
       <ScrollView contentContainerStyle={styles.content}>
         {!isEditing ? (
+          <>
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.avatarSection}>
               <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
@@ -246,6 +247,7 @@ export default function TenantDetailScreen() {
             <Feather name="plus-circle" size={18} color={colors.primaryForeground} />
             <Text style={{ color: colors.primaryForeground, fontWeight: "700", fontSize: 16 }}>Record Payment</Text>
           </TouchableOpacity>
+          </>
         ) : (
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.inputLabel, { color: colors.foreground }]}>Full Name</Text>
