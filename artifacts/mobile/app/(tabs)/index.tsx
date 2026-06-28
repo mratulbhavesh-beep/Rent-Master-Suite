@@ -13,7 +13,7 @@ export default function DashboardScreen() {
   const queryClient = useQueryClient();
   const router = useRouter();
 
-  const { data: summary, isLoading, isFetching, refetch } = useGetDashboardSummary({}, {
+  const { data: summary, isLoading, isFetching, refetch } = useGetDashboardSummary({
     query: { queryKey: getGetDashboardSummaryQueryKey() }
   });
 

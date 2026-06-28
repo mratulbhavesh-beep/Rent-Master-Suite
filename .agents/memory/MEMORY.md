@@ -1,0 +1,4 @@
+- [Payment API hooks](payment-hooks.md) — useDeletePayment/useUpdatePayment exist after spec update; ListPaymentsParams.tenantId is number (not string)
+- [Occupancy pattern](occupancy-pattern.md) — properties list API returns occupiedUnits (active tenants count) via server-side join; frontend uses (item as any).occupiedUnits
+- [TS cast patterns](ts-cast-patterns.md) — use `as unknown as T` not `as T` for non-overlapping types (TenantWithBalance[], Record<> from colors object)
+- [Payment route pre-selection](payment-pre-selection.md) — payment-add reads tenantId+propertyId from URL params; tenant-detail passes both in Record Payment link

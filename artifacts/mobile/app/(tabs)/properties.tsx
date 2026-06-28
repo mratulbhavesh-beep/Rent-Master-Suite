@@ -48,12 +48,14 @@ export default function PropertiesScreen() {
       
       <View style={styles.cardFooter}>
         <View style={styles.footerItem}>
-          <Feather name="home" size={16} color={colors.mutedForeground} />
+          <Feather name="home" size={14} color={colors.mutedForeground} />
           <Text style={[styles.footerText, { color: colors.foreground }]}>{item.type}</Text>
         </View>
         <View style={styles.footerItem}>
-          <Feather name="grid" size={16} color={colors.mutedForeground} />
-          <Text style={[styles.footerText, { color: colors.foreground }]}>{item.totalUnits} Units</Text>
+          <Feather name="users" size={14} color={colors.mutedForeground} />
+          <Text style={[styles.footerText, { color: colors.foreground }]}>
+            {(item as any).occupiedUnits ?? 0}/{item.totalUnits}
+          </Text>
         </View>
         <Text style={[styles.rentText, { color: colors.accent }]}>
           {formatCurrency(item.rentAmount)}/mo

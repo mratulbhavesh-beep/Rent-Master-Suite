@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useGetTenant, getGetTenantQueryKey, useUpdateTenant, useDeleteTenant, getListTenantsQueryKey, getGetDashboardSummaryQueryKey } from "@workspace/api-client-react";
+import { useGetTenant, getGetTenantQueryKey, useUpdateTenant, useDeleteTenant, useDeletePayment, useListPayments, getListPaymentsQueryKey, getListTenantsQueryKey, getGetDashboardSummaryQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
@@ -31,6 +31,12 @@ export default function TenantDetailScreen() {
 
   const updateMutation = useUpdateTenant();
   const deleteMutation = useDeleteTenant();
+  const deletePmtMutation = useDeletePayment();
+
+  const { data: payments, isLoading: paymentsLoading } = useListPayments(
+    { tenantId },
+    { query: { queryKey: getListPaymentsQueryKey({ tenantId }), enabled: !!tenantId } }
+  );
 
   useEffect(() => {
     if (tenant) {
@@ -103,6 +109,31 @@ export default function TenantDetailScreen() {
       Alert.alert("Delete Tenant", msg, [
         { text: "Cancel", style: "cancel" },
         { text: "Delete", style: "destructive", onPress: performDelete },
+      ]);
+    }
+  };
+
+  const handleDeletePayment = (paymentId: number) => {
+    const msg = "Delete this payment record? This cannot be undone.";
+    const doDelete = () => {
+      deletePmtMutation.mutate(
+        { id: paymentId },
+        {
+          onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: getListPaymentsQueryKey({ tenantId }) });
+            queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(tenantId) });
+            queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+          },
+          onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to delete payment"),
+        }
+      );
+    };
+    if (Platform.OS === "web") {
+      if (window.confirm(msg)) doDelete();
+    } else {
+      Alert.alert("Delete Payment", msg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: doDelete },
       ]);
     }
   };
@@ -242,12 +273,71 @@ export default function TenantDetailScreen() {
           {/* Record Payment button */}
           <TouchableOpacity
             style={[styles.recordBtn, { backgroundColor: colors.primary, marginTop: 16 }]}
-            onPress={() => router.push(`/payment-add` as any)}
+            onPress={() => router.push(`/payment-add?tenantId=${tenantId}&propertyId=${tenant.propertyId}` as any)}
             activeOpacity={0.85}
           >
             <Feather name="plus-circle" size={18} color={colors.primaryForeground} />
             <Text style={{ color: colors.primaryForeground, fontWeight: "700", fontSize: 16 }}>Record Payment</Text>
           </TouchableOpacity>
+
+          {/* Rent Ledger */}
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Rent Ledger</Text>
+              <Text style={{ fontSize: 12, color: colors.mutedForeground }}>{payments?.length ?? 0} records</Text>
+            </View>
+            {paymentsLoading ? (
+              <View style={{ padding: 20, alignItems: "center" }}>
+                <ActivityIndicator color={colors.primary} />
+              </View>
+            ) : !payments || payments.length === 0 ? (
+              <View style={{ alignItems: "center", paddingVertical: 24, gap: 8 }}>
+                <Feather name="inbox" size={32} color={colors.mutedForeground} />
+                <Text style={{ color: colors.mutedForeground, fontSize: 14 }}>No payments recorded yet</Text>
+              </View>
+            ) : (
+              [...payments].reverse().map((p, idx) => {
+                const monthLabel = new Date(p.year, p.month - 1).toLocaleString("default", { month: "short", year: "numeric" });
+                const statusColor = p.status === "paid" ? colors.success : p.status === "partial" ? colors.warning : colors.destructive;
+                return (
+                  <View
+                    key={p.id}
+                    style={[
+                      styles.ledgerRow,
+                      { borderBottomColor: colors.border },
+                      idx === payments.length - 1 && { borderBottomWidth: 0 },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground }}>{monthLabel}</Text>
+                      <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>
+                        {p.method.replace(/_/g, " ")} • {new Date(p.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: 14, fontWeight: "700", color: colors.foreground, marginRight: 8 }}>
+                      ₹{Number(p.amount).toLocaleString("en-IN")}
+                    </Text>
+                    <View style={[styles.badge, { backgroundColor: `${statusColor}20` }]}>
+                      <Text style={{ fontSize: 9, fontWeight: "800", color: statusColor }}>{p.status.toUpperCase()}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{ padding: 8 }}
+                      onPress={() => router.push(`/payment-receipt?id=${p.id}` as any)}
+                    >
+                      <Feather name="external-link" size={14} color={colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ padding: 8 }}
+                      onPress={() => handleDeletePayment(p.id)}
+                      disabled={deletePmtMutation.isPending}
+                    >
+                      <Feather name="trash-2" size={14} color={colors.destructive} />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
+            )}
+          </View>
           </>
         ) : (
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -353,6 +443,7 @@ const styles = StyleSheet.create({
   balanceCard: { padding: 16, borderRadius: 16, borderWidth: 1 },
   balanceRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   recordBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, height: 52, borderRadius: 12 },
+  ledgerRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, gap: 4 },
   inputLabel: { fontSize: 14, fontWeight: "600", marginBottom: 8, marginTop: 12 },
   input: { height: 48, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, fontSize: 16 },
   row: { flexDirection: "row", gap: 12 },

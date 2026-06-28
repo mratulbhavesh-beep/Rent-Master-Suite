@@ -10,7 +10,8 @@ import {
   Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useGetPayment, getGetPaymentQueryKey } from "@workspace/api-client-react";
+import { useGetPayment, getGetPaymentQueryKey, useDeletePayment, getListPaymentsQueryKey, getGetDashboardSummaryQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -90,9 +91,38 @@ export default function PaymentReceiptScreen() {
   const insets = useSafeAreaInsets();
   const [shareLoading, setShareLoading] = useState(false);
 
+  const queryClient = useQueryClient();
+  const deleteMutation = useDeletePayment();
+
   const { data: payment, isLoading } = useGetPayment(paymentId, {
     query: { queryKey: getGetPaymentQueryKey(paymentId), enabled: !!paymentId },
   });
+
+  const handleDeletePayment = () => {
+    if (!payment) return;
+    const msg = `Delete this payment of ₹${Number(payment.amount).toLocaleString("en-IN")}? This cannot be undone.`;
+    const doDelete = () => {
+      deleteMutation.mutate(
+        { id: payment.id },
+        {
+          onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: getListPaymentsQueryKey() });
+            queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+            router.back();
+          },
+          onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to delete payment"),
+        }
+      );
+    };
+    if (Platform.OS === "web") {
+      if (window.confirm(msg)) doDelete();
+    } else {
+      Alert.alert("Delete Payment", msg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: doDelete },
+      ]);
+    }
+  };
 
   const handleShare = async () => {
     if (!payment) return;
@@ -314,7 +344,7 @@ export default function PaymentReceiptScreen() {
               { backgroundColor: colors.card, borderColor: colors.border },
             ]}
             onPress={handlePrint}
-            disabled={shareLoading}
+            disabled={shareLoading || deleteMutation.isPending}
           >
             <Feather name="printer" size={18} color={colors.primary} />
             <Text style={[styles.actionBtnText, { color: colors.primary }]}>
@@ -325,7 +355,7 @@ export default function PaymentReceiptScreen() {
           <TouchableOpacity
             style={[styles.actionBtn, { backgroundColor: "#25D366", borderColor: "#25D366" }]}
             onPress={handleShare}
-            disabled={shareLoading}
+            disabled={shareLoading || deleteMutation.isPending}
           >
             {shareLoading ? (
               <ActivityIndicator size="small" color="white" />
@@ -339,6 +369,30 @@ export default function PaymentReceiptScreen() {
             )}
           </TouchableOpacity>
         </View>
+
+        <TouchableOpacity
+          style={[
+            styles.actionBtn,
+            {
+              backgroundColor: `${colors.destructive}12`,
+              borderColor: `${colors.destructive}40`,
+              marginBottom: 12,
+            },
+          ]}
+          onPress={handleDeletePayment}
+          disabled={deleteMutation.isPending || shareLoading}
+        >
+          {deleteMutation.isPending ? (
+            <ActivityIndicator size="small" color={colors.destructive} />
+          ) : (
+            <>
+              <Feather name="trash-2" size={18} color={colors.destructive} />
+              <Text style={[styles.actionBtnText, { color: colors.destructive }]}>
+                Delete Payment
+              </Text>
+            </>
+          )}
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.doneBtn, { backgroundColor: colors.primary }]}

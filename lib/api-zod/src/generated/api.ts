@@ -113,7 +113,8 @@ export const ListPropertiesResponseItem = zod.object({
   "rentAmount": zod.number(),
   "status": zod.enum(['available', 'occupied', 'maintenance']),
   "description": zod.string().nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "occupiedUnits": zod.number().optional()
 })
 export const ListPropertiesResponse = zod.array(ListPropertiesResponseItem)
 
@@ -140,7 +141,8 @@ export const CreatePropertyResponse = zod.object({
   "rentAmount": zod.number(),
   "status": zod.enum(['available', 'occupied', 'maintenance']),
   "description": zod.string().nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "occupiedUnits": zod.number().optional()
 })
 
 
@@ -160,7 +162,8 @@ export const GetPropertyResponse = zod.object({
   "rentAmount": zod.number(),
   "status": zod.enum(['available', 'occupied', 'maintenance']),
   "description": zod.string().nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "occupiedUnits": zod.number().optional()
 })
 
 
@@ -190,7 +193,8 @@ export const UpdatePropertyResponse = zod.object({
   "rentAmount": zod.number(),
   "status": zod.enum(['available', 'occupied', 'maintenance']),
   "description": zod.string().nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "occupiedUnits": zod.number().optional()
 })
 
 
@@ -425,6 +429,53 @@ export const GetPaymentResponse = zod.object({
   "receiptNumber": zod.string().nullish(),
   "createdAt": zod.string()
 })
+
+
+/**
+ * @summary Update a payment
+ */
+export const UpdatePaymentParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdatePaymentBody = zod.object({
+  "tenantId": zod.number(),
+  "propertyId": zod.number(),
+  "amount": zod.number(),
+  "paymentDate": zod.string(),
+  "month": zod.number(),
+  "year": zod.number(),
+  "method": zod.enum(['cash', 'bank_transfer', 'upi', 'cheque', 'online']),
+  "status": zod.enum(['paid', 'pending', 'partial', 'overdue']).optional(),
+  "notes": zod.string().optional()
+})
+
+export const UpdatePaymentResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "tenantName": zod.string().nullish(),
+  "propertyId": zod.number(),
+  "propertyName": zod.string().nullish(),
+  "amount": zod.number(),
+  "paymentDate": zod.string(),
+  "month": zod.number(),
+  "year": zod.number(),
+  "method": zod.enum(['cash', 'bank_transfer', 'upi', 'cheque', 'online']),
+  "status": zod.enum(['paid', 'pending', 'partial', 'overdue']),
+  "notes": zod.string().nullish(),
+  "receiptNumber": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Delete a payment
+ */
+export const DeletePaymentParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeletePaymentResponse = zod.void()
 
 
 /**

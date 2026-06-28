@@ -12,7 +12,7 @@ function NativeTabLayout() {
   return (
     <NativeTabs>
       <NativeTabs.Trigger name="index">
-        <Icon sf={{ default: "squareshape.split.2x2", selected: "squareshape.split.2x2.fill" }} />
+        <Icon sf={{ default: "squareshape.split.2x2", selected: "square.split.2x2.fill" }} />
         <Label>Dashboard</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="properties">

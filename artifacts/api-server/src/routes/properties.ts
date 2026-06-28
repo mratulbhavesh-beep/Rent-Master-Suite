@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { eq, ilike, or } from "drizzle-orm";
-import { db, propertiesTable } from "@workspace/db";
+import { eq, ilike, or, sql } from "drizzle-orm";
+import { db, propertiesTable, tenantsTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -22,7 +22,18 @@ router.get("/properties", requireAuth, async (req, res): Promise<void> => {
   } else {
     rows = await query;
   }
-  res.json(rows.map(p => ({ ...p, rentAmount: parseFloat(String(p.rentAmount)), createdAt: p.createdAt.toISOString() })));
+  const tenantCounts = await db
+    .select({ propertyId: tenantsTable.propertyId, count: sql<number>`count(*)::int` })
+    .from(tenantsTable)
+    .where(eq(tenantsTable.status, "active"))
+    .groupBy(tenantsTable.propertyId);
+  const countMap = Object.fromEntries(tenantCounts.map(r => [r.propertyId!, Number(r.count)]));
+  res.json(rows.map(p => ({
+    ...p,
+    rentAmount: parseFloat(String(p.rentAmount)),
+    createdAt: p.createdAt.toISOString(),
+    occupiedUnits: countMap[p.id] ?? 0,
+  })));
 });
 
 router.post("/properties", requireAuth, async (req, res): Promise<void> => {

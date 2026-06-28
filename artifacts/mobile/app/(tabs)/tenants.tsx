@@ -133,7 +133,7 @@ export default function TenantsScreen() {
       </View>
 
       <FlatList
-        data={(tenants as TenantWithBalance[]) || []}
+        data={(tenants as unknown as TenantWithBalance[]) || []}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}

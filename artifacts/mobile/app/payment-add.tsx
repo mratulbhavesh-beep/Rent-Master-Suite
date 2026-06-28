@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,7 @@ import {
   Alert,
   ScrollView,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   useCreatePayment,
   useListTenants,
@@ -35,11 +35,14 @@ const today = new Date().toISOString().split("T")[0];
 
 export default function PaymentAddScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
 
-  const [tenantId, setTenantId] = useState<number | null>(null);
+  const [tenantId, setTenantId] = useState<number | null>(
+    params.tenantId ? Number(params.tenantId) : null
+  );
   const [paymentType, setPaymentType] = useState<"full" | "partial">("full");
   const [amount, setAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(today);
@@ -52,6 +55,13 @@ export default function PaymentAddScreen() {
     { query: { queryKey: getListTenantsQueryKey({}) } }
   );
   const createMutation = useCreatePayment();
+
+  useEffect(() => {
+    if (tenantId && tenants && !amount) {
+      const t = tenants.find((t) => t.id === tenantId);
+      if (t) setAmount(t.rentAmount.toString());
+    }
+  }, [tenantId, tenants]);
 
   const selectedTenant = useMemo(
     () => tenants?.find((t) => t.id === tenantId) ?? null,

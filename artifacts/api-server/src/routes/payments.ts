@@ -72,4 +72,32 @@ router.get("/payments/:id", requireAuth, async (req, res): Promise<void> => {
   res.json(formatPayment(row.payment, row.tenantName, row.propertyName));
 });
 
+router.put("/payments/:id", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  const { amount, paymentDate, month, year, method, status, notes } = req.body;
+  const updates: Record<string, unknown> = {};
+  if (amount !== undefined) updates.amount = String(amount);
+  if (paymentDate !== undefined) updates.paymentDate = paymentDate;
+  if (month !== undefined) updates.month = month;
+  if (year !== undefined) updates.year = year;
+  if (method !== undefined) updates.method = method;
+  if (status !== undefined) updates.status = status;
+  if (notes !== undefined) updates.notes = notes;
+  const [payment] = await db.update(paymentsTable).set(updates).where(eq(paymentsTable.id, id)).returning();
+  if (!payment) { res.status(404).json({ error: "Payment not found" }); return; }
+  const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, payment.tenantId));
+  const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, payment.propertyId));
+  res.json(formatPayment(payment, tenant?.name, property?.name));
+});
+
+router.delete("/payments/:id", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  const [existing] = await db.select().from(paymentsTable).where(eq(paymentsTable.id, id));
+  if (!existing) { res.status(404).json({ error: "Payment not found" }); return; }
+  await db.delete(paymentsTable).where(eq(paymentsTable.id, id));
+  res.sendStatus(204);
+});
+
 export default router;

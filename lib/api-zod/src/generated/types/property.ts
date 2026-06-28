@@ -19,4 +19,5 @@ export interface Property {
   /** @nullable */
   description?: string | null;
   createdAt: string;
+  occupiedUnits?: number;
 }

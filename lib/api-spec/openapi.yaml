@@ -404,6 +404,46 @@ paths:
                 $ref: "#/components/schemas/Payment"
         "404":
           description: Not found
+    put:
+      operationId: updatePayment
+      tags: [payments]
+      summary: Update a payment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentInput"
+      responses:
+        "200":
+          description: Updated payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "404":
+          description: Not found
+    delete:
+      operationId: deletePayment
+      tags: [payments]
+      summary: Delete a payment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
 
   /expenses:
     get:
@@ -813,6 +853,8 @@ components:
           type: ["string", "null"]
         createdAt:
           type: string
+        occupiedUnits:
+          type: integer
 
     PropertyInput:
       type: object

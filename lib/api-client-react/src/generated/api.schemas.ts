@@ -94,6 +94,7 @@ export interface Property {
   /** @nullable */
   description?: string | null;
   createdAt: string;
+  occupiedUnits?: number;
 }
 
 export type PropertyInputType = typeof PropertyInputType[keyof typeof PropertyInputType];

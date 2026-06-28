@@ -61,8 +61,9 @@ export default function LoanDetailScreen() {
     );
   }
 
-  const loan = loanDetail?.loan || loanDetail; // Fallback structure
-  const payments = loanDetail?.payments || [];
+  const anyDetail = loanDetail as any;
+  const loan = anyDetail?.loan ?? loanDetail;
+  const payments: any[] = anyDetail?.payments ?? [];
 
   if (!loan) {
     return (
