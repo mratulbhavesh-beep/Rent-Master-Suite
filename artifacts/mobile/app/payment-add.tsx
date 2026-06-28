@@ -1,12 +1,37 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
+import React, { useState, useMemo } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+} from "react-native";
 import { useRouter } from "expo-router";
-import { useCreatePayment, useListTenants, getListTenantsQueryKey, PaymentInputMethod, PaymentInputStatus } from "@workspace/api-client-react";
+import {
+  useCreatePayment,
+  useListTenants,
+  getListTenantsQueryKey,
+  getListPaymentsQueryKey,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
+
+const METHODS = [
+  { key: "cash", label: "Cash", icon: "dollar-sign" },
+  { key: "upi", label: "UPI", icon: "smartphone" },
+  { key: "bank_transfer", label: "Bank Transfer", icon: "credit-card" },
+  { key: "cheque", label: "Cheque", icon: "file-text" },
+  { key: "online", label: "Online", icon: "globe" },
+] as const;
+
+type Method = (typeof METHODS)[number]["key"];
+
+const today = new Date().toISOString().split("T")[0];
 
 export default function PaymentAddScreen() {
   const router = useRouter();
@@ -15,180 +40,502 @@ export default function PaymentAddScreen() {
   const queryClient = useQueryClient();
 
   const [tenantId, setTenantId] = useState<number | null>(null);
+  const [paymentType, setPaymentType] = useState<"full" | "partial">("full");
   const [amount, setAmount] = useState("");
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
-  const [method, setMethod] = useState<PaymentInputMethod>("bank_transfer");
-  const [status, setStatus] = useState<PaymentInputStatus>("paid");
+  const [paymentDate, setPaymentDate] = useState(today);
+  const [method, setMethod] = useState<Method>("cash");
   const [notes, setNotes] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const { data: tenants } = useListTenants({}, { query: { queryKey: getListTenantsQueryKey({}) } });
+  const { data: tenants } = useListTenants(
+    {},
+    { query: { queryKey: getListTenantsQueryKey({}) } }
+  );
   const createMutation = useCreatePayment();
 
+  const selectedTenant = useMemo(
+    () => tenants?.find((t) => t.id === tenantId) ?? null,
+    [tenants, tenantId]
+  );
+
+  const monthFromDate = useMemo(() => {
+    const d = new Date(paymentDate);
+    return isNaN(d.getTime()) ? new Date() : d;
+  }, [paymentDate]);
+
+  const handleSelectTenant = (id: number, rentAmount: number) => {
+    setTenantId(id);
+    setAmount(rentAmount.toString());
+    setErrors((e) => ({ ...e, tenantId: "" }));
+  };
+
+  const validate = (): boolean => {
+    const errs: Record<string, string> = {};
+    if (!tenantId) errs.tenantId = "Please select a tenant";
+    if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0)
+      errs.amount = "Enter a valid amount";
+    if (!paymentDate) errs.paymentDate = "Payment date is required";
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
   const handleSave = () => {
-    if (!tenantId || !amount || !paymentDate) {
-      Alert.alert("Error", "Please fill in all required fields");
-      return;
-    }
-    
-    const selectedTenant = tenants?.find(t => t.id === tenantId);
-    if (!selectedTenant) return;
+    if (!validate()) return;
 
     const date = new Date(paymentDate);
+    const status = paymentType === "full" ? "paid" : "partial";
 
     createMutation.mutate(
       {
         data: {
-          tenantId,
-          propertyId: selectedTenant.propertyId,
+          tenantId: tenantId!,
+          propertyId: selectedTenant!.propertyId,
           amount: parseFloat(amount),
-          paymentDate: date.toISOString(),
+          paymentDate,
           month: date.getMonth() + 1,
           year: date.getFullYear(),
           method,
           status,
-          notes
-        }
+          notes: notes || undefined,
+        },
       },
       {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
-          queryClient.invalidateQueries({ queryKey: ["/api/dashboard/summary"] });
-          router.back();
+        onSuccess: (payment) => {
+          queryClient.invalidateQueries({ queryKey: getListPaymentsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+          // Navigate to receipt screen
+          router.replace(`/payment-receipt?id=${payment.id}` as any);
         },
-        onError: () => Alert.alert("Error", "Failed to record payment")
+        onError: (err: any) => {
+          const msg =
+            err?.response?.data?.error ||
+            err?.message ||
+            "Failed to record payment";
+          Alert.alert("Error", msg);
+        },
       }
     );
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: colors.background, paddingTop: insets.top },
+      ]}
+    >
       <View style={styles.header}>
-        <TouchableOpacity style={styles.iconButton} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={() => router.back()}
+        >
           <Feather name="arrow-left" size={24} color={colors.foreground} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Record Payment</Text>
+        <Text style={[styles.headerTitle, { color: colors.foreground }]}>
+          Record Payment
+        </Text>
         <View style={styles.iconButton} />
       </View>
 
-      <KeyboardAwareScrollViewCompat contentContainerStyle={styles.content}>
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <Text style={[styles.inputLabel, { color: colors.foreground }]}>Select Tenant*</Text>
-          <View style={[styles.picker, { borderColor: colors.border }]}>
-            {tenants?.map(t => (
-              <TouchableOpacity 
-                key={t.id} 
-                style={[styles.pickerOption, tenantId === t.id && { backgroundColor: `${colors.primary}20` }]}
-                onPress={() => {
-                  setTenantId(t.id);
-                  setAmount(t.rentAmount.toString());
+      {/* Scroll content — button is OUTSIDE scroll */}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Tenant Selection */}
+        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
+          Select Tenant *
+        </Text>
+        {(!tenants || tenants.length === 0) ? (
+          <View style={[styles.emptyCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Feather name="info" size={16} color={colors.mutedForeground} />
+            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+              No tenants found. Add a tenant first.
+            </Text>
+          </View>
+        ) : (
+          <View
+            style={[
+              styles.pickerCard,
+              {
+                borderColor: errors.tenantId
+                  ? colors.destructive
+                  : colors.border,
+              },
+            ]}
+          >
+            {tenants.map((t) => (
+              <TouchableOpacity
+                key={t.id}
+                style={[
+                  styles.tenantRow,
+                  tenantId === t.id && {
+                    backgroundColor: `${colors.primary}12`,
+                  },
+                ]}
+                onPress={() => handleSelectTenant(t.id, t.rentAmount)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
+                  <Text style={{ color: colors.primaryForeground, fontWeight: "bold", fontSize: 14 }}>
+                    {t.name.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+                <View style={styles.tenantInfo}>
+                  <Text
+                    style={{
+                      color: tenantId === t.id ? colors.primary : colors.foreground,
+                      fontWeight: "600",
+                      fontSize: 15,
+                    }}
+                  >
+                    {t.name}
+                  </Text>
+                  <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
+                    {t.propertyName} • Unit {t.unitNumber} •{" "}
+                    <Text style={{ color: colors.accent, fontWeight: "600" }}>
+                      ₹{t.rentAmount.toLocaleString("en-IN")}/mo
+                    </Text>
+                  </Text>
+                </View>
+                {tenantId === t.id && (
+                  <Feather name="check-circle" size={18} color={colors.primary} />
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+        {errors.tenantId ? (
+          <Text style={[styles.errorText, { color: colors.destructive }]}>
+            {errors.tenantId}
+          </Text>
+        ) : null}
+
+        {/* Payment Type */}
+        <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 20 }]}>
+          Payment Type *
+        </Text>
+        <View style={[styles.segmented, { backgroundColor: colors.input }]}>
+          {(["full", "partial"] as const).map((type) => (
+            <TouchableOpacity
+              key={type}
+              style={[
+                styles.segmentBtn,
+                paymentType === type && { backgroundColor: colors.primary, shadowColor: "#000", shadowOpacity: 0.15, shadowRadius: 4, elevation: 2 },
+              ]}
+              onPress={() => {
+                setPaymentType(type);
+                if (type === "full" && selectedTenant) {
+                  setAmount(selectedTenant.rentAmount.toString());
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <Feather
+                name={type === "full" ? "check-circle" : "pie-chart"}
+                size={14}
+                color={paymentType === type ? colors.primaryForeground : colors.mutedForeground}
+              />
+              <Text
+                style={{
+                  color: paymentType === type ? colors.primaryForeground : colors.mutedForeground,
+                  fontWeight: "700",
+                  fontSize: 13,
+                  marginLeft: 6,
                 }}
               >
-                <View>
-                  <Text style={{ color: tenantId === t.id ? colors.primary : colors.foreground, fontWeight: "500" }}>{t.name}</Text>
-                  <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>{t.propertyName} • Unit {t.unitNumber}</Text>
-                </View>
-                {tenantId === t.id && <Feather name="check" size={16} color={colors.primary} />}
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <View style={styles.row}>
-            <View style={styles.flex1}>
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Amount (₹)*</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                value={amount}
-                onChangeText={setAmount}
-                keyboardType="numeric"
-                placeholder="15000"
-                placeholderTextColor={colors.mutedForeground}
-              />
-            </View>
-            <View style={styles.flex1}>
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Date*</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                value={paymentDate}
-                onChangeText={setPaymentDate}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={colors.mutedForeground}
-              />
-            </View>
-          </View>
-
-          <Text style={[styles.inputLabel, { color: colors.foreground }]}>Payment Method*</Text>
-          <View style={styles.methodGrid}>
-            {(["cash", "bank_transfer", "upi", "cheque", "online"] as const).map(m => (
-              <TouchableOpacity
-                key={m}
-                style={[styles.methodOption, method === m && { backgroundColor: colors.primary, borderColor: colors.primary }]}
-                onPress={() => setMethod(m)}
-              >
-                <Text style={{ fontSize: 12, color: method === m ? colors.primaryForeground : colors.mutedForeground, textTransform: "capitalize" }}>
-                  {m.replace('_', ' ')}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <Text style={[styles.inputLabel, { color: colors.foreground }]}>Status*</Text>
-          <View style={styles.segmentedControl}>
-            {(["paid", "pending", "partial"] as const).map(s => (
-              <TouchableOpacity
-                key={s}
-                style={[styles.segmentOption, status === s && { backgroundColor: colors.primary }]}
-                onPress={() => setStatus(s)}
-              >
-                <Text style={{ fontSize: 12, color: status === s ? colors.primaryForeground : colors.mutedForeground, textTransform: "capitalize" }}>{s}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <Text style={[styles.inputLabel, { color: colors.foreground }]}>Notes (Optional)</Text>
-          <TextInput
-            style={[styles.input, styles.textArea, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-            value={notes}
-            onChangeText={setNotes}
-            multiline
-            numberOfLines={2}
-            placeholderTextColor={colors.mutedForeground}
-          />
+                {type === "full" ? "Full Payment" : "Partial Payment"}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        <TouchableOpacity 
-          style={[styles.saveButton, { backgroundColor: colors.primary }]} 
+        {paymentType === "partial" && (
+          <View
+            style={[
+              styles.infoBox,
+              { backgroundColor: `${colors.warning}15`, borderColor: `${colors.warning}40` },
+            ]}
+          >
+            <Feather name="alert-circle" size={14} color={colors.warning} />
+            <Text style={[styles.infoText, { color: colors.warning }]}>
+              Partial payment will be marked as "Partial" status
+            </Text>
+          </View>
+        )}
+
+        {/* Amount */}
+        <View style={styles.row}>
+          <View style={styles.flex1}>
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              Amount (₹) *
+            </Text>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.input,
+                  color: colors.text,
+                  borderColor: errors.amount ? colors.destructive : colors.border,
+                },
+              ]}
+              value={amount}
+              onChangeText={(v) => {
+                setAmount(v);
+                setErrors((e) => ({ ...e, amount: "" }));
+              }}
+              keyboardType="numeric"
+              placeholder="0"
+              placeholderTextColor={colors.mutedForeground}
+            />
+            {selectedTenant && paymentType === "full" && (
+              <Text style={[styles.hintText, { color: colors.mutedForeground }]}>
+                Monthly rent: ₹{selectedTenant.rentAmount.toLocaleString("en-IN")}
+              </Text>
+            )}
+            {errors.amount ? (
+              <Text style={[styles.errorText, { color: colors.destructive }]}>
+                {errors.amount}
+              </Text>
+            ) : null}
+          </View>
+          <View style={styles.flex1}>
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              Payment Date *
+            </Text>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.input,
+                  color: colors.text,
+                  borderColor: errors.paymentDate ? colors.destructive : colors.border,
+                },
+              ]}
+              value={paymentDate}
+              onChangeText={(v) => {
+                setPaymentDate(v);
+                setErrors((e) => ({ ...e, paymentDate: "" }));
+              }}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={colors.mutedForeground}
+            />
+            <Text style={[styles.hintText, { color: colors.mutedForeground }]}>
+              For:{" "}
+              {monthFromDate.toLocaleString("default", {
+                month: "long",
+                year: "numeric",
+              })}
+            </Text>
+            {errors.paymentDate ? (
+              <Text style={[styles.errorText, { color: colors.destructive }]}>
+                {errors.paymentDate}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+
+        {/* Payment Method */}
+        <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 20 }]}>
+          Payment Method *
+        </Text>
+        <View style={styles.methodGrid}>
+          {METHODS.map((m) => (
+            <TouchableOpacity
+              key={m.key}
+              style={[
+                styles.methodBtn,
+                {
+                  backgroundColor:
+                    method === m.key ? colors.primary : colors.card,
+                  borderColor:
+                    method === m.key ? colors.primary : colors.border,
+                },
+              ]}
+              onPress={() => setMethod(m.key)}
+              activeOpacity={0.8}
+            >
+              <Feather
+                name={m.icon as any}
+                size={16}
+                color={method === m.key ? colors.primaryForeground : colors.mutedForeground}
+              />
+              <Text
+                style={{
+                  fontSize: 12,
+                  marginTop: 4,
+                  fontWeight: "600",
+                  color:
+                    method === m.key
+                      ? colors.primaryForeground
+                      : colors.foreground,
+                }}
+              >
+                {m.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Notes */}
+        <Text style={[styles.label, { color: colors.foreground, marginTop: 20 }]}>
+          Notes (Optional)
+        </Text>
+        <TextInput
+          style={[
+            styles.input,
+            styles.textArea,
+            {
+              backgroundColor: colors.input,
+              color: colors.text,
+              borderColor: colors.border,
+            },
+          ]}
+          value={notes}
+          onChangeText={setNotes}
+          multiline
+          numberOfLines={3}
+          placeholder="Cheque no., transaction ID, etc."
+          placeholderTextColor={colors.mutedForeground}
+        />
+      </ScrollView>
+
+      {/* Fixed footer button — OUTSIDE ScrollView */}
+      <View
+        style={[
+          styles.footer,
+          {
+            backgroundColor: colors.background,
+            borderTopColor: colors.border,
+            paddingBottom: insets.bottom + 16,
+          },
+        ]}
+      >
+        <TouchableOpacity
+          style={[
+            styles.saveBtn,
+            { backgroundColor: colors.primary },
+            createMutation.isPending && { opacity: 0.7 },
+          ]}
           onPress={handleSave}
           disabled={createMutation.isPending}
+          activeOpacity={0.8}
         >
           {createMutation.isPending ? (
-            <ActivityIndicator color={colors.primaryForeground} />
+            <View style={styles.loadingRow}>
+              <ActivityIndicator color={colors.primaryForeground} />
+              <Text style={[styles.saveBtnText, { color: colors.primaryForeground }]}>
+                Saving...
+              </Text>
+            </View>
           ) : (
-            <Text style={[styles.saveButtonText, { color: colors.primaryForeground }]}>Record Payment</Text>
+            <>
+              <Feather name="save" size={18} color={colors.primaryForeground} />
+              <Text style={[styles.saveBtnText, { color: colors.primaryForeground }]}>
+                Record Payment
+              </Text>
+            </>
           )}
         </TouchableOpacity>
-      </KeyboardAwareScrollViewCompat>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: "rgba(0,0,0,0.05)" },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(0,0,0,0.08)",
+  },
   iconButton: { width: 40, height: 40, justifyContent: "center", alignItems: "center" },
   headerTitle: { fontSize: 20, fontWeight: "bold" },
-  content: { padding: 16, paddingBottom: 40 },
-  card: { padding: 20, borderRadius: 16, borderWidth: 1, marginBottom: 24 },
-  inputLabel: { fontSize: 14, fontWeight: "600", marginBottom: 8, marginTop: 12 },
-  input: { height: 48, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, fontSize: 16 },
-  textArea: { height: 80, paddingTop: 12, textAlignVertical: "top" },
-  row: { flexDirection: "row", gap: 12 },
+  scroll: { flex: 1 },
+  content: { padding: 16, paddingBottom: 8 },
+  sectionTitle: { fontSize: 13, fontWeight: "700", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 },
+  label: { fontSize: 14, fontWeight: "600", marginBottom: 8 },
+  pickerCard: { borderWidth: 1, borderRadius: 12, overflow: "hidden" },
+  tenantRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    gap: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(0,0,0,0.08)",
+  },
+  avatar: { width: 36, height: 36, borderRadius: 18, justifyContent: "center", alignItems: "center" },
+  tenantInfo: { flex: 1 },
+  emptyCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 16,
+    borderWidth: 1,
+    borderRadius: 12,
+  },
+  emptyText: { fontSize: 13, flex: 1 },
+  segmented: {
+    flexDirection: "row",
+    borderRadius: 10,
+    padding: 4,
+    gap: 4,
+  },
+  segmentBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  infoBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 8,
+  },
+  infoText: { fontSize: 12, fontWeight: "500", flex: 1 },
+  row: { flexDirection: "row", gap: 12, marginTop: 20 },
   flex1: { flex: 1 },
-  picker: { borderWidth: 1, borderRadius: 8, overflow: 'hidden' },
-  pickerOption: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(0,0,0,0.1)" },
-  segmentedControl: { flexDirection: "row", backgroundColor: "rgba(0,0,0,0.05)", borderRadius: 8, padding: 4 },
-  segmentOption: { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: 6 },
-  methodGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  methodOption: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: "rgba(0,0,0,0.1)" },
-  saveButton: { height: 52, borderRadius: 12, justifyContent: "center", alignItems: "center" },
-  saveButtonText: { fontSize: 16, fontWeight: "bold" },
+  input: { height: 48, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, fontSize: 15 },
+  textArea: { height: 80, paddingTop: 12, textAlignVertical: "top" },
+  hintText: { fontSize: 11, marginTop: 4 },
+  errorText: { fontSize: 12, marginTop: 4 },
+  methodGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  methodBtn: {
+    width: "18%",
+    minWidth: 60,
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  footer: {
+    padding: 16,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  saveBtn: {
+    height: 52,
+    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  loadingRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  saveBtnText: { fontSize: 16, fontWeight: "bold" },
 });

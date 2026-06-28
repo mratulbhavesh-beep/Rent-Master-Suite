@@ -32,8 +32,13 @@ router.get("/payments", requireAuth, async (req, res): Promise<void> => {
   if (propertyId) results = results.filter(r => r.payment.propertyId === parseInt(propertyId, 10));
   if (status) results = results.filter(r => r.payment.status === status);
   if (month) {
-    const [y, m] = month.split("-").map(Number);
-    results = results.filter(r => r.payment.year === y && r.payment.month === m);
+    if (month.includes("-")) {
+      const [y, m] = month.split("-").map(Number);
+      results = results.filter(r => r.payment.year === y && r.payment.month === m);
+    } else {
+      const m = parseInt(month, 10);
+      results = results.filter(r => r.payment.month === m);
+    }
   }
   res.json(results.map(r => formatPayment(r.payment, r.tenantName, r.propertyName)));
 });

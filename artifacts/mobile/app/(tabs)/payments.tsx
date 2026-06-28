@@ -1,102 +1,247 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity } from "react-native";
-import { useListPayments, getListPaymentsQueryKey, Payment } from "@workspace/api-client-react";
+import React, { useState, useMemo } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  RefreshControl,
+  TouchableOpacity,
+  ScrollView,
+} from "react-native";
+import {
+  useListPayments,
+  getListPaymentsQueryKey,
+  Payment,
+} from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
-import { Feather, MaterialIcons } from "@expo/vector-icons";
+import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+const METHOD_ICONS: Record<string, string> = {
+  cash: "dollar-sign",
+  bank_transfer: "credit-card",
+  upi: "smartphone",
+  cheque: "file-text",
+  online: "globe",
+};
 
 export default function PaymentsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  
-  const currentMonth = new Date().getMonth() + 1;
-  const [filterMonth, setFilterMonth] = useState<string>(currentMonth.toString());
 
-  const { data: payments, isLoading, isFetching, refetch } = useListPayments(
-    { month: filterMonth },
-    { query: { queryKey: getListPaymentsQueryKey({ month: filterMonth }) } }
+  const now = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  const [selectedYear] = useState(now.getFullYear());
+
+  const monthStr = selectedMonth.toString();
+  const { data: allPayments, isLoading, isFetching, refetch } = useListPayments(
+    { month: monthStr },
+    { query: { queryKey: getListPaymentsQueryKey({ month: monthStr }) } }
   );
+
+  const stats = useMemo(() => {
+    const payments = allPayments || [];
+    const collected = payments
+      .filter((p) => p.status === "paid" || p.status === "partial")
+      .reduce((s, p) => s + Number(p.amount), 0);
+    const paid = payments.filter((p) => p.status === "paid").length;
+    const partial = payments.filter((p) => p.status === "partial").length;
+    const pending = payments.filter((p) => p.status === "pending").length;
+    const overdue = payments.filter((p) => p.status === "overdue").length;
+    return { collected, paid, partial, pending, overdue, total: payments.length };
+  }, [allPayments]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case "paid": return colors.success;
-      case "pending": return colors.warning;
-      case "partial": return colors.primary;
+      case "partial": return colors.warning;
+      case "pending": return colors.primary;
       case "overdue": return colors.destructive;
       default: return colors.mutedForeground;
     }
   };
 
-  const getMethodIcon = (method: string) => {
-    switch (method) {
-      case "cash": return "banknote";
-      case "bank_transfer": return "columns";
-      case "upi": return "smartphone";
-      case "cheque": return "file-text";
-      case "online": return "credit-card";
-      default: return "dollar-sign";
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case "paid": return "PAID";
+      case "partial": return "PARTIAL";
+      case "pending": return "PENDING";
+      case "overdue": return "OVERDUE";
+      default: return status.toUpperCase();
     }
   };
 
-  const renderItem = ({ item }: { item: Payment }) => (
+  const renderPayment = ({ item }: { item: Payment }) => (
     <TouchableOpacity
       style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
       onPress={() => router.push(`/payment-receipt?id=${item.id}` as any)}
+      activeOpacity={0.75}
     >
-      <View style={styles.cardHeader}>
-        <View>
-          <Text style={[styles.tenantName, { color: colors.cardForeground }]}>{item.tenantName}</Text>
-          <Text style={[styles.propertyName, { color: colors.mutedForeground }]}>{item.propertyName}</Text>
+      <View style={styles.cardTop}>
+        <View style={styles.cardLeft}>
+          <Text style={[styles.tenantName, { color: colors.cardForeground }]}>
+            {item.tenantName}
+          </Text>
+          <Text style={[styles.propertyName, { color: colors.mutedForeground }]}>
+            {item.propertyName}
+          </Text>
         </View>
-        <Text style={[styles.amount, { color: colors.foreground }]}>₹{item.amount.toLocaleString("en-IN")}</Text>
-      </View>
-      
-      <View style={styles.cardFooter}>
-        <View style={styles.footerInfo}>
-          <View style={[styles.badge, { backgroundColor: `${getStatusColor(item.status)}20` }]}>
+        <View style={styles.cardRight}>
+          <Text style={[styles.amount, { color: colors.foreground }]}>
+            ₹{Number(item.amount).toLocaleString("en-IN")}
+          </Text>
+          <View
+            style={[
+              styles.badge,
+              { backgroundColor: `${getStatusColor(item.status)}20` },
+            ]}
+          >
             <Text style={[styles.badgeText, { color: getStatusColor(item.status) }]}>
-              {item.status.toUpperCase()}
+              {getStatusLabel(item.status)}
             </Text>
           </View>
-          <View style={styles.methodInfo}>
-            <Feather name={getMethodIcon(item.method) as any} size={14} color={colors.mutedForeground} />
-            <Text style={[styles.methodText, { color: colors.mutedForeground }]}>
-              {item.method.replace('_', ' ')}
-            </Text>
-          </View>
+        </View>
+      </View>
+      <View style={[styles.cardBottom, { borderTopColor: colors.border }]}>
+        <View style={styles.methodRow}>
+          <Feather
+            name={(METHOD_ICONS[item.method] || "dollar-sign") as any}
+            size={13}
+            color={colors.mutedForeground}
+          />
+          <Text style={[styles.methodText, { color: colors.mutedForeground }]}>
+            {item.method.replace(/_/g, " ")}
+          </Text>
         </View>
         <Text style={[styles.dateText, { color: colors.mutedForeground }]}>
-          {new Date(item.paymentDate).toLocaleDateString("en-IN", { day: 'numeric', month: 'short' })}
+          {new Date(item.paymentDate).toLocaleDateString("en-IN", {
+            day: "numeric",
+            month: "short",
+          })}
         </Text>
+        <View style={styles.receiptLink}>
+          <Feather name="file-text" size={13} color={colors.primary} />
+          <Text style={[styles.receiptText, { color: colors.primary }]}>Receipt</Text>
+        </View>
       </View>
     </TouchableOpacity>
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: colors.background, paddingTop: insets.top },
+      ]}
+    >
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Payments</Text>
+        <View>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>
+            Payments
+          </Text>
+          <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
+            {selectedYear}
+          </Text>
+        </View>
         <TouchableOpacity
-          style={[styles.addButton, { backgroundColor: colors.primary }]}
+          style={[styles.addBtn, { backgroundColor: colors.primary }]}
           onPress={() => router.push("/payment-add")}
+          activeOpacity={0.8}
         >
           <Feather name="plus" size={20} color={colors.primaryForeground} />
         </TouchableOpacity>
       </View>
 
+      {/* Month tabs */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.monthScroll}
+      >
+        {MONTHS.map((m, i) => {
+          const mn = i + 1;
+          const isSelected = mn === selectedMonth;
+          return (
+            <TouchableOpacity
+              key={m}
+              style={[
+                styles.monthTab,
+                isSelected && { backgroundColor: colors.primary },
+                !isSelected && { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+              onPress={() => setSelectedMonth(mn)}
+            >
+              <Text
+                style={[
+                  styles.monthTabText,
+                  { color: isSelected ? colors.primaryForeground : colors.mutedForeground },
+                ]}
+              >
+                {m}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      {/* Stats row */}
+      <View style={[styles.statsRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: colors.success }]}>
+            ₹{stats.collected.toLocaleString("en-IN")}
+          </Text>
+          <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Collected</Text>
+        </View>
+        <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: colors.success }]}>{stats.paid}</Text>
+          <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Paid</Text>
+        </View>
+        <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: colors.warning }]}>{stats.partial}</Text>
+          <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Partial</Text>
+        </View>
+        <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: colors.destructive }]}>
+            {stats.overdue + stats.pending}
+          </Text>
+          <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Due</Text>
+        </View>
+      </View>
+
+      {/* Payment list */}
       <FlatList
-        data={payments || []}
+        data={allPayments || []}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={renderItem}
+        renderItem={renderPayment}
         contentContainerStyle={styles.listContent}
-        refreshControl={<RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} tintColor={colors.primary} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={isFetching && !isLoading}
+            onRefresh={refetch}
+            tintColor={colors.primary}
+          />
+        }
         ListEmptyComponent={
           !isLoading ? (
-            <View style={styles.emptyState}>
-              <MaterialIcons name="payment" size={48} color={colors.mutedForeground} />
-              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No payments recorded</Text>
+            <View style={styles.empty}>
+              <Feather name="inbox" size={48} color={colors.mutedForeground} />
+              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+                No payments in {MONTHS[selectedMonth - 1]}
+              </Text>
+              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                Tap + to record a payment
+              </Text>
             </View>
           ) : null
         }
@@ -107,22 +252,68 @@ export default function PaymentsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, paddingBottom: 10 },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 12,
+  },
   headerTitle: { fontSize: 28, fontWeight: "bold" },
-  addButton: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center" },
-  listContent: { padding: 20, paddingBottom: 100 },
-  card: { padding: 16, borderRadius: 16, borderWidth: 1, marginBottom: 16 },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 },
-  tenantName: { fontSize: 16, fontWeight: "600", marginBottom: 4 },
-  propertyName: { fontSize: 13 },
-  amount: { fontSize: 18, fontWeight: "bold" },
-  cardFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTopWidth: 1, borderTopColor: "rgba(0,0,0,0.05)" },
-  footerInfo: { flexDirection: "row", alignItems: "center", gap: 12 },
-  methodInfo: { flexDirection: "row", alignItems: "center", gap: 4 },
+  headerSub: { fontSize: 13, marginTop: 2 },
+  addBtn: { width: 42, height: 42, borderRadius: 21, justifyContent: "center", alignItems: "center" },
+  monthScroll: { paddingHorizontal: 16, paddingBottom: 12, gap: 8, flexDirection: "row" },
+  monthTab: {
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  monthTabText: { fontSize: 13, fontWeight: "600" },
+  statsRow: {
+    flexDirection: "row",
+    marginHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 12,
+  },
+  statItem: { flex: 1, alignItems: "center" },
+  statValue: { fontSize: 16, fontWeight: "800" },
+  statLabel: { fontSize: 10, marginTop: 2, fontWeight: "500" },
+  statDivider: { width: 1, marginHorizontal: 8 },
+  listContent: { paddingHorizontal: 16, paddingBottom: 100 },
+  card: { borderRadius: 14, borderWidth: 1, marginBottom: 12, overflow: "hidden" },
+  cardTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    padding: 14,
+  },
+  cardLeft: { flex: 1, marginRight: 12 },
+  cardRight: { alignItems: "flex-end", gap: 6 },
+  tenantName: { fontSize: 15, fontWeight: "600", marginBottom: 3 },
+  propertyName: { fontSize: 12 },
+  amount: { fontSize: 18, fontWeight: "800" },
+  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  badgeText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
+  cardBottom: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 8,
+  },
+  methodRow: { flexDirection: "row", alignItems: "center", gap: 5, flex: 1 },
   methodText: { fontSize: 12, textTransform: "capitalize" },
-  badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  badgeText: { fontSize: 10, fontWeight: "bold" },
-  dateText: { fontSize: 13 },
-  emptyState: { alignItems: "center", justifyContent: "center", paddingVertical: 60 },
-  emptyText: { marginTop: 12, fontSize: 16 },
+  dateText: { fontSize: 12 },
+  receiptLink: { flexDirection: "row", alignItems: "center", gap: 4 },
+  receiptText: { fontSize: 12, fontWeight: "600" },
+  empty: { alignItems: "center", paddingVertical: 60, gap: 8 },
+  emptyTitle: { fontSize: 16, fontWeight: "600" },
+  emptyText: { fontSize: 14 },
 });
