@@ -17,14 +17,23 @@ function monthsElapsed(leaseStart: string): number {
 
 function computeBalance(
   tenant: typeof tenantsTable.$inferSelect,
-  payments: { amount: string | number }[]
+  payments: { amount: string | number; month?: number | null; year?: number | null }[]
 ) {
   const months = monthsElapsed(tenant.leaseStart);
   const rentAmount = parseFloat(String(tenant.rentAmount));
   const totalExpected = months * rentAmount;
   const totalPaid = payments.reduce((s, p) => s + parseFloat(String(p.amount)), 0);
   const balanceDue = Math.max(0, totalExpected - totalPaid);
-  return { monthsElapsed: months, totalExpected, totalPaid, balanceDue };
+
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  const currentYear = now.getFullYear();
+  const thisMonthPaid = payments
+    .filter(p => p.month === currentMonth && p.year === currentYear)
+    .reduce((s, p) => s + parseFloat(String(p.amount)), 0);
+  const currentMonthDue = Math.max(0, rentAmount - thisMonthPaid);
+
+  return { monthsElapsed: months, totalExpected, totalPaid, balanceDue, currentMonthDue };
 }
 
 function formatTenant(
@@ -64,15 +73,15 @@ router.get("/tenants", requireAuth, async (req, res): Promise<void> => {
   // Fetch all payments for these tenants in one query for balance calculation
   const tenantIds = results.map(r => r.tenant.id);
   const allPayments = tenantIds.length > 0
-    ? await db.select({ tenantId: paymentsTable.tenantId, amount: paymentsTable.amount })
+    ? await db.select({ tenantId: paymentsTable.tenantId, amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year })
         .from(paymentsTable)
         .where(inArray(paymentsTable.tenantId, tenantIds))
     : [];
 
-  const paymentsByTenant = new Map<number, { amount: string | number }[]>();
+  const paymentsByTenant = new Map<number, { amount: string | number; month?: number | null; year?: number | null }[]>();
   for (const p of allPayments) {
     if (!paymentsByTenant.has(p.tenantId)) paymentsByTenant.set(p.tenantId, []);
-    paymentsByTenant.get(p.tenantId)!.push({ amount: p.amount });
+    paymentsByTenant.get(p.tenantId)!.push({ amount: p.amount, month: p.month, year: p.year });
   }
 
   res.json(results.map(r =>
@@ -107,7 +116,7 @@ router.get("/tenants/:id", requireAuth, async (req, res): Promise<void> => {
     .where(eq(tenantsTable.id, id));
   if (!row) { res.status(404).json({ error: "Tenant not found" }); return; }
   const payments = await db
-    .select({ amount: paymentsTable.amount })
+    .select({ amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year })
     .from(paymentsTable)
     .where(eq(paymentsTable.tenantId, id));
   res.json(formatTenant(row.tenant, row.propertyName, payments));
@@ -126,7 +135,7 @@ router.patch("/tenants/:id", requireAuth, async (req, res): Promise<void> => {
   const [tenant] = await db.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
   const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId));
-  const payments = await db.select({ amount: paymentsTable.amount }).from(paymentsTable).where(eq(paymentsTable.tenantId, id));
+  const payments = await db.select({ amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year }).from(paymentsTable).where(eq(paymentsTable.tenantId, id));
   res.json(formatTenant(tenant, property?.name, payments));
 });
 

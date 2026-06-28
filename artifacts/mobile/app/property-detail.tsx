@@ -39,16 +39,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const fmt = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
 
-function computeBalance(tenant: Tenant, payments: Payment[]): number {
-  const start = new Date(tenant.leaseStart).getTime();
-  const now = Date.now();
-  const months = Math.max(0, Math.floor((now - start) / (1000 * 60 * 60 * 24 * 30.44)));
-  const expected = months * parseFloat(String(tenant.rentAmount));
-  const paid = payments
-    .filter((p) => p.tenantId === tenant.id)
-    .reduce((s, p) => s + parseFloat(String(p.amount)), 0);
-  return Math.max(0, expected - paid);
-}
 
 // ── QuickPay Modal ────────────────────────────────────────────────────────
 // Defined OUTSIDE screen so its type reference is stable across renders
@@ -416,7 +406,7 @@ export default function PropertyDetailScreen() {
   const occupiedCount = tenants.length;
   const vacantCount = Math.max(0, totalUnits - occupiedCount);
   const totalMonthlyRent = tenants.reduce((s, t) => s + parseFloat(String(t.rentAmount)), 0);
-  const totalPendingDue = tenants.reduce((s, t) => s + computeBalance(t, payments), 0);
+  const totalPendingDue = tenants.reduce((s, t) => s + ((t as any).balanceDue ?? 0), 0);
 
   // ── Handlers ──────────────────────────────────────────────────────────
   const doDeleteProperty = () => {
@@ -604,7 +594,7 @@ export default function PropertyDetailScreen() {
             <>
               {/* Occupied tenant rows */}
               {tenants.map((tenant) => {
-                const bal = computeBalance(tenant, payments);
+                const bal = (tenant as any).currentMonthDue ?? 0;
                 return (
                   <View
                     key={tenant.id}

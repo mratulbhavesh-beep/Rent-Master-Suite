@@ -32,4 +32,9 @@ export interface Tenant {
   /** @nullable */
   depositStatus?: TenantDepositStatus;
   createdAt: string;
+  monthsElapsed?: number;
+  totalExpected?: number;
+  totalPaid?: number;
+  balanceDue?: number;
+  currentMonthDue?: number;
 }

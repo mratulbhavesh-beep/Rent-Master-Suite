@@ -233,7 +233,12 @@ export const ListTenantsResponseItem = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "monthsElapsed": zod.number().optional(),
+  "totalExpected": zod.number().optional(),
+  "totalPaid": zod.number().optional(),
+  "balanceDue": zod.number().optional(),
+  "currentMonthDue": zod.number().optional()
 })
 export const ListTenantsResponse = zod.array(ListTenantsResponseItem)
 
@@ -275,7 +280,12 @@ export const CreateTenantResponse = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "monthsElapsed": zod.number().optional(),
+  "totalExpected": zod.number().optional(),
+  "totalPaid": zod.number().optional(),
+  "balanceDue": zod.number().optional(),
+  "currentMonthDue": zod.number().optional()
 })
 
 
@@ -303,7 +313,12 @@ export const GetTenantResponse = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "monthsElapsed": zod.number().optional(),
+  "totalExpected": zod.number().optional(),
+  "totalPaid": zod.number().optional(),
+  "balanceDue": zod.number().optional(),
+  "currentMonthDue": zod.number().optional()
 })
 
 
@@ -348,7 +363,12 @@ export const UpdateTenantResponse = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "monthsElapsed": zod.number().optional(),
+  "totalExpected": zod.number().optional(),
+  "totalPaid": zod.number().optional(),
+  "balanceDue": zod.number().optional(),
+  "currentMonthDue": zod.number().optional()
 })
 
 

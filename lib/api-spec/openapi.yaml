@@ -937,6 +937,16 @@ components:
           enum: [held, refunded, null]
         createdAt:
           type: string
+        monthsElapsed:
+          type: integer
+        totalExpected:
+          type: number
+        totalPaid:
+          type: number
+        balanceDue:
+          type: number
+        currentMonthDue:
+          type: number
 
     TenantInput:
       type: object
