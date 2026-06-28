@@ -3,20 +3,37 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Gemini Rent Manager API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication operations
+  - name: dashboard
+    description: Dashboard summary
+  - name: properties
+    description: Property management
+  - name: tenants
+    description: Tenant management
+  - name: payments
+    description: Rent payments and receipts
+  - name: expenses
+    description: Expense management
+  - name: loans
+    description: EMI/Loan tracker
+  - name: maintenance
+    description: Maintenance requests
+  - name: reports
+    description: Monthly and yearly reports
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +41,643 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+
+  /auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterInput"
+      responses:
+        "201":
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Validation error
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user info
+      responses:
+        "200":
+          description: User info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthorized
+
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Get dashboard summary stats
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /properties:
+    get:
+      operationId: listProperties
+      tags: [properties]
+      summary: List all properties
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of properties
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Property"
+    post:
+      operationId: createProperty
+      tags: [properties]
+      summary: Create a new property
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyInput"
+      responses:
+        "201":
+          description: Property created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Property"
+
+  /properties/{id}:
+    get:
+      operationId: getProperty
+      tags: [properties]
+      summary: Get a property by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Property details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Property"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateProperty
+      tags: [properties]
+      summary: Update a property
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyUpdate"
+      responses:
+        "200":
+          description: Property updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Property"
+    delete:
+      operationId: deleteProperty
+      tags: [properties]
+      summary: Delete a property
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /tenants:
+    get:
+      operationId: listTenants
+      tags: [tenants]
+      summary: List all tenants
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: propertyId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of tenants
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Tenant"
+    post:
+      operationId: createTenant
+      tags: [tenants]
+      summary: Create a new tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantInput"
+      responses:
+        "201":
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+
+  /tenants/{id}:
+    get:
+      operationId: getTenant
+      tags: [tenants]
+      summary: Get a tenant by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Tenant details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateTenant
+      tags: [tenants]
+      summary: Update a tenant
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantUpdate"
+      responses:
+        "200":
+          description: Tenant updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+    delete:
+      operationId: deleteTenant
+      tags: [tenants]
+      summary: Delete a tenant
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /payments:
+    get:
+      operationId: listPayments
+      tags: [payments]
+      summary: List all rent payments
+      parameters:
+        - name: tenantId
+          in: query
+          schema:
+            type: integer
+        - name: propertyId
+          in: query
+          schema:
+            type: integer
+        - name: month
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of payments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Payment"
+    post:
+      operationId: createPayment
+      tags: [payments]
+      summary: Record a rent payment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentInput"
+      responses:
+        "201":
+          description: Payment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+
+  /payments/{id}:
+    get:
+      operationId: getPayment
+      tags: [payments]
+      summary: Get a payment by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Payment details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "404":
+          description: Not found
+
+  /expenses:
+    get:
+      operationId: listExpenses
+      tags: [expenses]
+      summary: List all expenses
+      parameters:
+        - name: propertyId
+          in: query
+          schema:
+            type: integer
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: month
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of expenses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Expense"
+    post:
+      operationId: createExpense
+      tags: [expenses]
+      summary: Create an expense
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExpenseInput"
+      responses:
+        "201":
+          description: Expense created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Expense"
+
+  /expenses/{id}:
+    patch:
+      operationId: updateExpense
+      tags: [expenses]
+      summary: Update an expense
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExpenseUpdate"
+      responses:
+        "200":
+          description: Expense updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Expense"
+    delete:
+      operationId: deleteExpense
+      tags: [expenses]
+      summary: Delete an expense
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /loans:
+    get:
+      operationId: listLoans
+      tags: [loans]
+      summary: List all loans/EMIs
+      responses:
+        "200":
+          description: List of loans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Loan"
+    post:
+      operationId: createLoan
+      tags: [loans]
+      summary: Create a loan/EMI record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoanInput"
+      responses:
+        "201":
+          description: Loan created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Loan"
+
+  /loans/{id}:
+    patch:
+      operationId: updateLoan
+      tags: [loans]
+      summary: Update a loan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoanUpdate"
+      responses:
+        "200":
+          description: Loan updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Loan"
+    delete:
+      operationId: deleteLoan
+      tags: [loans]
+      summary: Delete a loan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /loans/{id}/payments:
+    post:
+      operationId: createLoanPayment
+      tags: [loans]
+      summary: Record an EMI payment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoanPaymentInput"
+      responses:
+        "201":
+          description: EMI payment recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoanPayment"
+
+  /maintenance:
+    get:
+      operationId: listMaintenanceRequests
+      tags: [maintenance]
+      summary: List maintenance requests
+      parameters:
+        - name: propertyId
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of maintenance requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MaintenanceRequest"
+    post:
+      operationId: createMaintenanceRequest
+      tags: [maintenance]
+      summary: Create a maintenance request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MaintenanceRequestInput"
+      responses:
+        "201":
+          description: Maintenance request created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaintenanceRequest"
+
+  /maintenance/{id}:
+    patch:
+      operationId: updateMaintenanceRequest
+      tags: [maintenance]
+      summary: Update a maintenance request
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MaintenanceRequestUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaintenanceRequest"
+    delete:
+      operationId: deleteMaintenanceRequest
+      tags: [maintenance]
+      summary: Delete a maintenance request
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /reports/monthly:
+    get:
+      operationId: getMonthlyReport
+      tags: [reports]
+      summary: Get monthly income/expense report
+      parameters:
+        - name: year
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: month
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Monthly report data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonthlyReport"
+
+  /reports/yearly:
+    get:
+      operationId: getYearlyReport
+      tags: [reports]
+      summary: Get yearly income/expense report
+      parameters:
+        - name: year
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Yearly report data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/YearlyReport"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +688,569 @@ components:
       required:
         - status
 
+    LoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+
+    RegisterInput:
+      type: object
+      required: [name, email, password, role]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+        role:
+          type: string
+          enum: [admin, employee]
+
+    AuthResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+
+    User:
+      type: object
+      required: [id, name, email, role, createdAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [admin, employee]
+        createdAt:
+          type: string
+
+    DashboardSummary:
+      type: object
+      required: [totalProperties, totalTenants, rentDueThisMonth, monthlyIncome, pendingMaintenance, overdueRents]
+      properties:
+        totalProperties:
+          type: integer
+        totalTenants:
+          type: integer
+        rentDueThisMonth:
+          type: number
+        monthlyIncome:
+          type: number
+        pendingMaintenance:
+          type: integer
+        overdueRents:
+          type: integer
+
+    Property:
+      type: object
+      required: [id, name, address, type, totalUnits, rentAmount, status, createdAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        address:
+          type: string
+        type:
+          type: string
+          enum: [apartment, house, commercial, land]
+        totalUnits:
+          type: integer
+        rentAmount:
+          type: number
+        status:
+          type: string
+          enum: [available, occupied, maintenance]
+        description:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    PropertyInput:
+      type: object
+      required: [name, address, type, totalUnits, rentAmount]
+      properties:
+        name:
+          type: string
+        address:
+          type: string
+        type:
+          type: string
+          enum: [apartment, house, commercial, land]
+        totalUnits:
+          type: integer
+        rentAmount:
+          type: number
+        status:
+          type: string
+          enum: [available, occupied, maintenance]
+        description:
+          type: string
+
+    PropertyUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        address:
+          type: string
+        type:
+          type: string
+          enum: [apartment, house, commercial, land]
+        totalUnits:
+          type: integer
+        rentAmount:
+          type: number
+        status:
+          type: string
+          enum: [available, occupied, maintenance]
+        description:
+          type: string
+
+    Tenant:
+      type: object
+      required: [id, name, email, phone, propertyId, unitNumber, leaseStart, leaseEnd, rentAmount, status, createdAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        propertyId:
+          type: integer
+        propertyName:
+          type: ["string", "null"]
+        unitNumber:
+          type: string
+        leaseStart:
+          type: string
+        leaseEnd:
+          type: string
+        rentAmount:
+          type: number
+        status:
+          type: string
+          enum: [active, inactive, evicted]
+        emergencyContact:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    TenantInput:
+      type: object
+      required: [name, email, phone, propertyId, unitNumber, leaseStart, leaseEnd, rentAmount]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        propertyId:
+          type: integer
+        unitNumber:
+          type: string
+        leaseStart:
+          type: string
+        leaseEnd:
+          type: string
+        rentAmount:
+          type: number
+        status:
+          type: string
+          enum: [active, inactive, evicted]
+        emergencyContact:
+          type: string
+        notes:
+          type: string
+
+    TenantUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        propertyId:
+          type: integer
+        unitNumber:
+          type: string
+        leaseStart:
+          type: string
+        leaseEnd:
+          type: string
+        rentAmount:
+          type: number
+        status:
+          type: string
+          enum: [active, inactive, evicted]
+        emergencyContact:
+          type: string
+        notes:
+          type: string
+
+    Payment:
+      type: object
+      required: [id, tenantId, propertyId, amount, paymentDate, month, year, method, status, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        tenantName:
+          type: ["string", "null"]
+        propertyId:
+          type: integer
+        propertyName:
+          type: ["string", "null"]
+        amount:
+          type: number
+        paymentDate:
+          type: string
+        month:
+          type: integer
+        year:
+          type: integer
+        method:
+          type: string
+          enum: [cash, bank_transfer, upi, cheque, online]
+        status:
+          type: string
+          enum: [paid, pending, partial, overdue]
+        notes:
+          type: ["string", "null"]
+        receiptNumber:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    PaymentInput:
+      type: object
+      required: [tenantId, propertyId, amount, paymentDate, month, year, method]
+      properties:
+        tenantId:
+          type: integer
+        propertyId:
+          type: integer
+        amount:
+          type: number
+        paymentDate:
+          type: string
+        month:
+          type: integer
+        year:
+          type: integer
+        method:
+          type: string
+          enum: [cash, bank_transfer, upi, cheque, online]
+        status:
+          type: string
+          enum: [paid, pending, partial, overdue]
+        notes:
+          type: string
+
+    Expense:
+      type: object
+      required: [id, title, amount, category, date, createdAt]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        amount:
+          type: number
+        category:
+          type: string
+          enum: [repair, utility, tax, insurance, maintenance, salary, other]
+        date:
+          type: string
+        propertyId:
+          type: ["integer", "null"]
+        propertyName:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    ExpenseInput:
+      type: object
+      required: [title, amount, category, date]
+      properties:
+        title:
+          type: string
+        amount:
+          type: number
+        category:
+          type: string
+          enum: [repair, utility, tax, insurance, maintenance, salary, other]
+        date:
+          type: string
+        propertyId:
+          type: integer
+        notes:
+          type: string
+
+    ExpenseUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        amount:
+          type: number
+        category:
+          type: string
+          enum: [repair, utility, tax, insurance, maintenance, salary, other]
+        date:
+          type: string
+        propertyId:
+          type: integer
+        notes:
+          type: string
+
+    Loan:
+      type: object
+      required: [id, lenderName, principalAmount, interestRate, emiAmount, startDate, totalMonths, paidMonths, status, createdAt]
+      properties:
+        id:
+          type: integer
+        lenderName:
+          type: string
+        principalAmount:
+          type: number
+        interestRate:
+          type: number
+        emiAmount:
+          type: number
+        startDate:
+          type: string
+        totalMonths:
+          type: integer
+        paidMonths:
+          type: integer
+        remainingAmount:
+          type: number
+        status:
+          type: string
+          enum: [active, completed, defaulted]
+        propertyId:
+          type: ["integer", "null"]
+        propertyName:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    LoanInput:
+      type: object
+      required: [lenderName, principalAmount, interestRate, emiAmount, startDate, totalMonths]
+      properties:
+        lenderName:
+          type: string
+        principalAmount:
+          type: number
+        interestRate:
+          type: number
+        emiAmount:
+          type: number
+        startDate:
+          type: string
+        totalMonths:
+          type: integer
+        propertyId:
+          type: integer
+        notes:
+          type: string
+
+    LoanUpdate:
+      type: object
+      properties:
+        lenderName:
+          type: string
+        principalAmount:
+          type: number
+        interestRate:
+          type: number
+        emiAmount:
+          type: number
+        startDate:
+          type: string
+        totalMonths:
+          type: integer
+        status:
+          type: string
+          enum: [active, completed, defaulted]
+        propertyId:
+          type: integer
+        notes:
+          type: string
+
+    LoanPayment:
+      type: object
+      required: [id, loanId, amount, paymentDate, createdAt]
+      properties:
+        id:
+          type: integer
+        loanId:
+          type: integer
+        amount:
+          type: number
+        paymentDate:
+          type: string
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    LoanPaymentInput:
+      type: object
+      required: [amount, paymentDate]
+      properties:
+        amount:
+          type: number
+        paymentDate:
+          type: string
+        notes:
+          type: string
+
+    MaintenanceRequest:
+      type: object
+      required: [id, title, description, propertyId, priority, status, createdAt]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+        propertyId:
+          type: integer
+        propertyName:
+          type: ["string", "null"]
+        tenantId:
+          type: ["integer", "null"]
+        tenantName:
+          type: ["string", "null"]
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+        status:
+          type: string
+          enum: [open, in_progress, resolved, closed]
+        resolvedAt:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    MaintenanceRequestInput:
+      type: object
+      required: [title, description, propertyId, priority]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        propertyId:
+          type: integer
+        tenantId:
+          type: integer
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+        notes:
+          type: string
+
+    MaintenanceRequestUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+        status:
+          type: string
+          enum: [open, in_progress, resolved, closed]
+        notes:
+          type: string
+
+    MonthlyReport:
+      type: object
+      required: [year, month, totalIncome, totalExpenses, netProfit, payments, expenses]
+      properties:
+        year:
+          type: integer
+        month:
+          type: integer
+        totalIncome:
+          type: number
+        totalExpenses:
+          type: number
+        netProfit:
+          type: number
+        collectedRents:
+          type: integer
+        pendingRents:
+          type: integer
+        payments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Payment"
+        expenses:
+          type: array
+          items:
+            $ref: "#/components/schemas/Expense"
+
+    YearlyReport:
+      type: object
+      required: [year, totalIncome, totalExpenses, netProfit, monthlyBreakdown]
+      properties:
+        year:
+          type: integer
+        totalIncome:
+          type: number
+        totalExpenses:
+          type: number
+        netProfit:
+          type: number
+        monthlyBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/MonthlyBreakdown"
+
+    MonthlyBreakdown:
+      type: object
+      required: [month, income, expenses, netProfit]
+      properties:
+        month:
+          type: integer
+        income:
+          type: number
+        expenses:
+          type: number
+        netProfit:
+          type: number
