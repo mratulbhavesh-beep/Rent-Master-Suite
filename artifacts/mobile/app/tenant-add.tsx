@@ -1,12 +1,30 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+} from "react-native";
 import { useRouter } from "expo-router";
-import { useCreateTenant, useListProperties, getListPropertiesQueryKey, TenantInputStatus } from "@workspace/api-client-react";
+import {
+  useCreateTenant,
+  useListProperties,
+  getListPropertiesQueryKey,
+  getListTenantsQueryKey,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
+
+const today = new Date().toISOString().split("T")[0];
+const nextYear = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+  .toISOString()
+  .split("T")[0];
 
 export default function TenantAddScreen() {
   const router = useRouter();
@@ -20,175 +38,467 @@ export default function TenantAddScreen() {
   const [propertyId, setPropertyId] = useState<number | null>(null);
   const [unitNumber, setUnitNumber] = useState("");
   const [rentAmount, setRentAmount] = useState("");
-  const [leaseStart, setLeaseStart] = useState("");
-  const [leaseEnd, setLeaseEnd] = useState("");
+  const [leaseStart, setLeaseStart] = useState(today);
+  const [leaseEnd, setLeaseEnd] = useState(nextYear);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const { data: properties } = useListProperties({}, { query: { queryKey: getListPropertiesQueryKey({}) } });
+  const { data: properties } = useListProperties(
+    {},
+    { query: { queryKey: getListPropertiesQueryKey({}) } }
+  );
   const createMutation = useCreateTenant();
 
+  const validate = (): boolean => {
+    const newErrors: Record<string, string> = {};
+    if (!name.trim()) newErrors.name = "Full name is required";
+    if (!email.trim()) newErrors.email = "Email is required";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
+      newErrors.email = "Enter a valid email";
+    if (!phone.trim()) newErrors.phone = "Phone number is required";
+    if (!propertyId) newErrors.propertyId = "Please select a property";
+    if (!unitNumber.trim()) newErrors.unitNumber = "Unit number is required";
+    if (!rentAmount.trim()) newErrors.rentAmount = "Rent amount is required";
+    else if (isNaN(parseFloat(rentAmount)) || parseFloat(rentAmount) <= 0)
+      newErrors.rentAmount = "Enter a valid amount";
+    if (!leaseStart) newErrors.leaseStart = "Lease start date is required";
+    if (!leaseEnd) newErrors.leaseEnd = "Lease end date is required";
+    else if (leaseStart && leaseEnd <= leaseStart)
+      newErrors.leaseEnd = "End date must be after start date";
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleSave = () => {
-    if (!name || !email || !phone || !propertyId || !unitNumber || !rentAmount || !leaseStart || !leaseEnd) {
-      Alert.alert("Error", "Please fill in all required fields");
-      return;
-    }
+    if (!validate()) return;
+
     createMutation.mutate(
       {
         data: {
-          name,
-          email,
-          phone,
-          propertyId,
-          unitNumber,
+          name: name.trim(),
+          email: email.trim().toLowerCase(),
+          phone: phone.trim(),
+          propertyId: propertyId!,
+          unitNumber: unitNumber.trim(),
           rentAmount: parseFloat(rentAmount),
           status: "active",
-          leaseStart: new Date(leaseStart).toISOString(),
-          leaseEnd: new Date(leaseEnd).toISOString(),
-        }
+          leaseStart,
+          leaseEnd,
+        },
       },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ["/api/tenants"] });
-          queryClient.invalidateQueries({ queryKey: ["/api/dashboard/summary"] });
-          router.back();
+          queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+          Alert.alert("Success", "Tenant added successfully!", [
+            { text: "OK", onPress: () => router.back() },
+          ]);
         },
-        onError: () => Alert.alert("Error", "Failed to add tenant")
+        onError: (err: any) => {
+          const message =
+            err?.response?.data?.error ||
+            err?.message ||
+            "Failed to add tenant. Please try again.";
+          Alert.alert("Error", message);
+        },
       }
     );
   };
 
+  const Field = ({
+    label,
+    errorKey,
+    children,
+  }: {
+    label: string;
+    errorKey: string;
+    children: React.ReactNode;
+  }) => (
+    <View style={styles.fieldWrapper}>
+      <Text style={[styles.inputLabel, { color: colors.foreground }]}>
+        {label}
+      </Text>
+      {children}
+      {errors[errorKey] ? (
+        <Text style={[styles.errorText, { color: colors.destructive }]}>
+          {errors[errorKey]}
+        </Text>
+      ) : null}
+    </View>
+  );
+
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: colors.background, paddingTop: insets.top },
+      ]}
+    >
       <View style={styles.header}>
-        <TouchableOpacity style={styles.iconButton} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={() => router.back()}
+        >
           <Feather name="arrow-left" size={24} color={colors.foreground} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Add Tenant</Text>
+        <Text style={[styles.headerTitle, { color: colors.foreground }]}>
+          Add Tenant
+        </Text>
         <View style={styles.iconButton} />
       </View>
 
-      <KeyboardAwareScrollViewCompat contentContainerStyle={styles.content}>
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <Text style={[styles.inputLabel, { color: colors.foreground }]}>Full Name*</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-            value={name}
-            onChangeText={setName}
-            placeholder="John Doe"
-            placeholderTextColor={colors.mutedForeground}
-          />
+      {/* FIX 1: ScrollView used directly — button is moved OUTSIDE the scroll view
+          so it is never swallowed by scroll event handling */}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View
+          style={[
+            styles.card,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
+          <Field label="Full Name *" errorKey="name">
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.input,
+                  color: colors.text,
+                  borderColor: errors.name ? colors.destructive : colors.border,
+                },
+              ]}
+              value={name}
+              onChangeText={(v) => {
+                setName(v);
+                setErrors((e) => ({ ...e, name: "" }));
+              }}
+              placeholder="John Doe"
+              placeholderTextColor={colors.mutedForeground}
+            />
+          </Field>
 
-          <Text style={[styles.inputLabel, { color: colors.foreground }]}>Email*</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            placeholder="john@example.com"
-            placeholderTextColor={colors.mutedForeground}
-          />
+          <Field label="Email *" errorKey="email">
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.input,
+                  color: colors.text,
+                  borderColor: errors.email
+                    ? colors.destructive
+                    : colors.border,
+                },
+              ]}
+              value={email}
+              onChangeText={(v) => {
+                setEmail(v);
+                setErrors((e) => ({ ...e, email: "" }));
+              }}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              placeholder="john@example.com"
+              placeholderTextColor={colors.mutedForeground}
+            />
+          </Field>
 
-          <Text style={[styles.inputLabel, { color: colors.foreground }]}>Phone*</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-            value={phone}
-            onChangeText={setPhone}
-            keyboardType="phone-pad"
-            placeholder="+91 9876543210"
-            placeholderTextColor={colors.mutedForeground}
-          />
+          <Field label="Phone *" errorKey="phone">
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.input,
+                  color: colors.text,
+                  borderColor: errors.phone
+                    ? colors.destructive
+                    : colors.border,
+                },
+              ]}
+              value={phone}
+              onChangeText={(v) => {
+                setPhone(v);
+                setErrors((e) => ({ ...e, phone: "" }));
+              }}
+              keyboardType="phone-pad"
+              placeholder="+91 9876543210"
+              placeholderTextColor={colors.mutedForeground}
+            />
+          </Field>
 
-          <Text style={[styles.inputLabel, { color: colors.foreground }]}>Property*</Text>
-          <View style={[styles.propertyPicker, { borderColor: colors.border }]}>
-            {properties?.map(p => (
-              <TouchableOpacity 
-                key={p.id} 
-                style={[styles.propertyOption, propertyId === p.id && { backgroundColor: `${colors.primary}20` }]}
-                onPress={() => setPropertyId(p.id)}
+          <View style={styles.fieldWrapper}>
+            <Text style={[styles.inputLabel, { color: colors.foreground }]}>
+              Property *
+            </Text>
+            {(!properties || properties.length === 0) ? (
+              <View
+                style={[
+                  styles.emptyProperties,
+                  { backgroundColor: colors.input, borderColor: colors.border },
+                ]}
               >
-                <Text style={{ color: propertyId === p.id ? colors.primary : colors.foreground }}>{p.name}</Text>
-                {propertyId === p.id && <Feather name="check" size={16} color={colors.primary} />}
-              </TouchableOpacity>
-            ))}
+                <Feather name="info" size={14} color={colors.mutedForeground} />
+                <Text
+                  style={[styles.emptyPropertiesText, { color: colors.mutedForeground }]}
+                >
+                  No properties found. Add a property first.
+                </Text>
+              </View>
+            ) : (
+              <View
+                style={[
+                  styles.propertyPicker,
+                  {
+                    borderColor: errors.propertyId
+                      ? colors.destructive
+                      : colors.border,
+                  },
+                ]}
+              >
+                {properties.map((p) => (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={[
+                      styles.propertyOption,
+                      propertyId === p.id && {
+                        backgroundColor: `${colors.primary}15`,
+                      },
+                    ]}
+                    onPress={() => {
+                      setPropertyId(p.id);
+                      setErrors((e) => ({ ...e, propertyId: "" }));
+                    }}
+                  >
+                    <View>
+                      <Text
+                        style={{
+                          color:
+                            propertyId === p.id
+                              ? colors.primary
+                              : colors.foreground,
+                          fontWeight: propertyId === p.id ? "600" : "400",
+                        }}
+                      >
+                        {p.name}
+                      </Text>
+                      <Text
+                        style={{ color: colors.mutedForeground, fontSize: 12 }}
+                      >
+                        {p.address}
+                      </Text>
+                    </View>
+                    {propertyId === p.id && (
+                      <Feather
+                        name="check-circle"
+                        size={18}
+                        color={colors.primary}
+                      />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {errors.propertyId ? (
+              <Text style={[styles.errorText, { color: colors.destructive }]}>
+                {errors.propertyId}
+              </Text>
+            ) : null}
           </View>
 
           <View style={styles.row}>
             <View style={styles.flex1}>
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Unit Number*</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                value={unitNumber}
-                onChangeText={setUnitNumber}
-                placeholder="A-101"
-                placeholderTextColor={colors.mutedForeground}
-              />
+              <Field label="Unit Number *" errorKey="unitNumber">
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: colors.input,
+                      color: colors.text,
+                      borderColor: errors.unitNumber
+                        ? colors.destructive
+                        : colors.border,
+                    },
+                  ]}
+                  value={unitNumber}
+                  onChangeText={(v) => {
+                    setUnitNumber(v);
+                    setErrors((e) => ({ ...e, unitNumber: "" }));
+                  }}
+                  placeholder="A-101"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </Field>
             </View>
             <View style={styles.flex1}>
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Rent (₹)*</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                value={rentAmount}
-                onChangeText={setRentAmount}
-                keyboardType="numeric"
-                placeholder="15000"
-                placeholderTextColor={colors.mutedForeground}
-              />
+              <Field label="Rent (₹) *" errorKey="rentAmount">
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: colors.input,
+                      color: colors.text,
+                      borderColor: errors.rentAmount
+                        ? colors.destructive
+                        : colors.border,
+                    },
+                  ]}
+                  value={rentAmount}
+                  onChangeText={(v) => {
+                    setRentAmount(v);
+                    setErrors((e) => ({ ...e, rentAmount: "" }));
+                  }}
+                  keyboardType="numeric"
+                  placeholder="15000"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </Field>
             </View>
           </View>
 
           <View style={styles.row}>
             <View style={styles.flex1}>
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease Start*</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                value={leaseStart}
-                onChangeText={setLeaseStart}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={colors.mutedForeground}
-              />
+              <Field label="Lease Start *" errorKey="leaseStart">
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: colors.input,
+                      color: colors.text,
+                      borderColor: errors.leaseStart
+                        ? colors.destructive
+                        : colors.border,
+                    },
+                  ]}
+                  value={leaseStart}
+                  onChangeText={(v) => {
+                    setLeaseStart(v);
+                    setErrors((e) => ({ ...e, leaseStart: "" }));
+                  }}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </Field>
             </View>
             <View style={styles.flex1}>
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease End*</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                value={leaseEnd}
-                onChangeText={setLeaseEnd}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={colors.mutedForeground}
-              />
+              <Field label="Lease End *" errorKey="leaseEnd">
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: colors.input,
+                      color: colors.text,
+                      borderColor: errors.leaseEnd
+                        ? colors.destructive
+                        : colors.border,
+                    },
+                  ]}
+                  value={leaseEnd}
+                  onChangeText={(v) => {
+                    setLeaseEnd(v);
+                    setErrors((e) => ({ ...e, leaseEnd: "" }));
+                  }}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </Field>
             </View>
           </View>
         </View>
+      </ScrollView>
 
-        <TouchableOpacity 
-          style={[styles.saveButton, { backgroundColor: colors.primary }]} 
+      {/* FIX 1: Button is OUTSIDE the ScrollView — always receives taps */}
+      <View
+        style={[
+          styles.footer,
+          {
+            backgroundColor: colors.background,
+            borderTopColor: colors.border,
+            paddingBottom: insets.bottom + 16,
+          },
+        ]}
+      >
+        <TouchableOpacity
+          style={[
+            styles.saveButton,
+            { backgroundColor: colors.primary },
+            createMutation.isPending && { opacity: 0.7 },
+          ]}
           onPress={handleSave}
           disabled={createMutation.isPending}
+          activeOpacity={0.8}
         >
           {createMutation.isPending ? (
-            <ActivityIndicator color={colors.primaryForeground} />
+            <View style={styles.loadingRow}>
+              <ActivityIndicator color={colors.primaryForeground} />
+              <Text
+                style={[styles.saveButtonText, { color: colors.primaryForeground }]}
+              >
+                Saving...
+              </Text>
+            </View>
           ) : (
-            <Text style={[styles.saveButtonText, { color: colors.primaryForeground }]}>Add Tenant</Text>
+            <Text
+              style={[styles.saveButtonText, { color: colors.primaryForeground }]}
+            >
+              Add Tenant
+            </Text>
           )}
         </TouchableOpacity>
-      </KeyboardAwareScrollViewCompat>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: "rgba(0,0,0,0.05)" },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0,0,0,0.05)",
+  },
   iconButton: { width: 40, height: 40, justifyContent: "center", alignItems: "center" },
   headerTitle: { fontSize: 20, fontWeight: "bold" },
-  content: { padding: 16, paddingBottom: 40 },
-  card: { padding: 20, borderRadius: 16, borderWidth: 1, marginBottom: 24 },
-  inputLabel: { fontSize: 14, fontWeight: "600", marginBottom: 8, marginTop: 12 },
+  scroll: { flex: 1 },
+  content: { padding: 16, paddingBottom: 8 },
+  card: { padding: 20, borderRadius: 16, borderWidth: 1, marginBottom: 16 },
+  fieldWrapper: { marginBottom: 4 },
+  inputLabel: { fontSize: 14, fontWeight: "600", marginBottom: 6, marginTop: 12 },
   input: { height: 48, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, fontSize: 16 },
+  errorText: { fontSize: 12, marginTop: 4 },
   row: { flexDirection: "row", gap: 12 },
   flex1: { flex: 1 },
-  propertyPicker: { borderWidth: 1, borderRadius: 8, overflow: 'hidden' },
-  propertyOption: { flexDirection: "row", justifyContent: "space-between", padding: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(0,0,0,0.1)" },
-  saveButton: { height: 52, borderRadius: 12, justifyContent: "center", alignItems: "center" },
+  propertyPicker: { borderWidth: 1, borderRadius: 10, overflow: "hidden" },
+  propertyOption: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(0,0,0,0.08)",
+  },
+  emptyProperties: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderRadius: 8,
+  },
+  emptyPropertiesText: { fontSize: 13, flex: 1 },
+  footer: {
+    padding: 16,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  saveButton: {
+    height: 52,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   saveButtonText: { fontSize: 16, fontWeight: "bold" },
 });
