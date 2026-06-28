@@ -5,6 +5,7 @@
  * Gemini Rent Manager API
  * OpenAPI spec version: 0.1.0
  */
+import type { TenantInputDepositStatus } from './tenantInputDepositStatus';
 import type { TenantInputStatus } from './tenantInputStatus';
 
 export interface TenantInput {
@@ -19,4 +20,7 @@ export interface TenantInput {
   status?: TenantInputStatus;
   emergencyContact?: string;
   notes?: string;
+  securityDeposit?: number;
+  depositDate?: string;
+  depositStatus?: TenantInputDepositStatus;
 }

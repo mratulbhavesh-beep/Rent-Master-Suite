@@ -164,6 +164,17 @@ export const TenantStatus = {
   evicted: 'evicted',
 } as const;
 
+/**
+ * @nullable
+ */
+export type TenantDepositStatus = typeof TenantDepositStatus[keyof typeof TenantDepositStatus] | null;
+
+
+export const TenantDepositStatus = {
+  held: 'held',
+  refunded: 'refunded',
+} as const;
+
 export interface Tenant {
   id: number;
   name: string;
@@ -181,6 +192,12 @@ export interface Tenant {
   emergencyContact?: string | null;
   /** @nullable */
   notes?: string | null;
+  /** @nullable */
+  securityDeposit?: number | null;
+  /** @nullable */
+  depositDate?: string | null;
+  /** @nullable */
+  depositStatus?: TenantDepositStatus;
   createdAt: string;
 }
 
@@ -191,6 +208,14 @@ export const TenantInputStatus = {
   active: 'active',
   inactive: 'inactive',
   evicted: 'evicted',
+} as const;
+
+export type TenantInputDepositStatus = typeof TenantInputDepositStatus[keyof typeof TenantInputDepositStatus];
+
+
+export const TenantInputDepositStatus = {
+  held: 'held',
+  refunded: 'refunded',
 } as const;
 
 export interface TenantInput {
@@ -205,6 +230,9 @@ export interface TenantInput {
   status?: TenantInputStatus;
   emergencyContact?: string;
   notes?: string;
+  securityDeposit?: number;
+  depositDate?: string;
+  depositStatus?: TenantInputDepositStatus;
 }
 
 export type TenantUpdateStatus = typeof TenantUpdateStatus[keyof typeof TenantUpdateStatus];
@@ -214,6 +242,14 @@ export const TenantUpdateStatus = {
   active: 'active',
   inactive: 'inactive',
   evicted: 'evicted',
+} as const;
+
+export type TenantUpdateDepositStatus = typeof TenantUpdateDepositStatus[keyof typeof TenantUpdateDepositStatus];
+
+
+export const TenantUpdateDepositStatus = {
+  held: 'held',
+  refunded: 'refunded',
 } as const;
 
 export interface TenantUpdate {
@@ -228,6 +264,9 @@ export interface TenantUpdate {
   status?: TenantUpdateStatus;
   emergencyContact?: string;
   notes?: string;
+  securityDeposit?: number;
+  depositDate?: string;
+  depositStatus?: TenantUpdateDepositStatus;
 }
 
 export type PaymentMethod = typeof PaymentMethod[keyof typeof PaymentMethod];

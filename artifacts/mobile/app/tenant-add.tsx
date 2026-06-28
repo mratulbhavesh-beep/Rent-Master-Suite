@@ -71,6 +71,8 @@ export default function TenantAddScreen() {
   const [rentAmount, setRentAmount] = useState("");
   const [leaseStart, setLeaseStart] = useState(today);
   const [leaseEnd, setLeaseEnd] = useState(nextYear);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositDate, setDepositDate] = useState(today);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const { data: properties } = useListProperties(
@@ -114,6 +116,9 @@ export default function TenantAddScreen() {
           status: "active",
           leaseStart,
           leaseEnd,
+          securityDeposit: depositAmount ? parseFloat(depositAmount) : undefined,
+          depositDate: depositAmount ? depositDate : undefined,
+          depositStatus: depositAmount ? "held" : undefined,
         },
       },
       {
@@ -410,6 +415,36 @@ export default function TenantAddScreen() {
                   placeholderTextColor={colors.mutedForeground}
                 />
               </Field>
+            </View>
+          </View>
+          {/* Security Deposit — optional */}
+          <View style={[styles.fieldWrapper, { marginTop: 8 }]}>
+            <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: "rgba(0,0,0,0.1)", marginVertical: 16 }} />
+            <Text style={[styles.inputLabel, { color: colors.foreground, marginTop: 0, marginBottom: 4 }]}>
+              Security Deposit (Optional)
+            </Text>
+            <View style={styles.row}>
+              <View style={styles.flex1}>
+                <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Amount (₹)</Text>
+                <TextInput
+                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+                  value={depositAmount}
+                  onChangeText={setDepositAmount}
+                  keyboardType="numeric"
+                  placeholder="50000"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </View>
+              <View style={styles.flex1}>
+                <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Date (YYYY-MM-DD)</Text>
+                <TextInput
+                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+                  value={depositDate}
+                  onChangeText={setDepositDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </View>
             </View>
           </View>
         </View>

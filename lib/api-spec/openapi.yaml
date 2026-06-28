@@ -928,6 +928,13 @@ components:
           type: ["string", "null"]
         notes:
           type: ["string", "null"]
+        securityDeposit:
+          type: ["number", "null"]
+        depositDate:
+          type: ["string", "null"]
+        depositStatus:
+          type: ["string", "null"]
+          enum: [held, refunded, null]
         createdAt:
           type: string
 
@@ -958,6 +965,13 @@ components:
           type: string
         notes:
           type: string
+        securityDeposit:
+          type: number
+        depositDate:
+          type: string
+        depositStatus:
+          type: string
+          enum: [held, refunded]
 
     TenantUpdate:
       type: object
@@ -985,6 +999,13 @@ components:
           type: string
         notes:
           type: string
+        securityDeposit:
+          type: number
+        depositDate:
+          type: string
+        depositStatus:
+          type: string
+          enum: [held, refunded]
 
     Payment:
       type: object

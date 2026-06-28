@@ -35,6 +35,8 @@ function formatTenant(
   return {
     ...t,
     rentAmount: parseFloat(String(t.rentAmount)),
+    securityDeposit: t.securityDeposit != null ? parseFloat(String(t.securityDeposit)) : null,
+    depositStatus: t.depositStatus ?? "held",
     propertyName: propertyName ?? null,
     createdAt: t.createdAt.toISOString(),
     ...computeBalance(t, payments),
@@ -79,7 +81,7 @@ router.get("/tenants", requireAuth, async (req, res): Promise<void> => {
 });
 
 router.post("/tenants", requireAuth, async (req, res): Promise<void> => {
-  const { name, email, phone, propertyId, unitNumber, leaseStart, leaseEnd, rentAmount, status, emergencyContact, notes } = req.body;
+  const { name, email, phone, propertyId, unitNumber, leaseStart, leaseEnd, rentAmount, status, emergencyContact, notes, securityDeposit, depositDate, depositStatus } = req.body;
   if (!name || !email || !phone || !propertyId || !unitNumber || !leaseStart || !leaseEnd || !rentAmount) {
     res.status(400).json({ error: "Required fields missing" });
     return;
@@ -87,6 +89,9 @@ router.post("/tenants", requireAuth, async (req, res): Promise<void> => {
   const [tenant] = await db.insert(tenantsTable).values({
     name, email, phone, propertyId, unitNumber, leaseStart, leaseEnd,
     rentAmount: String(rentAmount), status: status ?? "active", emergencyContact, notes,
+    securityDeposit: securityDeposit != null ? String(securityDeposit) : undefined,
+    depositDate: depositDate ?? undefined,
+    depositStatus: depositStatus ?? "held",
   }).returning();
   const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId));
   res.status(201).json(formatTenant(tenant, property?.name, []));
@@ -113,10 +118,11 @@ router.patch("/tenants/:id", requireAuth, async (req, res): Promise<void> => {
   const id = parseInt(raw, 10);
   const body = req.body as Record<string, unknown>;
   const updates: Record<string, unknown> = {};
-  for (const key of ["name", "email", "phone", "propertyId", "unitNumber", "leaseStart", "leaseEnd", "status", "emergencyContact", "notes"]) {
+  for (const key of ["name", "email", "phone", "propertyId", "unitNumber", "leaseStart", "leaseEnd", "status", "emergencyContact", "notes", "depositDate", "depositStatus"]) {
     if (body[key] !== undefined) updates[key] = body[key];
   }
   if (body.rentAmount !== undefined) updates.rentAmount = String(body.rentAmount);
+  if (body.securityDeposit !== undefined) updates.securityDeposit = body.securityDeposit != null ? String(body.securityDeposit) : null;
   const [tenant] = await db.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
   const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId));

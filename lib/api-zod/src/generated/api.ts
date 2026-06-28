@@ -230,6 +230,9 @@ export const ListTenantsResponseItem = zod.object({
   "status": zod.enum(['active', 'inactive', 'evicted']),
   "emergencyContact": zod.string().nullish(),
   "notes": zod.string().nullish(),
+  "securityDeposit": zod.number().nullish(),
+  "depositDate": zod.string().nullish(),
+  "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
   "createdAt": zod.string()
 })
 export const ListTenantsResponse = zod.array(ListTenantsResponseItem)
@@ -249,7 +252,10 @@ export const CreateTenantBody = zod.object({
   "rentAmount": zod.number(),
   "status": zod.enum(['active', 'inactive', 'evicted']).optional(),
   "emergencyContact": zod.string().optional(),
-  "notes": zod.string().optional()
+  "notes": zod.string().optional(),
+  "securityDeposit": zod.number().optional(),
+  "depositDate": zod.string().optional(),
+  "depositStatus": zod.enum(['held', 'refunded']).optional()
 })
 
 export const CreateTenantResponse = zod.object({
@@ -266,6 +272,9 @@ export const CreateTenantResponse = zod.object({
   "status": zod.enum(['active', 'inactive', 'evicted']),
   "emergencyContact": zod.string().nullish(),
   "notes": zod.string().nullish(),
+  "securityDeposit": zod.number().nullish(),
+  "depositDate": zod.string().nullish(),
+  "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
   "createdAt": zod.string()
 })
 
@@ -291,6 +300,9 @@ export const GetTenantResponse = zod.object({
   "status": zod.enum(['active', 'inactive', 'evicted']),
   "emergencyContact": zod.string().nullish(),
   "notes": zod.string().nullish(),
+  "securityDeposit": zod.number().nullish(),
+  "depositDate": zod.string().nullish(),
+  "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
   "createdAt": zod.string()
 })
 
@@ -313,7 +325,10 @@ export const UpdateTenantBody = zod.object({
   "rentAmount": zod.number().optional(),
   "status": zod.enum(['active', 'inactive', 'evicted']).optional(),
   "emergencyContact": zod.string().optional(),
-  "notes": zod.string().optional()
+  "notes": zod.string().optional(),
+  "securityDeposit": zod.number().optional(),
+  "depositDate": zod.string().optional(),
+  "depositStatus": zod.enum(['held', 'refunded']).optional()
 })
 
 export const UpdateTenantResponse = zod.object({
@@ -330,6 +345,9 @@ export const UpdateTenantResponse = zod.object({
   "status": zod.enum(['active', 'inactive', 'evicted']),
   "emergencyContact": zod.string().nullish(),
   "notes": zod.string().nullish(),
+  "securityDeposit": zod.number().nullish(),
+  "depositDate": zod.string().nullish(),
+  "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
   "createdAt": zod.string()
 })
 

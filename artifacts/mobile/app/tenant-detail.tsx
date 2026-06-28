@@ -24,6 +24,9 @@ export default function TenantDetailScreen() {
   const [status, setStatus] = useState<"active" | "inactive" | "evicted">("active");
   const [leaseStart, setLeaseStart] = useState("");
   const [leaseEnd, setLeaseEnd] = useState("");
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositDate, setDepositDate] = useState("");
+  const [depositStatus, setDepositStatus] = useState<"held" | "refunded">("held");
 
   const { data: tenant, isLoading } = useGetTenant(tenantId, {
     query: { queryKey: getGetTenantQueryKey(tenantId), enabled: !!tenantId }
@@ -46,9 +49,12 @@ export default function TenantDetailScreen() {
       setUnitNumber(tenant.unitNumber);
       setRentAmount(tenant.rentAmount.toString());
       setStatus(tenant.status as "active" | "inactive" | "evicted");
-      // Format dates simply for now (YYYY-MM-DD)
       setLeaseStart(tenant.leaseStart.split('T')[0]);
       setLeaseEnd(tenant.leaseEnd.split('T')[0]);
+      const t = tenant as any;
+      setDepositAmount(t.securityDeposit != null ? String(t.securityDeposit) : "");
+      setDepositDate(t.depositDate ? String(t.depositDate).split('T')[0] : "");
+      setDepositStatus((t.depositStatus as "held" | "refunded") ?? "held");
     }
   }, [tenant]);
 
@@ -67,8 +73,11 @@ export default function TenantDetailScreen() {
           unitNumber,
           rentAmount: parseFloat(rentAmount),
           status,
-          leaseStart,   // YYYY-MM-DD — send as-is, no toISOString()
+          leaseStart,
           leaseEnd,
+          securityDeposit: depositAmount ? parseFloat(depositAmount) : undefined,
+          depositDate: depositDate || undefined,
+          depositStatus,
         }
       },
       {
@@ -281,6 +290,89 @@ export default function TenantDetailScreen() {
             <Text style={{ color: colors.primaryForeground, fontWeight: "700", fontSize: 16 }}>Record Payment</Text>
           </TouchableOpacity>
 
+          {/* Security Deposit card */}
+          {(() => {
+            const t = tenant as any;
+            const hasDeposit = t.securityDeposit != null;
+            const isRefunded = t.depositStatus === "refunded";
+            const depositColor = isRefunded ? colors.mutedForeground : colors.warning;
+            return (
+              <View style={[styles.card, { backgroundColor: colors.card, borderColor: isRefunded ? colors.border : `${colors.warning}40`, marginTop: 16 }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <Feather name="shield" size={16} color={depositColor} />
+                    <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Security Deposit</Text>
+                  </View>
+                  {hasDeposit && (
+                    <View style={[styles.badge, { backgroundColor: `${depositColor}18` }]}>
+                      <Text style={{ fontSize: 11, fontWeight: "800", color: depositColor, textTransform: "uppercase" }}>
+                        {isRefunded ? "Refunded" : "Held"}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                {!hasDeposit ? (
+                  <TouchableOpacity
+                    style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12 }}
+                    onPress={() => setIsEditing(true)}
+                  >
+                    <Feather name="plus-circle" size={16} color={colors.primary} />
+                    <Text style={{ color: colors.primary, fontWeight: "600", fontSize: 14 }}>Add security deposit</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <>
+                    <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
+                      <Text style={[styles.label, { color: colors.mutedForeground }]}>Amount</Text>
+                      <Text style={[styles.value, { color: colors.foreground }]}>₹{Number(t.securityDeposit).toLocaleString("en-IN")}</Text>
+                    </View>
+                    {t.depositDate ? (
+                      <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
+                        <Text style={[styles.label, { color: colors.mutedForeground }]}>Deposit Date</Text>
+                        <Text style={[styles.value, { color: colors.foreground }]}>{new Date(t.depositDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</Text>
+                      </View>
+                    ) : null}
+                    {!isRefunded && (
+                      <TouchableOpacity
+                        style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: `${colors.success}12`, borderWidth: 1, borderColor: `${colors.success}30` }}
+                        onPress={() => {
+                          const msg = `Mark the deposit of ₹${Number(t.securityDeposit).toLocaleString("en-IN")} as refunded?`;
+                          const doRefund = () => {
+                            updateMutation.mutate(
+                              { id: tenantId, data: { depositStatus: "refunded" } as any },
+                              {
+                                onSuccess: (data) => {
+                                  queryClient.setQueryData(getGetTenantQueryKey(tenantId), data);
+                                  queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+                                },
+                                onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to update deposit"),
+                              }
+                            );
+                          };
+                          if (Platform.OS === "web") {
+                            if (window.confirm(msg)) doRefund();
+                          } else {
+                            Alert.alert("Refund Deposit", msg, [
+                              { text: "Cancel", style: "cancel" },
+                              { text: "Mark Refunded", style: "default", onPress: doRefund },
+                            ]);
+                          }
+                        }}
+                        disabled={updateMutation.isPending}
+                      >
+                        {updateMutation.isPending ? (
+                          <ActivityIndicator size="small" color={colors.success} />
+                        ) : (
+                          <Feather name="check-circle" size={15} color={colors.success} />
+                        )}
+                        <Text style={{ color: colors.success, fontWeight: "700", fontSize: 14 }}>Mark as Refunded</Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
+                )}
+              </View>
+            );
+          })()}
+
           {/* Rent Ledger */}
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -423,6 +515,46 @@ export default function TenantDetailScreen() {
                 />
               </View>
             </View>
+
+            <View style={[styles.sectionDivider, { backgroundColor: colors.border }]} />
+            <Text style={[styles.inputLabel, { color: colors.foreground, marginBottom: 4 }]}>Security Deposit (Optional)</Text>
+
+            <View style={styles.row}>
+              <View style={styles.flex1}>
+                <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Amount (₹)</Text>
+                <TextInput
+                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+                  value={depositAmount}
+                  onChangeText={setDepositAmount}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </View>
+              <View style={styles.flex1}>
+                <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Date (YYYY-MM-DD)</Text>
+                <TextInput
+                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+                  value={depositDate}
+                  onChangeText={setDepositDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </View>
+            </View>
+
+            <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 8 }]}>Status</Text>
+            <View style={[styles.segmentedControl, { marginBottom: 8 }]}>
+              {(["held", "refunded"] as const).map(s => (
+                <TouchableOpacity
+                  key={s}
+                  style={[styles.segmentOption, depositStatus === s && { backgroundColor: s === "refunded" ? colors.success : colors.warning }]}
+                  onPress={() => setDepositStatus(s)}
+                >
+                  <Text style={{ fontSize: 12, color: depositStatus === s ? colors.primaryForeground : colors.mutedForeground, textTransform: "capitalize" }}>{s}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
         )}
       </ScrollView>
@@ -451,6 +583,7 @@ const styles = StyleSheet.create({
   balanceRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   recordBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, height: 52, borderRadius: 12 },
   ledgerRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, gap: 4 },
+  sectionDivider: { height: StyleSheet.hairlineWidth, marginVertical: 16 },
   inputLabel: { fontSize: 14, fontWeight: "600", marginBottom: 8, marginTop: 12 },
   input: { height: 48, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, fontSize: 16 },
   row: { flexDirection: "row", gap: 12 },

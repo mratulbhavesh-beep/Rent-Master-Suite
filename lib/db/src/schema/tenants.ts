@@ -16,6 +16,9 @@ export const tenantsTable = pgTable("tenants", {
   status: text("status").notNull().default("active"),
   emergencyContact: text("emergency_contact"),
   notes: text("notes"),
+  securityDeposit: numeric("security_deposit", { precision: 12, scale: 2 }),
+  depositDate: date("deposit_date", { mode: "string" }),
+  depositStatus: text("deposit_status").default("held"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
