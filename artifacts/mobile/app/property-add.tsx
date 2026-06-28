@@ -62,7 +62,7 @@ export default function PropertyAddScreen() {
         <View style={styles.iconButton} />
       </View>
 
-      <KeyboardAwareScrollViewCompat contentContainerStyle={styles.content}>
+      <KeyboardAwareScrollViewCompat style={styles.scroll} contentContainerStyle={styles.content}>
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Text style={[styles.inputLabel, { color: colors.foreground }]}>Property Name*</Text>
           <TextInput
@@ -144,30 +144,37 @@ export default function PropertyAddScreen() {
             placeholderTextColor={colors.mutedForeground}
           />
         </View>
+      </KeyboardAwareScrollViewCompat>
 
+      <View style={[styles.footer, { backgroundColor: colors.background, borderTopColor: colors.border, paddingBottom: insets.bottom + 16 }]}>
         <TouchableOpacity 
-          style={[styles.saveButton, { backgroundColor: colors.primary }]} 
+          style={[styles.saveButton, { backgroundColor: colors.primary }, createMutation.isPending && { opacity: 0.7 }]} 
           onPress={handleSave}
           disabled={createMutation.isPending}
+          activeOpacity={0.85}
         >
           {createMutation.isPending ? (
-            <ActivityIndicator color={colors.primaryForeground} />
+            <View style={styles.loadingRow}>
+              <ActivityIndicator color={colors.primaryForeground} />
+              <Text style={[styles.saveButtonText, { color: colors.primaryForeground }]}>Saving...</Text>
+            </View>
           ) : (
             <Text style={[styles.saveButtonText, { color: colors.primaryForeground }]}>Add Property</Text>
           )}
         </TouchableOpacity>
-      </KeyboardAwareScrollViewCompat>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: "rgba(0,0,0,0.05)" },
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(0,0,0,0.08)" },
   iconButton: { width: 40, height: 40, justifyContent: "center", alignItems: "center" },
   headerTitle: { fontSize: 20, fontWeight: "bold" },
-  content: { padding: 16, paddingBottom: 40 },
-  card: { padding: 20, borderRadius: 16, borderWidth: 1, marginBottom: 24 },
+  scroll: { flex: 1 },
+  content: { padding: 16, paddingBottom: 8 },
+  card: { padding: 20, borderRadius: 16, borderWidth: 1, marginBottom: 16 },
   inputLabel: { fontSize: 14, fontWeight: "600", marginBottom: 8, marginTop: 12 },
   input: { height: 48, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, fontSize: 16 },
   textArea: { height: 80, paddingTop: 12, textAlignVertical: "top" },
@@ -175,6 +182,8 @@ const styles = StyleSheet.create({
   flex1: { flex: 1 },
   segmentedControl: { flexDirection: "row", backgroundColor: "rgba(0,0,0,0.05)", borderRadius: 8, padding: 4 },
   segmentOption: { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: 6 },
+  footer: { padding: 16, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
+  loadingRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   saveButton: { height: 52, borderRadius: 12, justifyContent: "center", alignItems: "center" },
   saveButtonText: { fontSize: 16, fontWeight: "bold" },
 });

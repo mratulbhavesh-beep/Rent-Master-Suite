@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useGetTenant, getGetTenantQueryKey, useUpdateTenant, useDeleteTenant, getListTenantsQueryKey, getGetDashboardSummaryQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -78,32 +78,33 @@ export default function TenantDetailScreen() {
     );
   };
 
-  const handleDelete = () => {
-    Alert.alert(
-      "Delete Tenant",
-      `Delete "${tenant?.name}"?\n\nAll payment and maintenance records for this tenant will also be deleted. This cannot be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () => {
-            deleteMutation.mutate(
-              { id: tenantId },
-              {
-                onSuccess: () => {
-                  queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
-                  queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
-                  queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
-                  router.back();
-                },
-                onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to delete tenant"),
-              }
-            );
-          },
+  const performDelete = () => {
+    deleteMutation.mutate(
+      { id: tenantId },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+          queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
+          router.back();
         },
-      ]
+        onError: (err: any) =>
+          Alert.alert("Error", err?.response?.data?.error || "Failed to delete tenant"),
+      }
     );
+  };
+
+  const handleDelete = () => {
+    const msg = `Delete "${tenant?.name}"?\n\nAll payment and maintenance records will also be deleted. This cannot be undone.`;
+    if (Platform.OS === "web") {
+      // Alert.alert callbacks are unreliable on Expo web — use browser confirm instead
+      if (window.confirm(msg)) performDelete();
+    } else {
+      Alert.alert("Delete Tenant", msg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: performDelete },
+      ]);
+    }
   };
 
   if (isLoading) {

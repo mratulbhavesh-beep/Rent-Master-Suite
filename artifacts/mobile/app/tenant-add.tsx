@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
+  Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
 import {
@@ -25,6 +26,33 @@ const today = new Date().toISOString().split("T")[0];
 const nextYear = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
   .toISOString()
   .split("T")[0];
+
+// Defined OUTSIDE TenantAddScreen so its reference is stable across renders.
+// If defined inside, React sees a new component type on every state change,
+// unmounts/remounts the TextInput children, and dismisses the keyboard.
+function Field({
+  label,
+  errorKey,
+  errors,
+  colors,
+  children,
+}: {
+  label: string;
+  errorKey: string;
+  errors: Record<string, string>;
+  colors: { foreground: string; destructive: string };
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.fieldWrapper}>
+      <Text style={[styles.inputLabel, { color: colors.foreground }]}>{label}</Text>
+      {children}
+      {errors[errorKey] ? (
+        <Text style={[styles.errorText, { color: colors.destructive }]}>{errors[errorKey]}</Text>
+      ) : null}
+    </View>
+  );
+}
 
 export default function TenantAddScreen() {
   const router = useRouter();
@@ -104,28 +132,6 @@ export default function TenantAddScreen() {
     );
   };
 
-  const Field = ({
-    label,
-    errorKey,
-    children,
-  }: {
-    label: string;
-    errorKey: string;
-    children: React.ReactNode;
-  }) => (
-    <View style={styles.fieldWrapper}>
-      <Text style={[styles.inputLabel, { color: colors.foreground }]}>
-        {label}
-      </Text>
-      {children}
-      {errors[errorKey] ? (
-        <Text style={[styles.errorText, { color: colors.destructive }]}>
-          {errors[errorKey]}
-        </Text>
-      ) : null}
-    </View>
-  );
-
   return (
     <View
       style={[
@@ -159,7 +165,7 @@ export default function TenantAddScreen() {
             { backgroundColor: colors.card, borderColor: colors.border },
           ]}
         >
-          <Field label="Full Name *" errorKey="name">
+          <Field label="Full Name *" errorKey="name" errors={errors} colors={colors}>
             <TextInput
               style={[
                 styles.input,
@@ -179,7 +185,7 @@ export default function TenantAddScreen() {
             />
           </Field>
 
-          <Field label="Email *" errorKey="email">
+          <Field label="Email *" errorKey="email" errors={errors} colors={colors}>
             <TextInput
               style={[
                 styles.input,
@@ -203,7 +209,7 @@ export default function TenantAddScreen() {
             />
           </Field>
 
-          <Field label="Phone *" errorKey="phone">
+          <Field label="Phone *" errorKey="phone" errors={errors} colors={colors}>
             <TextInput
               style={[
                 styles.input,
@@ -307,7 +313,7 @@ export default function TenantAddScreen() {
 
           <View style={styles.row}>
             <View style={styles.flex1}>
-              <Field label="Unit Number *" errorKey="unitNumber">
+              <Field label="Unit Number *" errorKey="unitNumber" errors={errors} colors={colors}>
                 <TextInput
                   style={[
                     styles.input,
@@ -330,7 +336,7 @@ export default function TenantAddScreen() {
               </Field>
             </View>
             <View style={styles.flex1}>
-              <Field label="Rent (₹) *" errorKey="rentAmount">
+              <Field label="Rent (₹) *" errorKey="rentAmount" errors={errors} colors={colors}>
                 <TextInput
                   style={[
                     styles.input,
@@ -357,7 +363,7 @@ export default function TenantAddScreen() {
 
           <View style={styles.row}>
             <View style={styles.flex1}>
-              <Field label="Lease Start *" errorKey="leaseStart">
+              <Field label="Lease Start *" errorKey="leaseStart" errors={errors} colors={colors}>
                 <TextInput
                   style={[
                     styles.input,
@@ -380,7 +386,7 @@ export default function TenantAddScreen() {
               </Field>
             </View>
             <View style={styles.flex1}>
-              <Field label="Lease End *" errorKey="leaseEnd">
+              <Field label="Lease End *" errorKey="leaseEnd" errors={errors} colors={colors}>
                 <TextInput
                   style={[
                     styles.input,
