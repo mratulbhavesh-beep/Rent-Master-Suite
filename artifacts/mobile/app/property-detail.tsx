@@ -1,47 +1,243 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TextInput,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  Platform,
+  Modal,
+} from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useGetProperty, getGetPropertyQueryKey, useUpdateProperty, useDeleteProperty, PropertyInputStatus, PropertyInputType, PropertyUpdateStatus, PropertyUpdateType } from "@workspace/api-client-react";
+import {
+  useGetProperty,
+  getGetPropertyQueryKey,
+  useUpdateProperty,
+  useDeleteProperty,
+  PropertyUpdateStatus,
+  PropertyUpdateType,
+  useListTenants,
+  getListTenantsQueryKey,
+  useListPayments,
+  getListPaymentsQueryKey,
+  useDeleteTenant,
+  useCreatePayment,
+  PaymentInputMethod,
+  getGetDashboardSummaryQueryKey,
+  Tenant,
+  Payment,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-export default function PropertyDetailScreen() {
-  const { id } = useLocalSearchParams();
-  const propertyId = Number(id);
-  const router = useRouter();
-  const colors = useColors();
-  const insets = useSafeAreaInsets();
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+const fmt = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
+
+function computeBalance(tenant: Tenant, payments: Payment[]): number {
+  const start = new Date(tenant.leaseStart).getTime();
+  const now = Date.now();
+  const months = Math.max(0, Math.floor((now - start) / (1000 * 60 * 60 * 24 * 30.44)));
+  const expected = months * parseFloat(String(tenant.rentAmount));
+  const paid = payments
+    .filter((p) => p.tenantId === tenant.id)
+    .reduce((s, p) => s + parseFloat(String(p.amount)), 0);
+  return Math.max(0, expected - paid);
+}
+
+// ── QuickPay Modal ────────────────────────────────────────────────────────
+// Defined OUTSIDE screen so its type reference is stable across renders
+
+type QuickPayProps = {
+  visible: boolean;
+  tenant: Tenant | null;
+  propertyId: number;
+  onClose: () => void;
+  onSuccess: () => void;
+  colors: ReturnType<typeof useColors>;
+  insetBottom: number;
+};
+
+function QuickPayModal({
+  visible,
+  tenant,
+  propertyId,
+  onClose,
+  onSuccess,
+  colors,
+  insetBottom,
+}: QuickPayProps) {
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState<PaymentInputMethod>(PaymentInputMethod.cash);
+  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  const createPayment = useCreatePayment();
+
+  const methodLabels: Record<PaymentInputMethod, string> = {
+    cash: "Cash",
+    upi: "UPI",
+    bank_transfer: "Bank",
+    cheque: "Cheque",
+    online: "Online",
+  };
+
+  const handlePay = () => {
+    const amt = parseFloat(amount);
+    if (!amount || isNaN(amt) || amt <= 0) {
+      Alert.alert("Error", "Enter a valid amount");
+      return;
+    }
+    if (!tenant) return;
+    const d = new Date(date);
+    createPayment.mutate(
+      {
+        data: {
+          tenantId: tenant.id,
+          propertyId,
+          amount: amt,
+          paymentDate: date,
+          month: d.getMonth() + 1,
+          year: d.getFullYear(),
+          method,
+          status: "paid" as any,
+        },
+      },
+      {
+        onSuccess: () => {
+          setAmount("");
+          setMethod(PaymentInputMethod.cash);
+          setDate(new Date().toISOString().split("T")[0]);
+          onSuccess();
+          onClose();
+        },
+        onError: () => Alert.alert("Error", "Failed to record payment"),
+      }
+    );
+  };
+
+  if (!tenant) return null;
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity style={ms.overlay} activeOpacity={1} onPress={onClose}>
+        <TouchableOpacity
+          style={[ms.sheet, { backgroundColor: colors.card, paddingBottom: insetBottom + 16 }]}
+          activeOpacity={1}
+          onPress={() => {}}
+        >
+          <View style={[ms.handle, { backgroundColor: colors.border }]} />
+          <Text style={[ms.title, { color: colors.foreground }]}>Record Payment</Text>
+          <Text style={[ms.sub, { color: colors.mutedForeground }]}>
+            {tenant.name} · Unit {tenant.unitNumber}
+          </Text>
+
+          <Text style={[ms.lbl, { color: colors.foreground }]}>Amount (₹)</Text>
+          <TextInput
+            style={[ms.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+            value={amount}
+            onChangeText={setAmount}
+            keyboardType="numeric"
+            placeholder={String(Math.round(parseFloat(String(tenant.rentAmount))))}
+            placeholderTextColor={colors.mutedForeground}
+            autoFocus
+          />
+
+          <Text style={[ms.lbl, { color: colors.foreground }]}>Payment Method</Text>
+          <View style={ms.methodRow}>
+            {(Object.values(PaymentInputMethod) as PaymentInputMethod[]).map((m) => (
+              <TouchableOpacity
+                key={m}
+                style={[
+                  ms.methodBtn,
+                  { borderColor: colors.border },
+                  method === m && { backgroundColor: colors.primary, borderColor: colors.primary },
+                ]}
+                onPress={() => setMethod(m)}
+              >
+                <Text style={{ fontSize: 11, color: method === m ? colors.primaryForeground : colors.mutedForeground }}>
+                  {methodLabels[m]}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={[ms.lbl, { color: colors.foreground }]}>Date</Text>
+          <TextInput
+            style={[ms.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+            value={date}
+            onChangeText={setDate}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={colors.mutedForeground}
+          />
+
+          <View style={ms.btnRow}>
+            <TouchableOpacity style={[ms.cancelBtn, { borderColor: colors.border }]} onPress={onClose}>
+              <Text style={{ color: colors.mutedForeground, fontWeight: "600" }}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[ms.confirmBtn, { backgroundColor: colors.primary }, createPayment.isPending && { opacity: 0.7 }]}
+              onPress={handlePay}
+              disabled={createPayment.isPending}
+            >
+              {createPayment.isPending ? (
+                <ActivityIndicator color={colors.primaryForeground} />
+              ) : (
+                <Text style={{ color: colors.primaryForeground, fontWeight: "bold" }}>Record</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
+// ── Edit Property Modal ────────────────────────────────────────────────────
+// Defined OUTSIDE screen for stable component reference
+
+type EditPropertyProps = {
+  visible: boolean;
+  propertyId: number;
+  initial: {
+    name: string;
+    address: string;
+    type: PropertyUpdateType;
+    totalUnits: string;
+    rentAmount: string;
+    status: PropertyUpdateStatus;
+    description: string;
+  };
+  onClose: () => void;
+  onSuccess: () => void;
+  colors: ReturnType<typeof useColors>;
+};
+
+function EditPropertyModal({ visible, propertyId, initial, onClose, onSuccess, colors }: EditPropertyProps) {
+  const [name, setName] = useState(initial.name);
+  const [address, setAddress] = useState(initial.address);
+  const [type, setType] = useState<PropertyUpdateType>(initial.type);
+  const [totalUnits, setTotalUnits] = useState(initial.totalUnits);
+  const [rentAmount, setRentAmount] = useState(initial.rentAmount);
+  const [status, setStatus] = useState<PropertyUpdateStatus>(initial.status);
+  const [description, setDescription] = useState(initial.description);
+  const updateMutation = useUpdateProperty();
   const queryClient = useQueryClient();
 
-  const [isEditing, setIsEditing] = useState(false);
-  const [name, setName] = useState("");
-  const [address, setAddress] = useState("");
-  const [type, setType] = useState<PropertyUpdateType>("apartment");
-  const [totalUnits, setTotalUnits] = useState("");
-  const [rentAmount, setRentAmount] = useState("");
-  const [status, setStatus] = useState<PropertyUpdateStatus>("available");
-  const [description, setDescription] = useState("");
-
-  const { data: property, isLoading } = useGetProperty(propertyId, {
-    query: { queryKey: getGetPropertyQueryKey(propertyId), enabled: !!propertyId }
-  });
-
-  const updateMutation = useUpdateProperty();
-  const deleteMutation = useDeleteProperty();
-
   useEffect(() => {
-    if (property) {
-      setName(property.name);
-      setAddress(property.address);
-      setType(property.type as PropertyUpdateType);
-      setTotalUnits(property.totalUnits.toString());
-      setRentAmount(property.rentAmount.toString());
-      setStatus(property.status as PropertyUpdateStatus);
-      setDescription(property.description || "");
+    if (visible) {
+      setName(initial.name);
+      setAddress(initial.address);
+      setType(initial.type);
+      setTotalUnits(initial.totalUnits);
+      setRentAmount(initial.rentAmount);
+      setStatus(initial.status);
+      setDescription(initial.description);
     }
-  }, [property]);
+  }, [visible]);
 
   const handleSave = () => {
     if (!name || !address || !totalUnits || !rentAmount) {
@@ -58,166 +254,78 @@ export default function PropertyDetailScreen() {
           totalUnits: parseInt(totalUnits, 10),
           rentAmount: parseFloat(rentAmount),
           status,
-          description
-        }
+          description,
+        },
       },
       {
         onSuccess: (data) => {
           queryClient.setQueryData(getGetPropertyQueryKey(propertyId), data);
           queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
-          setIsEditing(false);
+          onSuccess();
+          onClose();
         },
-        onError: () => Alert.alert("Error", "Failed to update property")
+        onError: () => Alert.alert("Error", "Failed to update property"),
       }
     );
   };
-
-  const handleDelete = () => {
-    Alert.alert("Delete Property", "Are you sure you want to delete this property? This action cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => {
-          deleteMutation.mutate(
-            { id: propertyId },
-            {
-              onSuccess: () => {
-                queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
-                router.back();
-              },
-              onError: () => Alert.alert("Error", "Failed to delete property")
-            }
-          );
-        }
-      }
-    ]);
-  };
-
-  if (isLoading) {
-    return (
-      <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
-
-  if (!property) {
-    return (
-      <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-        <Text style={{ color: colors.mutedForeground }}>Property not found.</Text>
-        <TouchableOpacity style={{ marginTop: 16 }} onPress={() => router.back()}>
-          <Text style={{ color: colors.primary }}>Go Back</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.iconButton} onPress={() => router.back()}>
-          <Feather name="arrow-left" size={24} color={colors.foreground} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Property Details</Text>
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          {!isEditing ? (
-            <>
-              <TouchableOpacity style={styles.iconButton} onPress={() => setIsEditing(true)}>
-                <Feather name="edit-2" size={20} color={colors.foreground} />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.iconButton} onPress={handleDelete}>
-                <Feather name="trash-2" size={20} color={colors.destructive} />
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity style={styles.iconButton} onPress={handleSave} disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? (
-                <ActivityIndicator color={colors.primary} />
-              ) : (
-                <Feather name="check" size={24} color={colors.primary} />
-              )}
-            </TouchableOpacity>
-          )}
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <View style={[es.container, { backgroundColor: colors.background }]}>
+        <View style={[es.header, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity style={es.iconBtn} onPress={onClose}>
+            <Feather name="x" size={24} color={colors.foreground} />
+          </TouchableOpacity>
+          <Text style={[es.title, { color: colors.foreground }]}>Edit Property</Text>
+          <TouchableOpacity style={es.iconBtn} onPress={handleSave} disabled={updateMutation.isPending}>
+            {updateMutation.isPending ? (
+              <ActivityIndicator color={colors.primary} />
+            ) : (
+              <Feather name="check" size={24} color={colors.primary} />
+            )}
+          </TouchableOpacity>
         </View>
-      </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {!isEditing ? (
-          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <View style={styles.infoRow}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>Name</Text>
-              <Text style={[styles.value, { color: colors.cardForeground }]}>{property.name}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>Address</Text>
-              <Text style={[styles.value, { color: colors.cardForeground }]}>{property.address}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>Type</Text>
-              <Text style={[styles.value, { color: colors.cardForeground, textTransform: "capitalize" }]}>{property.type}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>Total Units</Text>
-              <Text style={[styles.value, { color: colors.cardForeground }]}>{property.totalUnits}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>Rent/mo</Text>
-              <Text style={[styles.value, { color: colors.cardForeground }]}>₹{property.rentAmount.toLocaleString("en-IN")}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>Status</Text>
-              <Text style={[styles.value, { color: colors.cardForeground, textTransform: "capitalize" }]}>{property.status}</Text>
-            </View>
-            {property.description ? (
-              <View style={styles.infoRowColumn}>
-                <Text style={[styles.label, { color: colors.mutedForeground, marginBottom: 4 }]}>Description</Text>
-                <Text style={[styles.value, { color: colors.cardForeground }]}>{property.description}</Text>
-              </View>
-            ) : null}
-          </View>
-        ) : (
-          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.inputLabel, { color: colors.foreground }]}>Property Name</Text>
+        <ScrollView contentContainerStyle={es.content}>
+          <View style={[es.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[es.lbl, { color: colors.foreground }]}>Property Name *</Text>
             <TextInput
-              style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+              style={[es.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
               value={name}
               onChangeText={setName}
               placeholder="e.g. Sunset Apartments"
               placeholderTextColor={colors.mutedForeground}
             />
 
-            <Text style={[styles.inputLabel, { color: colors.foreground }]}>Address</Text>
+            <Text style={[es.lbl, { color: colors.foreground }]}>Address *</Text>
             <TextInput
-              style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+              style={[es.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
               value={address}
               onChangeText={setAddress}
               placeholder="Full Address"
               placeholderTextColor={colors.mutedForeground}
             />
 
-            <View style={styles.row}>
-              <View style={styles.flex1}>
-                <Text style={[styles.inputLabel, { color: colors.foreground }]}>Type</Text>
-                <View style={styles.segmentedControl}>
-                  {(["apartment", "house", "commercial", "land"] as const).map(t => (
-                    <TouchableOpacity
-                      key={t}
-                      style={[styles.segmentOption, type === t && { backgroundColor: colors.primary }]}
-                      onPress={() => setType(t)}
-                    >
-                      <Text style={{ fontSize: 12, color: type === t ? colors.primaryForeground : colors.mutedForeground, textTransform: "capitalize" }}>{t}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
+            <Text style={[es.lbl, { color: colors.foreground }]}>Property Type</Text>
+            <View style={es.segmented}>
+              {(["apartment", "house", "commercial", "land"] as const).map((t) => (
+                <TouchableOpacity
+                  key={t}
+                  style={[es.seg, type === t && { backgroundColor: colors.primary }]}
+                  onPress={() => setType(t)}
+                >
+                  <Text style={{ fontSize: 11, textTransform: "capitalize", color: type === t ? colors.primaryForeground : colors.mutedForeground }}>
+                    {t}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
 
-            <View style={styles.row}>
-              <View style={styles.flex1}>
-                <Text style={[styles.inputLabel, { color: colors.foreground }]}>Total Units</Text>
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={[es.lbl, { color: colors.foreground }]}>Total Units *</Text>
                 <TextInput
-                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+                  style={[es.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
                   value={totalUnits}
                   onChangeText={setTotalUnits}
                   keyboardType="numeric"
@@ -225,10 +333,10 @@ export default function PropertyDetailScreen() {
                   placeholderTextColor={colors.mutedForeground}
                 />
               </View>
-              <View style={styles.flex1}>
-                <Text style={[styles.inputLabel, { color: colors.foreground }]}>Rent Amount (₹)</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[es.lbl, { color: colors.foreground }]}>Base Rent (₹) *</Text>
                 <TextInput
-                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+                  style={[es.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
                   value={rentAmount}
                   onChangeText={setRentAmount}
                   keyboardType="numeric"
@@ -238,22 +346,24 @@ export default function PropertyDetailScreen() {
               </View>
             </View>
 
-            <Text style={[styles.inputLabel, { color: colors.foreground }]}>Status</Text>
-            <View style={[styles.segmentedControl, { marginBottom: 16 }]}>
-              {(["available", "occupied", "maintenance"] as const).map(s => (
+            <Text style={[es.lbl, { color: colors.foreground }]}>Status</Text>
+            <View style={[es.segmented, { marginBottom: 12 }]}>
+              {(["available", "occupied", "maintenance"] as const).map((s) => (
                 <TouchableOpacity
                   key={s}
-                  style={[styles.segmentOption, status === s && { backgroundColor: colors.primary }]}
+                  style={[es.seg, status === s && { backgroundColor: colors.primary }]}
                   onPress={() => setStatus(s)}
                 >
-                  <Text style={{ fontSize: 12, color: status === s ? colors.primaryForeground : colors.mutedForeground, textTransform: "capitalize" }}>{s}</Text>
+                  <Text style={{ fontSize: 11, textTransform: "capitalize", color: status === s ? colors.primaryForeground : colors.mutedForeground }}>
+                    {s}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
-            <Text style={[styles.inputLabel, { color: colors.foreground }]}>Description (Optional)</Text>
+            <Text style={[es.lbl, { color: colors.foreground }]}>Description (Optional)</Text>
             <TextInput
-              style={[styles.input, styles.textArea, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+              style={[es.input, es.textArea, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
               value={description}
               onChangeText={setDescription}
               multiline
@@ -262,29 +372,517 @@ export default function PropertyDetailScreen() {
               placeholderTextColor={colors.mutedForeground}
             />
           </View>
-        )}
-      </ScrollView>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+// ── Main Screen ───────────────────────────────────────────────────────────
+
+type Tab = "overview" | "info";
+
+export default function PropertyDetailScreen() {
+  const { id } = useLocalSearchParams();
+  const propertyId = Number(id);
+  const router = useRouter();
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
+
+  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const [editOpen, setEditOpen] = useState(false);
+  const [payTenant, setPayTenant] = useState<Tenant | null>(null);
+
+  const { data: property, isLoading: propLoading } = useGetProperty(propertyId, {
+    query: { queryKey: getGetPropertyQueryKey(propertyId), enabled: !!propertyId },
+  });
+
+  const { data: tenants = [], isLoading: tenantsLoading } = useListTenants(
+    { propertyId },
+    { query: { queryKey: getListTenantsQueryKey({ propertyId }) } }
+  );
+
+  const { data: payments = [] } = useListPayments(
+    { propertyId },
+    { query: { queryKey: getListPaymentsQueryKey({ propertyId }) } }
+  );
+
+  const deletePropMutation = useDeleteProperty();
+  const deleteTenantMutation = useDeleteTenant();
+
+  // ── Computed stats ────────────────────────────────────────────────────
+  const totalUnits = property ? parseFloat(String(property.totalUnits)) : 0;
+  const occupiedCount = tenants.length;
+  const vacantCount = Math.max(0, totalUnits - occupiedCount);
+  const totalMonthlyRent = tenants.reduce((s, t) => s + parseFloat(String(t.rentAmount)), 0);
+  const totalPendingDue = tenants.reduce((s, t) => s + computeBalance(t, payments), 0);
+
+  // ── Handlers ──────────────────────────────────────────────────────────
+  const doDeleteProperty = () => {
+    deletePropMutation.mutate(
+      { id: propertyId },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
+          queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+          router.back();
+        },
+        onError: () => Alert.alert("Error", "Failed to delete property"),
+      }
+    );
+  };
+
+  const handleDeleteProperty = () => {
+    const msg = `Delete "${property?.name}"?\n\nAll tenants and payment records will also be removed. This cannot be undone.`;
+    if (Platform.OS === "web") {
+      if (window.confirm(msg)) doDeleteProperty();
+    } else {
+      Alert.alert("Delete Property", msg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: doDeleteProperty },
+      ]);
+    }
+  };
+
+  const doDeleteTenant = (tenantId: number) => {
+    deleteTenantMutation.mutate(
+      { id: tenantId },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey({ propertyId }) });
+          queryClient.invalidateQueries({ queryKey: ["/api/tenants"] });
+          queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+        },
+        onError: () => Alert.alert("Error", "Failed to remove tenant"),
+      }
+    );
+  };
+
+  const handleDeleteTenant = (tenant: Tenant) => {
+    const msg = `Remove "${tenant.name}" from this property?\n\nAll payment and maintenance records will also be deleted.`;
+    if (Platform.OS === "web") {
+      if (window.confirm(msg)) doDeleteTenant(tenant.id);
+    } else {
+      Alert.alert("Remove Tenant", msg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Remove", style: "destructive", onPress: () => doDeleteTenant(tenant.id) },
+      ]);
+    }
+  };
+
+  const refreshPayments = () => {
+    queryClient.invalidateQueries({ queryKey: getListPaymentsQueryKey({ propertyId }) });
+    queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
+    queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+  };
+
+  // ── Loading / not found ───────────────────────────────────────────────
+  if (propLoading) {
+    return (
+      <View style={[s.center, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
+  if (!property) {
+    return (
+      <View style={[s.center, { backgroundColor: colors.background }]}>
+        <Feather name="alert-circle" size={48} color={colors.mutedForeground} />
+        <Text style={{ color: colors.mutedForeground, marginTop: 12 }}>Property not found</Text>
+        <TouchableOpacity style={{ marginTop: 16 }} onPress={() => router.back()}>
+          <Text style={{ color: colors.primary }}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ── Per-tenant status helpers ─────────────────────────────────────────
+  const tenantStatusLabel = (t: Tenant, bal: number) =>
+    t.status === "inactive" ? "Inactive" : bal <= 0 ? "Clear" : "Due";
+  const tenantStatusBg = (t: Tenant, bal: number) =>
+    t.status === "inactive" ? `${colors.mutedForeground}22` : bal <= 0 ? `${colors.success}22` : `${colors.destructive}22`;
+  const tenantStatusFg = (t: Tenant, bal: number) =>
+    t.status === "inactive" ? colors.mutedForeground : bal <= 0 ? colors.success : colors.destructive;
+
+  return (
+    <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+      {/* Header */}
+      <View style={[s.header, { borderBottomColor: colors.border }]}>
+        <TouchableOpacity style={s.iconBtn} onPress={() => router.back()}>
+          <Feather name="arrow-left" size={24} color={colors.foreground} />
+        </TouchableOpacity>
+        <Text style={[s.headerTitle, { color: colors.foreground }]} numberOfLines={1}>
+          {property.name}
+        </Text>
+        <View style={{ flexDirection: "row" }}>
+          <TouchableOpacity style={s.iconBtn} onPress={() => setEditOpen(true)}>
+            <Feather name="edit-2" size={20} color={colors.foreground} />
+          </TouchableOpacity>
+          <TouchableOpacity style={s.iconBtn} onPress={handleDeleteProperty} disabled={deletePropMutation.isPending}>
+            {deletePropMutation.isPending ? (
+              <ActivityIndicator size="small" color={colors.destructive} />
+            ) : (
+              <Feather name="trash-2" size={20} color={colors.destructive} />
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Tab Bar */}
+      <View style={[s.tabBar, { borderBottomColor: colors.border }]}>
+        {(["overview", "info"] as Tab[]).map((tab) => (
+          <TouchableOpacity
+            key={tab}
+            style={[s.tab, activeTab === tab && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+            onPress={() => setActiveTab(tab)}
+          >
+            <Text style={[s.tabText, { color: activeTab === tab ? colors.primary : colors.mutedForeground }]}>
+              {tab === "overview" ? "Overview" : "Property Info"}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* ── OVERVIEW TAB ── */}
+      {activeTab === "overview" ? (
+        <ScrollView contentContainerStyle={s.content}>
+          {/* Summary Card */}
+          <View style={[s.statsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[s.cardTitle, { color: colors.foreground }]}>{property.name}</Text>
+            <Text style={[s.cardSub, { color: colors.mutedForeground }]}>
+              📍 {property.address}
+            </Text>
+
+            <View style={s.statsGrid}>
+              <View style={[s.statBox, { backgroundColor: `${colors.primary}14` }]}>
+                <Text style={[s.statNum, { color: colors.primary }]}>{totalUnits}</Text>
+                <Text style={[s.statLbl, { color: colors.mutedForeground }]}>Total Units</Text>
+              </View>
+              <View style={[s.statBox, { backgroundColor: `${colors.success}14` }]}>
+                <Text style={[s.statNum, { color: colors.success }]}>{occupiedCount}</Text>
+                <Text style={[s.statLbl, { color: colors.mutedForeground }]}>Occupied</Text>
+              </View>
+              <View style={[s.statBox, { backgroundColor: `${colors.mutedForeground}14` }]}>
+                <Text style={[s.statNum, { color: colors.mutedForeground }]}>{vacantCount}</Text>
+                <Text style={[s.statLbl, { color: colors.mutedForeground }]}>Vacant</Text>
+              </View>
+            </View>
+
+            <View style={[s.divider, { backgroundColor: colors.border }]} />
+
+            <View style={s.moneyRow}>
+              <View style={s.moneyStat}>
+                <Text style={[s.moneyNum, { color: colors.foreground }]}>{fmt(totalMonthlyRent)}</Text>
+                <Text style={[s.statLbl, { color: colors.mutedForeground }]}>Monthly Rent</Text>
+              </View>
+              <View style={[s.moneyStat, { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.border }]}>
+                <Text style={[s.moneyNum, { color: totalPendingDue > 0 ? colors.destructive : colors.success }]}>
+                  {fmt(totalPendingDue)}
+                </Text>
+                <Text style={[s.statLbl, { color: colors.mutedForeground }]}>Total Pending Due</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Section: Units & Tenants */}
+          <View style={s.sectionRow}>
+            <Text style={[s.sectionTitle, { color: colors.foreground }]}>Units & Tenants</Text>
+            <TouchableOpacity
+              style={[s.addBtn, { backgroundColor: colors.primary }]}
+              onPress={() => router.push(`/tenant-add?propertyId=${propertyId}` as any)}
+            >
+              <Feather name="user-plus" size={14} color={colors.primaryForeground} />
+              <Text style={[s.addBtnText, { color: colors.primaryForeground }]}>Add Tenant</Text>
+            </TouchableOpacity>
+          </View>
+
+          {tenantsLoading ? (
+            <ActivityIndicator color={colors.primary} style={{ marginVertical: 24 }} />
+          ) : (
+            <>
+              {/* Occupied tenant rows */}
+              {tenants.map((tenant) => {
+                const bal = computeBalance(tenant, payments);
+                return (
+                  <View
+                    key={tenant.id}
+                    style={[s.tenantCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+                  >
+                    {/* Row 1: unit + status + view */}
+                    <View style={s.tcRow}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <Text style={[s.unitNum, { color: colors.primary }]}>Unit {tenant.unitNumber}</Text>
+                        <View style={[s.badge, { backgroundColor: tenantStatusBg(tenant, bal) }]}>
+                          <Text style={[s.badgeText, { color: tenantStatusFg(tenant, bal) }]}>
+                            {tenantStatusLabel(tenant, bal)}
+                          </Text>
+                        </View>
+                      </View>
+                      <TouchableOpacity
+                        style={[s.viewBtn, { borderColor: colors.border }]}
+                        onPress={() => router.push(`/tenant-detail?id=${tenant.id}` as any)}
+                      >
+                        <Text style={[s.viewBtnText, { color: colors.primary }]}>View</Text>
+                        <Feather name="chevron-right" size={13} color={colors.primary} />
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Row 2: name */}
+                    <Text style={[s.tenantName, { color: colors.foreground }]}>{tenant.name}</Text>
+
+                    {/* Row 3: rent + due */}
+                    <View style={s.amountRow}>
+                      <View style={s.amountBox}>
+                        <Text style={[s.amtLbl, { color: colors.mutedForeground }]}>Monthly Rent</Text>
+                        <Text style={[s.amtVal, { color: colors.foreground }]}>
+                          {fmt(parseFloat(String(tenant.rentAmount)))}
+                        </Text>
+                      </View>
+                      <View style={s.amountBox}>
+                        <Text style={[s.amtLbl, { color: colors.mutedForeground }]}>Current Due</Text>
+                        <Text style={[s.amtVal, { color: bal > 0 ? colors.destructive : colors.success }]}>
+                          {bal > 0 ? fmt(bal) : "Nil"}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Row 4: actions */}
+                    <View style={[s.actionRow, { borderTopColor: colors.border }]}>
+                      <TouchableOpacity
+                        style={[s.actionBtn, { backgroundColor: `${colors.primary}14` }]}
+                        onPress={() => setPayTenant(tenant)}
+                      >
+                        <Feather name="credit-card" size={14} color={colors.primary} />
+                        <Text style={[s.actionText, { color: colors.primary }]}>Record Payment</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[s.actionBtn, { backgroundColor: `${colors.destructive}12` }]}
+                        onPress={() => handleDeleteTenant(tenant)}
+                        disabled={deleteTenantMutation.isPending}
+                      >
+                        <Feather name="user-x" size={14} color={colors.destructive} />
+                        <Text style={[s.actionText, { color: colors.destructive }]}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })}
+
+              {/* Vacant unit slots */}
+              {Array.from({ length: vacantCount }).map((_, i) => (
+                <View
+                  key={`vacant-${i}`}
+                  style={[s.vacantCard, { borderColor: colors.border, backgroundColor: `${colors.mutedForeground}08` }]}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <Feather name="home" size={16} color={colors.mutedForeground} />
+                    <Text style={[s.vacantText, { color: colors.mutedForeground }]}>Vacant Unit</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[s.addSmallBtn, { borderColor: colors.primary }]}
+                    onPress={() => router.push(`/tenant-add?propertyId=${propertyId}` as any)}
+                  >
+                    <Feather name="plus" size={13} color={colors.primary} />
+                    <Text style={[s.addSmallText, { color: colors.primary }]}>Add Tenant</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+
+              {tenants.length === 0 && vacantCount === 0 && (
+                <View style={s.emptyState}>
+                  <Feather name="users" size={40} color={colors.mutedForeground} />
+                  <Text style={[s.emptyText, { color: colors.mutedForeground }]}>No tenants added yet</Text>
+                </View>
+              )}
+            </>
+          )}
+        </ScrollView>
+      ) : (
+        /* ── INFO TAB ── */
+        <ScrollView contentContainerStyle={s.content}>
+          <View style={[s.infoCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            {([
+              ["Name", property.name],
+              ["Address", property.address],
+              ["Type", property.type],
+              ["Total Units", String(property.totalUnits)],
+              ["Base Rent/mo", fmt(parseFloat(String(property.rentAmount)))],
+              ["Status", property.status],
+              ...(property.description ? [["Description", property.description]] : []),
+            ] as [string, string][]).map(([label, value]) => (
+              <View key={label} style={[s.infoRow, { borderBottomColor: colors.border }]}>
+                <Text style={[s.infoLbl, { color: colors.mutedForeground }]}>{label}</Text>
+                <Text
+                  style={[
+                    s.infoVal,
+                    { color: colors.foreground },
+                    (label === "Type" || label === "Status") && { textTransform: "capitalize" },
+                  ]}
+                >
+                  {value}
+                </Text>
+              </View>
+            ))}
+          </View>
+
+          <TouchableOpacity
+            style={[s.editInfoBtn, { backgroundColor: colors.primary }]}
+            onPress={() => setEditOpen(true)}
+          >
+            <Feather name="edit-2" size={16} color={colors.primaryForeground} />
+            <Text style={[s.editInfoBtnText, { color: colors.primaryForeground }]}>Edit Property</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      )}
+
+      {/* QuickPay Modal */}
+      <QuickPayModal
+        visible={payTenant !== null}
+        tenant={payTenant}
+        propertyId={propertyId}
+        onClose={() => setPayTenant(null)}
+        onSuccess={refreshPayments}
+        colors={colors}
+        insetBottom={insets.bottom}
+      />
+
+      {/* Edit Property Modal */}
+      {property && (
+        <EditPropertyModal
+          visible={editOpen}
+          propertyId={propertyId}
+          initial={{
+            name: property.name,
+            address: property.address,
+            type: property.type as PropertyUpdateType,
+            totalUnits: String(property.totalUnits),
+            rentAmount: String(parseFloat(String(property.rentAmount))),
+            status: property.status as PropertyUpdateStatus,
+            description: property.description || "",
+          }}
+          onClose={() => setEditOpen(false)}
+          onSuccess={() => {}}
+          colors={colors}
+        />
+      )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+// ── StyleSheets ───────────────────────────────────────────────────────────
+
+const s = StyleSheet.create({
   container: { flex: 1 },
-  centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: "rgba(0,0,0,0.05)" },
-  iconButton: { width: 40, height: 40, justifyContent: "center", alignItems: "center" },
-  headerTitle: { fontSize: 20, fontWeight: "bold" },
-  content: { padding: 16 },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
+
+  // Header
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  iconBtn: { width: 42, height: 42, justifyContent: "center", alignItems: "center" },
+  headerTitle: { fontSize: 17, fontWeight: "bold", flex: 1, textAlign: "center" },
+
+  // Tabs
+  tabBar: { flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
+  },
+  tabText: { fontSize: 14, fontWeight: "600" },
+
+  content: { padding: 16, paddingBottom: 48 },
+
+  // Stats card
+  statsCard: { padding: 16, borderRadius: 16, borderWidth: 1, marginBottom: 20 },
+  cardTitle: { fontSize: 17, fontWeight: "bold", marginBottom: 2 },
+  cardSub: { fontSize: 13, marginBottom: 14 },
+  statsGrid: { flexDirection: "row", gap: 8, marginBottom: 14 },
+  statBox: { flex: 1, padding: 12, borderRadius: 12, alignItems: "center" },
+  statNum: { fontSize: 22, fontWeight: "bold" },
+  statLbl: { fontSize: 11, marginTop: 2, textAlign: "center" },
+  divider: { height: StyleSheet.hairlineWidth, marginBottom: 14 },
+  moneyRow: { flexDirection: "row" },
+  moneyStat: { flex: 1, alignItems: "center", paddingVertical: 2 },
+  moneyNum: { fontSize: 17, fontWeight: "bold" },
+
+  // Section header
+  sectionRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  sectionTitle: { fontSize: 15, fontWeight: "700" },
+  addBtn: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20 },
+  addBtnText: { fontSize: 13, fontWeight: "600" },
+
+  // Tenant card
+  tenantCard: { borderRadius: 14, borderWidth: 1, marginBottom: 12, overflow: "hidden" },
+  tcRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 14, paddingTop: 12, paddingBottom: 4 },
+  unitNum: { fontSize: 12, fontWeight: "700" },
+  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+  badgeText: { fontSize: 10, fontWeight: "700" },
+  viewBtn: { flexDirection: "row", alignItems: "center", gap: 2, borderWidth: StyleSheet.hairlineWidth, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5 },
+  viewBtnText: { fontSize: 12, fontWeight: "600" },
+  tenantName: { fontSize: 16, fontWeight: "600", paddingHorizontal: 14, paddingBottom: 10 },
+  amountRow: { flexDirection: "row", paddingHorizontal: 14, paddingBottom: 10, gap: 28 },
+  amountBox: {},
+  amtLbl: { fontSize: 11, marginBottom: 2 },
+  amtVal: { fontSize: 15, fontWeight: "700" },
+  actionRow: { flexDirection: "row", borderTopWidth: StyleSheet.hairlineWidth, padding: 10, gap: 8 },
+  actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 8, borderRadius: 10 },
+  actionText: { fontSize: 12, fontWeight: "600" },
+
+  // Vacant card
+  vacantCard: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 14, borderRadius: 14, borderWidth: 1, borderStyle: "dashed", marginBottom: 12 },
+  vacantText: { fontSize: 14, fontWeight: "500" },
+  addSmallBtn: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  addSmallText: { fontSize: 12, fontWeight: "600" },
+
+  // Empty state
+  emptyState: { alignItems: "center", paddingVertical: 40 },
+  emptyText: { marginTop: 12, fontSize: 14 },
+
+  // Info tab
+  infoCard: { borderRadius: 16, borderWidth: 1, marginBottom: 16, overflow: "hidden" },
+  infoRow: { flexDirection: "row", justifyContent: "space-between", padding: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  infoLbl: { fontSize: 14, fontWeight: "500" },
+  infoVal: { fontSize: 14, fontWeight: "600", maxWidth: "55%", textAlign: "right" },
+  editInfoBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, height: 50, borderRadius: 12 },
+  editInfoBtnText: { fontSize: 15, fontWeight: "bold" },
+});
+
+// QuickPay modal styles
+const ms = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.48)", justifyContent: "flex-end" },
+  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingTop: 12 },
+  handle: { width: 40, height: 4, borderRadius: 2, alignSelf: "center", marginBottom: 16 },
+  title: { fontSize: 18, fontWeight: "bold", marginBottom: 4 },
+  sub: { fontSize: 13, marginBottom: 12 },
+  lbl: { fontSize: 14, fontWeight: "600", marginBottom: 6, marginTop: 10 },
+  input: { height: 48, borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, fontSize: 16 },
+  methodRow: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
+  methodBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
+  btnRow: { flexDirection: "row", gap: 10, marginTop: 20 },
+  cancelBtn: { flex: 1, height: 48, borderRadius: 10, borderWidth: 1, justifyContent: "center", alignItems: "center" },
+  confirmBtn: { flex: 2, height: 48, borderRadius: 10, justifyContent: "center", alignItems: "center" },
+});
+
+// Edit property modal styles
+const es = StyleSheet.create({
+  container: { flex: 1 },
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  iconBtn: { width: 40, height: 40, justifyContent: "center", alignItems: "center" },
+  title: { fontSize: 18, fontWeight: "bold" },
+  content: { padding: 16, paddingBottom: 48 },
   card: { padding: 20, borderRadius: 16, borderWidth: 1 },
-  infoRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(0,0,0,0.1)" },
-  infoRowColumn: { paddingVertical: 12 },
-  label: { fontSize: 14, fontWeight: "500" },
-  value: { fontSize: 16, fontWeight: "600" },
-  inputLabel: { fontSize: 14, fontWeight: "600", marginBottom: 8, marginTop: 12 },
+  lbl: { fontSize: 14, fontWeight: "600", marginBottom: 8, marginTop: 12 },
   input: { height: 48, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, fontSize: 16 },
   textArea: { height: 80, paddingTop: 12, textAlignVertical: "top" },
-  row: { flexDirection: "row", gap: 12 },
-  flex1: { flex: 1 },
-  segmentedControl: { flexDirection: "row", backgroundColor: "rgba(0,0,0,0.05)", borderRadius: 8, padding: 4 },
-  segmentOption: { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: 6 },
+  segmented: { flexDirection: "row", backgroundColor: "rgba(0,0,0,0.05)", borderRadius: 8, padding: 4 },
+  seg: { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: 6 },
 });

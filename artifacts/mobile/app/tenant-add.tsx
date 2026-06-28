@@ -10,7 +10,7 @@ import {
   ScrollView,
   Platform,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   useCreateTenant,
   useListProperties,
@@ -56,6 +56,7 @@ function Field({
 
 export default function TenantAddScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
@@ -63,7 +64,9 @@ export default function TenantAddScreen() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [propertyId, setPropertyId] = useState<number | null>(null);
+  const [propertyId, setPropertyId] = useState<number | null>(
+    params.propertyId ? Number(params.propertyId) : null
+  );
   const [unitNumber, setUnitNumber] = useState("");
   const [rentAmount, setRentAmount] = useState("");
   const [leaseStart, setLeaseStart] = useState(today);
