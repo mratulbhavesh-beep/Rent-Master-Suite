@@ -63,46 +63,53 @@ export default function DashboardScreen() {
       >
         <View style={styles.grid}>
           <SummaryCard 
-            title="Monthly Income" 
+            title="Today's Collection" 
+            value={formatCurrency(summary?.todayCollection)} 
+            icon="sun" 
+            color={colors.success}
+            onPress={() => router.push("/payments")}
+          />
+          <SummaryCard 
+            title="This Month" 
             value={formatCurrency(summary?.monthlyIncome)} 
             icon="trending-up" 
-            color={colors.success}
+            color={colors.primary}
             onPress={() => router.push("/reports")}
           />
           <SummaryCard 
-            title="Overdue Rents" 
+            title="Total Outstanding" 
             value={formatCurrency(summary?.overdueRents)} 
             icon="alert-circle" 
             color={colors.destructive}
             onPress={() => router.push("/payments")}
           />
           <SummaryCard 
+            title="Rent Due (Month)" 
+            value={formatCurrency(summary?.rentDueThisMonth)} 
+            icon="calendar" 
+            color={colors.warning}
+            onPress={() => router.push("/payments")}
+          />
+          <SummaryCard 
             title="Total Properties" 
             value={summary?.totalProperties || 0} 
             icon="home" 
-            color={colors.primary}
+            color={colors.accent}
             onPress={() => router.push("/properties")}
           />
           <SummaryCard 
             title="Active Tenants" 
             value={summary?.totalTenants || 0} 
             icon="users" 
-            color={colors.accent}
+            color={colors.tint}
             onPress={() => router.push("/tenants")}
           />
           <SummaryCard 
-            title="Pending Maintenance" 
+            title="Maintenance" 
             value={summary?.pendingMaintenance || 0} 
             icon="tool" 
-            color={colors.warning}
+            color={colors.mutedForeground}
             onPress={() => router.push("/maintenance")}
-          />
-          <SummaryCard 
-            title="Rent Due" 
-            value={formatCurrency(summary?.rentDueThisMonth)} 
-            icon="calendar" 
-            color={colors.tint}
-            onPress={() => router.push("/payments")}
           />
         </View>
       </ScrollView>

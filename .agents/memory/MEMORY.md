@@ -2,3 +2,6 @@
 - [Occupancy pattern](occupancy-pattern.md) — properties list API returns occupiedUnits (active tenants count) via server-side join; frontend uses (item as any).occupiedUnits
 - [TS cast patterns](ts-cast-patterns.md) — use `as unknown as T` not `as T` for non-overlapping types (TenantWithBalance[], Record<> from colors object)
 - [Payment route pre-selection](payment-pre-selection.md) — payment-add reads tenantId+propertyId from URL params; tenant-detail passes both in Record Payment link
+- [WhatsApp Linking pattern](whatsapp-linking.md) — normalize Indian phone to E.164 before opening whatsapp:// URL; always .catch() the Linking.openURL call
+- [Payment API unitNumber](payment-api-unit.md) — unitNumber added to payment responses via tenantsTable join in formatPayment(); openapi.yaml Payment schema updated
+- [Dashboard todayCollection](dashboard-today.md) — paymentDate added to allPayments select; todayCollection filters by YYYY-MM-DD string match against todayStr

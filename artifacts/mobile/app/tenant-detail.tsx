@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform, Linking } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useGetTenant, getGetTenantQueryKey, useUpdateTenant, useDeleteTenant, useDeletePayment, useListPayments, getListPaymentsQueryKey, getListTenantsQueryKey, getGetDashboardSummaryQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -280,15 +280,54 @@ export default function TenantDetailScreen() {
             ))}
           </View>
 
-          {/* Record Payment button */}
-          <TouchableOpacity
-            style={[styles.recordBtn, { backgroundColor: colors.primary, marginTop: 16 }]}
-            onPress={() => router.push(`/payment-add?tenantId=${tenantId}&propertyId=${tenant.propertyId}` as any)}
-            activeOpacity={0.85}
-          >
-            <Feather name="plus-circle" size={18} color={colors.primaryForeground} />
-            <Text style={{ color: colors.primaryForeground, fontWeight: "700", fontSize: 16 }}>Record Payment</Text>
-          </TouchableOpacity>
+          {/* Action buttons */}
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
+            <TouchableOpacity
+              style={[styles.recordBtn, { backgroundColor: colors.primary, flex: 1 }]}
+              onPress={() => router.push(`/payment-add?tenantId=${tenantId}&propertyId=${tenant.propertyId}` as any)}
+              activeOpacity={0.85}
+            >
+              <Feather name="plus-circle" size={16} color={colors.primaryForeground} />
+              <Text style={{ color: colors.primaryForeground, fontWeight: "700", fontSize: 14 }}>Record Payment</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.recordBtn, { backgroundColor: "#25D366", flex: 1 }]}
+              onPress={() => {
+                if (!tenant.phone) {
+                  Alert.alert("No Phone Number", "This tenant has no phone number on file.");
+                  return;
+                }
+                let digits = tenant.phone.replace(/\D/g, "");
+                if (digits.length === 10) digits = "91" + digits;
+                else if (digits.startsWith("0")) digits = "91" + digits.slice(1);
+                const leaseEndStr = new Date(tenant.leaseEnd).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
+                const message = [
+                  `Hello ${tenant.name},`,
+                  ``,
+                  `This is a friendly reminder for your rent payment.`,
+                  ``,
+                  `🏠 Property: ${tenant.propertyName}`,
+                  `📦 Unit: ${tenant.unitNumber}`,
+                  `💰 Monthly Rent: ₹${Math.round(tenant.rentAmount).toLocaleString("en-IN")}`,
+                  `⚠️ Balance Due: ₹${Math.round(balanceDue).toLocaleString("en-IN")}`,
+                  `📅 Lease End: ${leaseEndStr}`,
+                  ``,
+                  `Please make the payment at your earliest convenience.`,
+                  ``,
+                  `Thank you,`,
+                  `Gemini Rent Manager`,
+                ].join("\n");
+                const url = `whatsapp://send?phone=${digits}&text=${encodeURIComponent(message)}`;
+                Linking.openURL(url).catch(() =>
+                  Alert.alert("WhatsApp Not Available", "Please check if WhatsApp is installed and the phone number is valid.")
+                );
+              }}
+              activeOpacity={0.85}
+            >
+              <Feather name="message-circle" size={16} color="#fff" />
+              <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>Send Reminder</Text>
+            </TouchableOpacity>
+          </View>
 
           {/* Security Deposit card */}
           {(() => {

@@ -814,7 +814,7 @@ components:
 
     DashboardSummary:
       type: object
-      required: [totalProperties, totalTenants, rentDueThisMonth, monthlyIncome, pendingMaintenance, overdueRents]
+      required: [totalProperties, totalTenants, rentDueThisMonth, monthlyIncome, todayCollection, pendingMaintenance, overdueRents]
       properties:
         totalProperties:
           type: integer
@@ -823,6 +823,8 @@ components:
         rentDueThisMonth:
           type: number
         monthlyIncome:
+          type: number
+        todayCollection:
           type: number
         pendingMaintenance:
           type: integer
@@ -1026,6 +1028,8 @@ components:
         tenantId:
           type: integer
         tenantName:
+          type: ["string", "null"]
+        unitNumber:
           type: ["string", "null"]
         propertyId:
           type: integer

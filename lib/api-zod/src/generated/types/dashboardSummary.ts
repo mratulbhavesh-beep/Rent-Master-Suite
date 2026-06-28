@@ -11,6 +11,7 @@ export interface DashboardSummary {
   totalTenants: number;
   rentDueThisMonth: number;
   monthlyIncome: number;
+  todayCollection: number;
   pendingMaintenance: number;
   overdueRents: number;
 }

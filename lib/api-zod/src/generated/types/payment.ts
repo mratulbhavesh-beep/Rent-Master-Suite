@@ -13,6 +13,8 @@ export interface Payment {
   tenantId: number;
   /** @nullable */
   tenantName?: string | null;
+  /** @nullable */
+  unitNumber?: string | null;
   propertyId: number;
   /** @nullable */
   propertyName?: string | null;

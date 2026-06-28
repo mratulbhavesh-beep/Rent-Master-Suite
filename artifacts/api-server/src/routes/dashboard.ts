@@ -32,11 +32,17 @@ router.get("/dashboard/summary", requireAuth, async (_req, res): Promise<void> =
 
   // All payments for active tenants
   const activeTenantIds = activeTenants.map(t => t.id);
+  const todayStr = now.toISOString().split("T")[0];
   const allPayments = activeTenantIds.length > 0
-    ? await db.select({ tenantId: paymentsTable.tenantId, amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year })
+    ? await db.select({ tenantId: paymentsTable.tenantId, amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year, paymentDate: paymentsTable.paymentDate })
         .from(paymentsTable)
         .where(inArray(paymentsTable.tenantId, activeTenantIds))
     : [];
+
+  // Today's collection: sum of payments received today
+  const todayCollection = allPayments
+    .filter(p => p.paymentDate === todayStr)
+    .reduce((s, p) => s + parseFloat(String(p.amount)), 0);
 
   // Monthly income: sum of all payments received this month
   const monthlyIncome = allPayments
@@ -67,8 +73,9 @@ router.get("/dashboard/summary", requireAuth, async (_req, res): Promise<void> =
     totalTenants: activeTenants.length,
     rentDueThisMonth,
     monthlyIncome,
+    todayCollection,
     pendingMaintenance: pendingMaintenance.count,
-    overdueRents: totalDue,          // total unpaid balance across all active tenants
+    overdueRents: totalDue,
   });
 });
 

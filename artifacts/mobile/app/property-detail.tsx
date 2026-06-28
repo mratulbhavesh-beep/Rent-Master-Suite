@@ -10,6 +10,7 @@ import {
   Alert,
   Platform,
   Modal,
+  Linking,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
@@ -409,6 +410,37 @@ export default function PropertyDetailScreen() {
   const totalPendingDue = tenants.reduce((s, t) => s + ((t as any).balanceDue ?? 0), 0);
 
   // ── Handlers ──────────────────────────────────────────────────────────
+  const handleWhatsAppRemind = (tenant: Tenant) => {
+    const rawPhone = (tenant as any).phone as string | undefined;
+    if (!rawPhone) {
+      Alert.alert("No Phone Number", "This tenant has no phone number on file.");
+      return;
+    }
+    let digits = rawPhone.replace(/\D/g, "");
+    if (digits.length === 10) digits = "91" + digits;
+    else if (digits.startsWith("0")) digits = "91" + digits.slice(1);
+    const bal = (tenant as any).balanceDue ?? 0;
+    const message = [
+      `Hello ${tenant.name},`,
+      ``,
+      `This is a friendly reminder for your rent payment.`,
+      ``,
+      `🏠 Property: ${property?.name ?? ""}`,
+      `📦 Unit: ${tenant.unitNumber}`,
+      `💰 Monthly Rent: ₹${Math.round(parseFloat(String(tenant.rentAmount))).toLocaleString("en-IN")}`,
+      `⚠️ Balance Due: ₹${Math.round(bal).toLocaleString("en-IN")}`,
+      ``,
+      `Please make the payment at your earliest convenience.`,
+      ``,
+      `Thank you,`,
+      `Gemini Rent Manager`,
+    ].join("\n");
+    const url = `whatsapp://send?phone=${digits}&text=${encodeURIComponent(message)}`;
+    Linking.openURL(url).catch(() =>
+      Alert.alert("WhatsApp Not Available", "Please check if WhatsApp is installed.")
+    );
+  };
+
   const doDeleteProperty = () => {
     deletePropMutation.mutate(
       { id: propertyId },
@@ -645,7 +677,14 @@ export default function PropertyDetailScreen() {
                         onPress={() => setPayTenant(tenant)}
                       >
                         <Feather name="credit-card" size={14} color={colors.primary} />
-                        <Text style={[s.actionText, { color: colors.primary }]}>Record Payment</Text>
+                        <Text style={[s.actionText, { color: colors.primary }]}>Payment</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[s.actionBtn, { backgroundColor: "#25D36618" }]}
+                        onPress={() => handleWhatsAppRemind(tenant)}
+                      >
+                        <Feather name="message-circle" size={14} color="#25D366" />
+                        <Text style={[s.actionText, { color: "#25D366" }]}>Remind</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={[s.actionBtn, { backgroundColor: `${colors.destructive}12` }]}

@@ -5,12 +5,13 @@ import { requireAuth } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
-function formatPayment(p: typeof paymentsTable.$inferSelect, tenantName?: string | null, propertyName?: string | null) {
+function formatPayment(p: typeof paymentsTable.$inferSelect, tenantName?: string | null, propertyName?: string | null, unitNumber?: string | null) {
   return {
     ...p,
     amount: parseFloat(String(p.amount)),
     tenantName: tenantName ?? null,
     propertyName: propertyName ?? null,
+    unitNumber: unitNumber ?? null,
     createdAt: p.createdAt.toISOString(),
   };
 }
@@ -22,7 +23,7 @@ function generateReceiptNumber(): string {
 router.get("/payments", requireAuth, async (req, res): Promise<void> => {
   const { tenantId, propertyId, month, status } = req.query as { tenantId?: string; propertyId?: string; month?: string; status?: string };
   const rows = await db
-    .select({ payment: paymentsTable, tenantName: tenantsTable.name, propertyName: propertiesTable.name })
+    .select({ payment: paymentsTable, tenantName: tenantsTable.name, propertyName: propertiesTable.name, unitNumber: tenantsTable.unitNumber })
     .from(paymentsTable)
     .leftJoin(tenantsTable, eq(paymentsTable.tenantId, tenantsTable.id))
     .leftJoin(propertiesTable, eq(paymentsTable.propertyId, propertiesTable.id));
@@ -40,7 +41,7 @@ router.get("/payments", requireAuth, async (req, res): Promise<void> => {
       results = results.filter(r => r.payment.month === m);
     }
   }
-  res.json(results.map(r => formatPayment(r.payment, r.tenantName, r.propertyName)));
+  res.json(results.map(r => formatPayment(r.payment, r.tenantName, r.propertyName, r.unitNumber)));
 });
 
 router.post("/payments", requireAuth, async (req, res): Promise<void> => {
@@ -56,20 +57,20 @@ router.post("/payments", requireAuth, async (req, res): Promise<void> => {
   }).returning();
   const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, payment.tenantId));
   const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, payment.propertyId));
-  res.status(201).json(formatPayment(payment, tenant?.name, property?.name));
+  res.status(201).json(formatPayment(payment, tenant?.name, property?.name, tenant?.unitNumber));
 });
 
 router.get("/payments/:id", requireAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   const [row] = await db
-    .select({ payment: paymentsTable, tenantName: tenantsTable.name, propertyName: propertiesTable.name })
+    .select({ payment: paymentsTable, tenantName: tenantsTable.name, propertyName: propertiesTable.name, unitNumber: tenantsTable.unitNumber })
     .from(paymentsTable)
     .leftJoin(tenantsTable, eq(paymentsTable.tenantId, tenantsTable.id))
     .leftJoin(propertiesTable, eq(paymentsTable.propertyId, propertiesTable.id))
     .where(eq(paymentsTable.id, id));
   if (!row) { res.status(404).json({ error: "Payment not found" }); return; }
-  res.json(formatPayment(row.payment, row.tenantName, row.propertyName));
+  res.json(formatPayment(row.payment, row.tenantName, row.propertyName, row.unitNumber));
 });
 
 router.put("/payments/:id", requireAuth, async (req, res): Promise<void> => {
@@ -88,7 +89,7 @@ router.put("/payments/:id", requireAuth, async (req, res): Promise<void> => {
   if (!payment) { res.status(404).json({ error: "Payment not found" }); return; }
   const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, payment.tenantId));
   const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, payment.propertyId));
-  res.json(formatPayment(payment, tenant?.name, property?.name));
+  res.json(formatPayment(payment, tenant?.name, property?.name, tenant?.unitNumber));
 });
 
 router.delete("/payments/:id", requireAuth, async (req, res): Promise<void> => {

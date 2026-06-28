@@ -10,7 +10,7 @@ import {
   Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useGetPayment, getGetPaymentQueryKey, useDeletePayment, getListPaymentsQueryKey, getGetDashboardSummaryQueryKey, getListTenantsQueryKey, getGetTenantQueryKey } from "@workspace/api-client-react";
+import { useGetPayment, getGetPaymentQueryKey, useGetTenant, useDeletePayment, getListPaymentsQueryKey, getGetDashboardSummaryQueryKey, getListTenantsQueryKey, getGetTenantQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 
-function buildReceiptHTML(payment: any): string {
+function buildReceiptHTML(payment: any, remainingBalance?: number): string {
   const dateStr = new Date(payment.paymentDate).toLocaleDateString("en-IN", {
     year: "numeric",
     month: "long",
@@ -30,6 +30,10 @@ function buildReceiptHTML(payment: any): string {
   );
   const methodLabel = payment.method.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
   const statusColor = payment.status === "paid" ? "#22c55e" : payment.status === "partial" ? "#f59e0b" : "#ef4444";
+  const balColor = remainingBalance != null && remainingBalance > 0 ? "#ef4444" : "#22c55e";
+  const balLabel = remainingBalance != null && remainingBalance > 0
+    ? `₹${Math.round(remainingBalance).toLocaleString("en-IN")} outstanding`
+    : "All paid up";
 
   return `
 <!DOCTYPE html>
@@ -39,21 +43,29 @@ function buildReceiptHTML(payment: any): string {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, Arial, sans-serif; background: #f8fafc; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 24px; }
+  body { font-family: -apple-system, Arial, sans-serif; background: #f8fafc; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; padding: 24px; }
   .receipt { background: white; border-radius: 16px; padding: 36px; max-width: 480px; width: 100%; box-shadow: 0 4px 24px rgba(0,0,0,0.08); }
-  .header { text-align: center; margin-bottom: 32px; }
+  .header { text-align: center; margin-bottom: 28px; }
   .brand { font-size: 13px; font-weight: 700; color: #1B4F8A; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 8px; }
-  .check-circle { width: 72px; height: 72px; background: #dcfce7; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 16px auto; font-size: 36px; }
-  .amount { font-size: 42px; font-weight: 800; color: #0f172a; margin: 8px 0 4px; }
+  .check-circle { width: 64px; height: 64px; background: #dcfce7; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 12px auto; font-size: 32px; line-height: 64px; text-align: center; }
+  .amount { font-size: 40px; font-weight: 800; color: #0f172a; margin: 8px 0 4px; }
   .status-badge { display: inline-block; padding: 4px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; background: ${statusColor}20; color: ${statusColor}; text-transform: uppercase; }
-  .divider { height: 1px; background: #e2e8f0; margin: 24px 0; }
-  .row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+  .divider { height: 1px; background: #e2e8f0; margin: 20px 0; }
+  .row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
   .row-label { font-size: 13px; color: #64748b; font-weight: 500; }
   .row-value { font-size: 14px; color: #0f172a; font-weight: 600; text-align: right; max-width: 60%; }
   .receipt-no { font-family: monospace; font-size: 13px; color: #1B4F8A; }
+  .balance-box { background: ${balColor}0f; border: 1px solid ${balColor}30; border-radius: 10px; padding: 12px 16px; margin: 16px 0; display: flex; justify-content: space-between; align-items: center; }
+  .balance-label { font-size: 12px; color: #64748b; }
+  .balance-value { font-size: 14px; font-weight: 700; color: ${balColor}; }
+  .sig-section { margin-top: 28px; }
+  .sig-title { font-size: 12px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 48px; }
+  .sig-line { border-top: 1px solid #cbd5e1; padding-top: 6px; }
+  .sig-name { font-size: 12px; color: #0f172a; font-weight: 600; }
+  .sig-sub { font-size: 10px; color: #94a3b8; }
   .footer { text-align: center; margin-top: 24px; }
   .footer-text { font-size: 11px; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase; }
-  .watermark { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+  .watermark { font-size: 10px; color: #cbd5e1; margin-top: 4px; }
   @media print { body { padding: 0; } .receipt { box-shadow: none; border: 1px solid #e2e8f0; } }
 </style>
 </head>
@@ -70,10 +82,23 @@ function buildReceiptHTML(payment: any): string {
   <div class="row"><span class="row-label">Date</span><span class="row-value">${dateStr}</span></div>
   <div class="row"><span class="row-label">Tenant</span><span class="row-value">${payment.tenantName || "—"}</span></div>
   <div class="row"><span class="row-label">Property</span><span class="row-value">${payment.propertyName || "—"}</span></div>
+  ${payment.unitNumber ? `<div class="row"><span class="row-label">Unit</span><span class="row-value">${payment.unitNumber}</span></div>` : ""}
   <div class="row"><span class="row-label">For Month</span><span class="row-value">${monthLabel}</span></div>
   <div class="row"><span class="row-label">Payment Method</span><span class="row-value">${methodLabel}</span></div>
   ${payment.notes ? `<div class="row"><span class="row-label">Notes</span><span class="row-value">${payment.notes}</span></div>` : ""}
+  ${remainingBalance != null ? `
+  <div class="balance-box">
+    <span class="balance-label">Balance After This Payment</span>
+    <span class="balance-value">${balLabel}</span>
+  </div>` : ""}
   <div class="divider"></div>
+  <div class="sig-section">
+    <div class="sig-title">Authorized Signature</div>
+    <div class="sig-line">
+      <div class="sig-name">Property Owner / Manager</div>
+      <div class="sig-sub">Gemini Rent Manager</div>
+    </div>
+  </div>
   <div class="footer">
     <div class="footer-text">Thank you for your payment</div>
     <div class="watermark">Generated by Gemini Rent Manager</div>
@@ -97,6 +122,13 @@ export default function PaymentReceiptScreen() {
   const { data: payment, isLoading } = useGetPayment(paymentId, {
     query: { queryKey: getGetPaymentQueryKey(paymentId), enabled: !!paymentId },
   });
+
+  const { data: tenantData } = useGetTenant(payment?.tenantId ?? 0, {
+    query: { queryKey: getGetTenantQueryKey(payment?.tenantId ?? 0), enabled: !!payment?.tenantId },
+  });
+  const remainingBalance: number | undefined = payment?.tenantId && tenantData
+    ? ((tenantData as any).balanceDue ?? undefined)
+    : undefined;
 
   const handleDeletePayment = () => {
     if (!payment) return;
@@ -132,7 +164,7 @@ export default function PaymentReceiptScreen() {
     if (!payment) return;
     setShareLoading(true);
     try {
-      const html = buildReceiptHTML(payment);
+      const html = buildReceiptHTML(payment, remainingBalance);
       if (Platform.OS === "web") {
         // On web: open print dialog
         await Print.printAsync({ html });
@@ -161,7 +193,7 @@ export default function PaymentReceiptScreen() {
     if (!payment) return;
     setShareLoading(true);
     try {
-      await Print.printAsync({ html: buildReceiptHTML(payment) });
+      await Print.printAsync({ html: buildReceiptHTML(payment, remainingBalance) });
     } catch {
       Alert.alert("Error", "Could not open print dialog");
     } finally {

@@ -7,10 +7,12 @@ import {
   RefreshControl,
   TouchableOpacity,
   ScrollView,
+  TextInput,
 } from "react-native";
 import {
   useListPayments,
   getListPaymentsQueryKey,
+  useListProperties,
   Payment,
 } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -31,6 +33,14 @@ const METHOD_ICONS: Record<string, string> = {
   online: "globe",
 };
 
+const STATUS_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "paid", label: "Paid" },
+  { key: "partial", label: "Partial" },
+  { key: "pending", label: "Pending" },
+  { key: "overdue", label: "Overdue" },
+];
+
 export default function PaymentsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -39,6 +49,9 @@ export default function PaymentsScreen() {
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [selectedYear] = useState(now.getFullYear());
+  const [searchText, setSearchText] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [propertyFilter, setPropertyFilter] = useState<number | null>(null);
 
   const monthStr = selectedMonth.toString();
   const { data: allPayments, isLoading, isFetching, refetch } = useListPayments(
@@ -51,6 +64,26 @@ export default function PaymentsScreen() {
       refetch();
     }, [refetch])
   );
+
+  const { data: properties } = useListProperties({});
+
+  const filteredPayments = useMemo(() => {
+    let result = allPayments || [];
+    if (searchText.trim()) {
+      const q = searchText.trim().toLowerCase();
+      result = result.filter(p =>
+        p.tenantName?.toLowerCase().includes(q) ||
+        p.propertyName?.toLowerCase().includes(q)
+      );
+    }
+    if (statusFilter !== "all") {
+      result = result.filter(p => p.status === statusFilter);
+    }
+    if (propertyFilter !== null) {
+      result = result.filter(p => p.propertyId === propertyFilter);
+    }
+    return result;
+  }, [allPayments, searchText, statusFilter, propertyFilter]);
 
   const stats = useMemo(() => {
     const payments = allPayments || [];
@@ -96,7 +129,7 @@ export default function PaymentsScreen() {
             {item.tenantName}
           </Text>
           <Text style={[styles.propertyName, { color: colors.mutedForeground }]}>
-            {item.propertyName}
+            {item.propertyName}{(item as any).unitNumber ? ` · Unit ${(item as any).unitNumber}` : ""}
           </Text>
         </View>
         <View style={styles.cardRight}>
@@ -198,6 +231,60 @@ export default function PaymentsScreen() {
         })}
       </ScrollView>
 
+      {/* Search bar */}
+      <View style={[styles.searchRow, { backgroundColor: colors.input, borderColor: colors.border }]}>
+        <Feather name="search" size={16} color={colors.mutedForeground} />
+        <TextInput
+          style={[styles.searchInput, { color: colors.text }]}
+          placeholder="Search tenant or property…"
+          placeholderTextColor={colors.mutedForeground}
+          value={searchText}
+          onChangeText={setSearchText}
+        />
+        {searchText.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchText("")}>
+            <Feather name="x" size={16} color={colors.mutedForeground} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Status filter chips */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.filterScroll}
+      >
+        {STATUS_FILTERS.map((f) => {
+          const active = statusFilter === f.key;
+          return (
+            <TouchableOpacity
+              key={f.key}
+              style={[styles.filterChip, active && { backgroundColor: colors.primary }]}
+              onPress={() => setStatusFilter(f.key)}
+            >
+              <Text style={[styles.filterChipText, { color: active ? colors.primaryForeground : colors.mutedForeground }]}>
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+        <View style={{ width: 1, height: 24, backgroundColor: colors.border, marginHorizontal: 4, alignSelf: "center" }} />
+        {(properties || []).map((prop) => {
+          const active = propertyFilter === prop.id;
+          return (
+            <TouchableOpacity
+              key={prop.id}
+              style={[styles.filterChip, active && { backgroundColor: colors.primary }]}
+              onPress={() => setPropertyFilter(active ? null : prop.id)}
+            >
+              <Text style={[styles.filterChipText, { color: active ? colors.primaryForeground : colors.mutedForeground }]}>
+                {prop.name}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
       {/* Stats row */}
       <View style={[styles.statsRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <View style={styles.statItem}>
@@ -227,7 +314,7 @@ export default function PaymentsScreen() {
 
       {/* Payment list */}
       <FlatList
-        data={allPayments || []}
+        data={filteredPayments}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderPayment}
         contentContainerStyle={styles.listContent}
@@ -243,10 +330,14 @@ export default function PaymentsScreen() {
             <View style={styles.empty}>
               <Feather name="inbox" size={48} color={colors.mutedForeground} />
               <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-                No payments in {MONTHS[selectedMonth - 1]}
+                {searchText || statusFilter !== "all" || propertyFilter
+                  ? "No matching payments"
+                  : `No payments in ${MONTHS[selectedMonth - 1]}`}
               </Text>
               <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                Tap + to record a payment
+                {searchText || statusFilter !== "all" || propertyFilter
+                  ? "Try adjusting your filters"
+                  : "Tap + to record a payment"}
               </Text>
             </View>
           ) : null
@@ -322,4 +413,26 @@ const styles = StyleSheet.create({
   empty: { alignItems: "center", paddingVertical: 60, gap: 8 },
   emptyTitle: { fontSize: 16, fontWeight: "600" },
   emptyText: { fontSize: 14 },
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  searchInput: { flex: 1, fontSize: 14, paddingVertical: 0 },
+  filterScroll: { paddingHorizontal: 16, paddingBottom: 8, gap: 6, flexDirection: "row" },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 16,
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  filterChipText: { fontSize: 12, fontWeight: "600" },
 });
