@@ -10,7 +10,7 @@ import {
   Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useGetPayment, getGetPaymentQueryKey, useDeletePayment, getListPaymentsQueryKey, getGetDashboardSummaryQueryKey } from "@workspace/api-client-react";
+import { useGetPayment, getGetPaymentQueryKey, useDeletePayment, getListPaymentsQueryKey, getGetDashboardSummaryQueryKey, getListTenantsQueryKey, getGetTenantQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
@@ -108,6 +108,10 @@ export default function PaymentReceiptScreen() {
           onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: getListPaymentsQueryKey() });
             queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+            queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+            if (payment.tenantId) {
+              queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(payment.tenantId) });
+            }
             router.back();
           },
           onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to delete payment"),
@@ -369,6 +373,24 @@ export default function PaymentReceiptScreen() {
             )}
           </TouchableOpacity>
         </View>
+
+        <TouchableOpacity
+          style={[
+            styles.actionBtn,
+            {
+              backgroundColor: `${colors.primary}10`,
+              borderColor: `${colors.primary}40`,
+              marginBottom: 12,
+            },
+          ]}
+          onPress={() => router.push(`/payment-edit?id=${payment.id}` as any)}
+          disabled={deleteMutation.isPending || shareLoading}
+        >
+          <Feather name="edit-2" size={18} color={colors.primary} />
+          <Text style={[styles.actionBtnText, { color: colors.primary }]}>
+            Edit Payment
+          </Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={[

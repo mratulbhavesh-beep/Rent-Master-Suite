@@ -120,8 +120,9 @@ export default function TenantDetailScreen() {
         { id: paymentId },
         {
           onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: getListPaymentsQueryKey({ tenantId }) });
+            queryClient.invalidateQueries({ queryKey: getListPaymentsQueryKey() });
             queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(tenantId) });
+            queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
             queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
           },
           onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to delete payment"),
@@ -322,9 +323,15 @@ export default function TenantDetailScreen() {
                     </View>
                     <TouchableOpacity
                       style={{ padding: 8 }}
+                      onPress={() => router.push(`/payment-edit?id=${p.id}` as any)}
+                    >
+                      <Feather name="edit-2" size={14} color={colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ padding: 8 }}
                       onPress={() => router.push(`/payment-receipt?id=${p.id}` as any)}
                     >
-                      <Feather name="external-link" size={14} color={colors.primary} />
+                      <Feather name="external-link" size={14} color={colors.mutedForeground} />
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={{ padding: 8 }}
