@@ -1,16 +1,43 @@
 import { Router, type IRouter } from "express";
-import { eq, ilike, or } from "drizzle-orm";
-import { db, tenantsTable, propertiesTable } from "@workspace/db";
+import { eq, ilike, or, inArray } from "drizzle-orm";
+import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
-function formatTenant(t: typeof tenantsTable.$inferSelect, propertyName?: string | null) {
+/** Months from leaseStart up to and including the current month (min 1) */
+function monthsElapsed(leaseStart: string): number {
+  const start = new Date(leaseStart);
+  const now = new Date();
+  const months =
+    (now.getFullYear() - start.getFullYear()) * 12 +
+    (now.getMonth() - start.getMonth()) + 1;
+  return Math.max(1, months);
+}
+
+function computeBalance(
+  tenant: typeof tenantsTable.$inferSelect,
+  payments: { amount: string | number }[]
+) {
+  const months = monthsElapsed(tenant.leaseStart);
+  const rentAmount = parseFloat(String(tenant.rentAmount));
+  const totalExpected = months * rentAmount;
+  const totalPaid = payments.reduce((s, p) => s + parseFloat(String(p.amount)), 0);
+  const balanceDue = Math.max(0, totalExpected - totalPaid);
+  return { monthsElapsed: months, totalExpected, totalPaid, balanceDue };
+}
+
+function formatTenant(
+  t: typeof tenantsTable.$inferSelect,
+  propertyName: string | null | undefined,
+  payments: { amount: string | number }[] = []
+) {
   return {
     ...t,
     rentAmount: parseFloat(String(t.rentAmount)),
     propertyName: propertyName ?? null,
     createdAt: t.createdAt.toISOString(),
+    ...computeBalance(t, payments),
   };
 }
 
@@ -25,9 +52,30 @@ router.get("/tenants", requireAuth, async (req, res): Promise<void> => {
   if (propertyId) results = results.filter(r => r.tenant.propertyId === parseInt(propertyId, 10));
   if (search) {
     const s = search.toLowerCase();
-    results = results.filter(r => r.tenant.name.toLowerCase().includes(s) || r.tenant.email.toLowerCase().includes(s) || r.tenant.phone.includes(s));
+    results = results.filter(r =>
+      r.tenant.name.toLowerCase().includes(s) ||
+      r.tenant.email.toLowerCase().includes(s) ||
+      r.tenant.phone.includes(s)
+    );
   }
-  res.json(results.map(r => formatTenant(r.tenant, r.propertyName)));
+
+  // Fetch all payments for these tenants in one query for balance calculation
+  const tenantIds = results.map(r => r.tenant.id);
+  const allPayments = tenantIds.length > 0
+    ? await db.select({ tenantId: paymentsTable.tenantId, amount: paymentsTable.amount })
+        .from(paymentsTable)
+        .where(inArray(paymentsTable.tenantId, tenantIds))
+    : [];
+
+  const paymentsByTenant = new Map<number, { amount: string | number }[]>();
+  for (const p of allPayments) {
+    if (!paymentsByTenant.has(p.tenantId)) paymentsByTenant.set(p.tenantId, []);
+    paymentsByTenant.get(p.tenantId)!.push({ amount: p.amount });
+  }
+
+  res.json(results.map(r =>
+    formatTenant(r.tenant, r.propertyName, paymentsByTenant.get(r.tenant.id) ?? [])
+  ));
 });
 
 router.post("/tenants", requireAuth, async (req, res): Promise<void> => {
@@ -41,17 +89,23 @@ router.post("/tenants", requireAuth, async (req, res): Promise<void> => {
     rentAmount: String(rentAmount), status: status ?? "active", emergencyContact, notes,
   }).returning();
   const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId));
-  res.status(201).json(formatTenant(tenant, property?.name));
+  res.status(201).json(formatTenant(tenant, property?.name, []));
 });
 
 router.get("/tenants/:id", requireAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
-  const [row] = await db.select({ tenant: tenantsTable, propertyName: propertiesTable.name })
-    .from(tenantsTable).leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
+  const [row] = await db
+    .select({ tenant: tenantsTable, propertyName: propertiesTable.name })
+    .from(tenantsTable)
+    .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
     .where(eq(tenantsTable.id, id));
   if (!row) { res.status(404).json({ error: "Tenant not found" }); return; }
-  res.json(formatTenant(row.tenant, row.propertyName));
+  const payments = await db
+    .select({ amount: paymentsTable.amount })
+    .from(paymentsTable)
+    .where(eq(paymentsTable.tenantId, id));
+  res.json(formatTenant(row.tenant, row.propertyName, payments));
 });
 
 router.patch("/tenants/:id", requireAuth, async (req, res): Promise<void> => {
@@ -59,20 +113,25 @@ router.patch("/tenants/:id", requireAuth, async (req, res): Promise<void> => {
   const id = parseInt(raw, 10);
   const body = req.body as Record<string, unknown>;
   const updates: Record<string, unknown> = {};
-  for (const key of ["name","email","phone","propertyId","unitNumber","leaseStart","leaseEnd","status","emergencyContact","notes"]) {
+  for (const key of ["name", "email", "phone", "propertyId", "unitNumber", "leaseStart", "leaseEnd", "status", "emergencyContact", "notes"]) {
     if (body[key] !== undefined) updates[key] = body[key];
   }
   if (body.rentAmount !== undefined) updates.rentAmount = String(body.rentAmount);
   const [tenant] = await db.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
   const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId));
-  res.json(formatTenant(tenant, property?.name));
+  const payments = await db.select({ amount: paymentsTable.amount }).from(paymentsTable).where(eq(paymentsTable.tenantId, id));
+  res.json(formatTenant(tenant, property?.name, payments));
 });
 
 router.delete("/tenants/:id", requireAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
-  await db.delete(tenantsTable).where(eq(tenantsTable.id, id));
+  // Cascade: delete FK-dependent records first to avoid constraint violations
+  await db.delete(paymentsTable).where(eq(paymentsTable.tenantId, id));
+  await db.delete(maintenanceRequestsTable).where(eq(maintenanceRequestsTable.tenantId, id));
+  const deleted = await db.delete(tenantsTable).where(eq(tenantsTable.id, id)).returning();
+  if (!deleted.length) { res.status(404).json({ error: "Tenant not found" }); return; }
   res.sendStatus(204);
 });
 
