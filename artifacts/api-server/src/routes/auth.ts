@@ -54,6 +54,26 @@ router.post("/auth/register", async (req, res): Promise<void> => {
   });
 });
 
+router.post("/auth/reset-password", async (req, res): Promise<void> => {
+  const { email, newPassword } = req.body as { email?: string; newPassword?: string };
+  if (!email || !newPassword) {
+    res.status(400).json({ error: "Email and new password required" });
+    return;
+  }
+  if (newPassword.length < 6) {
+    res.status(400).json({ error: "Password must be at least 6 characters" });
+    return;
+  }
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
+  if (!user) {
+    res.status(404).json({ error: "No account found with that email" });
+    return;
+  }
+  const passwordHash = await hashPassword(newPassword);
+  await db.update(usersTable).set({ passwordHash }).where(eq(usersTable.id, user.id));
+  res.json({ message: "Password reset successfully" });
+});
+
 router.get("/auth/me", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, req.user!.id));
   if (!user) {

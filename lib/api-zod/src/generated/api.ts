@@ -59,6 +59,19 @@ export const RegisterResponse = zod.object({
 
 
 /**
+ * @summary Reset password using email and new password
+ */
+export const ResetPasswordBody = zod.object({
+  "email": zod.string(),
+  "newPassword": zod.string()
+})
+
+export const ResetPasswordResponse = zod.object({
+  "message": zod.string()
+})
+
+
+/**
  * @summary Get current user info
  */
 export const GetMeResponse = zod.object({

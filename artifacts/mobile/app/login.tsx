@@ -72,6 +72,12 @@ export default function LoginScreen() {
               <Text style={[styles.buttonText, { color: colors.primaryForeground }]}>Sign In</Text>
             )}
           </TouchableOpacity>
+
+          <Link href="/forgot-password" asChild>
+            <TouchableOpacity style={styles.forgotButton}>
+              <Text style={[styles.forgotText, { color: colors.primary }]}>Forgot Password?</Text>
+            </TouchableOpacity>
+          </Link>
         </View>
 
         <View style={styles.footer}>
@@ -129,6 +135,14 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: "bold",
+  },
+  forgotButton: {
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  forgotText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   footer: {
     flexDirection: "row",

@@ -84,6 +84,33 @@ paths:
         "400":
           description: Validation error
 
+  /auth/reset-password:
+    post:
+      operationId: resetPassword
+      tags: [auth]
+      summary: Reset password using email and new password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordInput"
+      responses:
+        "200":
+          description: Password reset successful
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+        "400":
+          description: Validation error
+        "404":
+          description: User not found
+
   /auth/me:
     get:
       operationId: getMe
@@ -710,6 +737,15 @@ components:
         role:
           type: string
           enum: [admin, employee]
+
+    ResetPasswordInput:
+      type: object
+      required: [email, newPassword]
+      properties:
+        email:
+          type: string
+        newPassword:
+          type: string
 
     AuthResponse:
       type: object

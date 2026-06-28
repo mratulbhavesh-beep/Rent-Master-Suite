@@ -29,6 +29,11 @@ export interface RegisterInput {
   role: RegisterInputRole;
 }
 
+export interface ResetPasswordInput {
+  email: string;
+  newPassword: string;
+}
+
 export type UserRole = typeof UserRole[keyof typeof UserRole];
 
 
@@ -561,6 +566,10 @@ export interface YearlyReport {
   netProfit: number;
   monthlyBreakdown: MonthlyBreakdown[];
 }
+
+export type ResetPassword200 = {
+  message: string;
+};
 
 export type ListPropertiesParams = {
 search?: string;

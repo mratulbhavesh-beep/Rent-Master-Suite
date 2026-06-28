@@ -57,6 +57,8 @@ export * from './propertyUpdateStatus';
 export * from './propertyUpdateType';
 export * from './registerInput';
 export * from './registerInputRole';
+export * from './resetPassword200';
+export * from './resetPasswordInput';
 export * from './tenant';
 export * from './tenantInput';
 export * from './tenantInputStatus';

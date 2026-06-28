@@ -34,6 +34,7 @@ function RootLayoutNav() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="login" />
       <Stack.Screen name="register" />
+      <Stack.Screen name="forgot-password" />
       <Stack.Screen name="property-detail" />
       <Stack.Screen name="property-add" />
       <Stack.Screen name="tenant-detail" />
