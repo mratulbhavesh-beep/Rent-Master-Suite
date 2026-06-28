@@ -5,3 +5,5 @@
 - [WhatsApp Linking pattern](whatsapp-linking.md) — normalize Indian phone to E.164 before opening whatsapp:// URL; always .catch() the Linking.openURL call
 - [Payment API unitNumber](payment-api-unit.md) — unitNumber added to payment responses via tenantsTable join in formatPayment(); openapi.yaml Payment schema updated
 - [Dashboard todayCollection](dashboard-today.md) — paymentDate added to allPayments select; todayCollection filters by YYYY-MM-DD string match against todayStr
+- [Dashboard new computed fields](dashboard-computed.md) — totalVacantUnits/occupancyPercentage/collectionRate computed from propStats SUM(totalUnits) vs activeTenants.length; added to openapi.yaml DashboardSummary schema + codegen'd
+- [Expo Metro cache refresh](expo-metro-cache.md) — after codegen regenerates api-client-react files, restart expo workflow to get fresh 1400+ module bundle; stale Metro cache causes "Unable to resolve ./generated/api" error

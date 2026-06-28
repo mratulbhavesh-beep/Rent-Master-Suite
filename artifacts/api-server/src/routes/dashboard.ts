@@ -20,7 +20,10 @@ router.get("/dashboard/summary", requireAuth, async (_req, res): Promise<void> =
   const currentMonth = now.getMonth() + 1;
   const currentYear = now.getFullYear();
 
-  const [propertiesCount] = await db.select({ count: count() }).from(propertiesTable);
+  const [propStats] = await db.select({
+    count: count(),
+    totalUnits: sql<number>`COALESCE(SUM(${propertiesTable.totalUnits}), 0)`,
+  }).from(propertiesTable);
   const [pendingMaintenance] = await db.select({ count: count() }).from(maintenanceRequestsTable)
     .where(sql`${maintenanceRequestsTable.status} IN ('open', 'in_progress')`);
 
@@ -68,14 +71,22 @@ router.get("/dashboard/summary", requireAuth, async (_req, res): Promise<void> =
     totalDue += balance;
   }
 
+  const propTotalUnits = Number(propStats.totalUnits);
+  const totalVacantUnits = Math.max(0, propTotalUnits - activeTenants.length);
+  const occupancyPercentage = propTotalUnits > 0 ? Math.round((activeTenants.length / propTotalUnits) * 100) : 0;
+  const collectionRate = rentDueThisMonth > 0 ? Math.round((monthlyIncome / rentDueThisMonth) * 100) : 0;
+
   res.json({
-    totalProperties: propertiesCount.count,
+    totalProperties: propStats.count,
     totalTenants: activeTenants.length,
     rentDueThisMonth,
     monthlyIncome,
     todayCollection,
     pendingMaintenance: pendingMaintenance.count,
     overdueRents: totalDue,
+    totalVacantUnits,
+    occupancyPercentage,
+    collectionRate,
   });
 });
 

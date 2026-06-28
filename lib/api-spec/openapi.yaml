@@ -830,6 +830,12 @@ components:
           type: integer
         overdueRents:
           type: integer
+        totalVacantUnits:
+          type: integer
+        occupancyPercentage:
+          type: integer
+        collectionRate:
+          type: integer
 
     Property:
       type: object

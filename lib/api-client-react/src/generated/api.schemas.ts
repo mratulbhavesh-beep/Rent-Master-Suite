@@ -63,6 +63,9 @@ export interface DashboardSummary {
   todayCollection: number;
   pendingMaintenance: number;
   overdueRents: number;
+  totalVacantUnits?: number;
+  occupancyPercentage?: number;
+  collectionRate?: number;
 }
 
 export type PropertyType = typeof PropertyType[keyof typeof PropertyType];

@@ -93,7 +93,10 @@ export const GetDashboardSummaryResponse = zod.object({
   "monthlyIncome": zod.number(),
   "todayCollection": zod.number(),
   "pendingMaintenance": zod.number(),
-  "overdueRents": zod.number()
+  "overdueRents": zod.number(),
+  "totalVacantUnits": zod.number().optional(),
+  "occupancyPercentage": zod.number().optional(),
+  "collectionRate": zod.number().optional()
 })
 
 

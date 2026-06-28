@@ -409,6 +409,15 @@ export default function PropertyDetailScreen() {
   const totalMonthlyRent = tenants.reduce((s, t) => s + parseFloat(String(t.rentAmount)), 0);
   const totalPendingDue = tenants.reduce((s, t) => s + ((t as any).balanceDue ?? 0), 0);
 
+  const _now = new Date();
+  const _cm = _now.getMonth() + 1;
+  const _cy = _now.getFullYear();
+  const collectedThisMonth = payments
+    .filter(p => p.month === _cm && p.year === _cy && (p.status === "paid" || p.status === "partial"))
+    .reduce((s, p) => s + parseFloat(String(p.amount)), 0);
+  const pendingCollection = Math.max(0, totalMonthlyRent - collectedThisMonth);
+  const occupancyPct = totalUnits > 0 ? Math.round((occupiedCount / totalUnits) * 100) : 0;
+
   // ── Handlers ──────────────────────────────────────────────────────────
   const handleWhatsAppRemind = (tenant: Tenant) => {
     const rawPhone = (tenant as any).phone as string | undefined;
@@ -597,13 +606,30 @@ export default function PropertyDetailScreen() {
             <View style={s.moneyRow}>
               <View style={s.moneyStat}>
                 <Text style={[s.moneyNum, { color: colors.foreground }]}>{fmt(totalMonthlyRent)}</Text>
-                <Text style={[s.statLbl, { color: colors.mutedForeground }]}>Monthly Rent</Text>
+                <Text style={[s.statLbl, { color: colors.mutedForeground }]}>Expected Income</Text>
               </View>
               <View style={[s.moneyStat, { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.border }]}>
                 <Text style={[s.moneyNum, { color: totalPendingDue > 0 ? colors.destructive : colors.success }]}>
                   {fmt(totalPendingDue)}
                 </Text>
                 <Text style={[s.statLbl, { color: colors.mutedForeground }]}>Total Pending Due</Text>
+              </View>
+            </View>
+
+            <View style={[s.divider, { backgroundColor: colors.border }]} />
+
+            <View style={s.statsGrid}>
+              <View style={[s.statBox, { backgroundColor: `${colors.success}14` }]}>
+                <Text style={[s.statNum, { color: colors.success, fontSize: 15 }]}>{fmt(collectedThisMonth)}</Text>
+                <Text style={[s.statLbl, { color: colors.mutedForeground }]}>Collected This Month</Text>
+              </View>
+              <View style={[s.statBox, { backgroundColor: `${colors.destructive}14` }]}>
+                <Text style={[s.statNum, { color: colors.destructive, fontSize: 15 }]}>{fmt(pendingCollection)}</Text>
+                <Text style={[s.statLbl, { color: colors.mutedForeground }]}>Pending Collection</Text>
+              </View>
+              <View style={[s.statBox, { backgroundColor: `${colors.primary}14` }]}>
+                <Text style={[s.statNum, { color: colors.primary }]}>{occupancyPct}%</Text>
+                <Text style={[s.statLbl, { color: colors.mutedForeground }]}>Occupancy</Text>
               </View>
             </View>
           </View>
