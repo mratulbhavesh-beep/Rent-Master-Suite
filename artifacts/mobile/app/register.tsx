@@ -17,19 +17,31 @@ export default function RegisterScreen() {
   const registerMutation = useRegister();
 
   const handleRegister = () => {
-    if (!name || !email || !password) {
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
+    if (!trimmedName || !trimmedEmail || !password) {
       Alert.alert("Error", "Please fill in all fields");
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      Alert.alert("Error", "Please enter a valid email address");
+      return;
+    }
+    if (password.length < 6) {
+      Alert.alert("Error", "Password must be at least 6 characters");
+      return;
+    }
     registerMutation.mutate(
-      { data: { name, email, password, role } },
+      { data: { name: trimmedName, email: trimmedEmail, password, role } },
       {
         onSuccess: async (data) => {
           await setAuthData(data.token, data.user);
           router.replace("/(tabs)");
         },
-        onError: () => {
-          Alert.alert("Registration Failed", "Could not create account");
+        onError: (err: unknown) => {
+          const data = (err as { data?: { error?: string } })?.data;
+          const message = data?.error ?? "Could not create account. Please try again.";
+          Alert.alert("Registration Failed", message);
         },
       }
     );
@@ -59,10 +71,11 @@ export default function RegisterScreen() {
             onChangeText={setEmail}
             keyboardType="email-address"
             autoCapitalize="none"
+            autoCorrect={false}
           />
           <TextInput
             style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-            placeholder="Password"
+            placeholder="Password (min. 6 characters)"
             placeholderTextColor={colors.mutedForeground}
             value={password}
             onChangeText={setPassword}
@@ -71,13 +84,13 @@ export default function RegisterScreen() {
 
           <View style={styles.roleContainer}>
             <TouchableOpacity
-              style={[styles.roleOption, role === "admin" && { backgroundColor: colors.primary, borderColor: colors.primary }]}
+              style={[styles.roleOption, { borderColor: colors.border }, role === "admin" && { backgroundColor: colors.primary, borderColor: colors.primary }]}
               onPress={() => setRole("admin")}
             >
               <Text style={{ color: role === "admin" ? colors.primaryForeground : colors.mutedForeground }}>Admin</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.roleOption, role === "employee" && { backgroundColor: colors.primary, borderColor: colors.primary }]}
+              style={[styles.roleOption, { borderColor: colors.border }, role === "employee" && { backgroundColor: colors.primary, borderColor: colors.primary }]}
               onPress={() => setRole("employee")}
             >
               <Text style={{ color: role === "employee" ? colors.primaryForeground : colors.mutedForeground }}>Employee</Text>

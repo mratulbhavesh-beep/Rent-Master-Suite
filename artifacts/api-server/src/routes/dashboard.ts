@@ -1,11 +1,10 @@
 import { Router, type IRouter } from "express";
-import { count, eq, sql, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db, propertiesTable, tenantsTable, paymentsTable, maintenanceRequestsTable } from "@workspace/db";
-import { requireAuth } from "../middlewares/auth";
+import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
-/** Months from leaseStart up to and including the current month (min 1) */
 function monthsElapsed(leaseStart: string): number {
   const start = new Date(leaseStart);
   const now = new Date();
@@ -15,25 +14,35 @@ function monthsElapsed(leaseStart: string): number {
   return Math.max(1, months);
 }
 
-router.get("/dashboard/summary", requireAuth, async (_req, res): Promise<void> => {
+router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
   const now = new Date();
   const currentMonth = now.getMonth() + 1;
   const currentYear = now.getFullYear();
 
-  const [propStats] = await db.select({
-    count: count(),
-    totalUnits: sql<number>`COALESCE(SUM(${propertiesTable.totalUnits}), 0)`,
-  }).from(propertiesTable);
-  const [pendingMaintenance] = await db.select({ count: count() }).from(maintenanceRequestsTable)
-    .where(sql`${maintenanceRequestsTable.status} IN ('open', 'in_progress')`);
+  const userProperties = await db
+    .select({ id: propertiesTable.id, totalUnits: propertiesTable.totalUnits })
+    .from(propertiesTable)
+    .where(eq(propertiesTable.userId, userId));
 
-  // Active tenants with their rent amounts and lease start dates
-  const activeTenants = await db
-    .select({ id: tenantsTable.id, rentAmount: tenantsTable.rentAmount, leaseStart: tenantsTable.leaseStart })
-    .from(tenantsTable)
-    .where(eq(tenantsTable.status, "active"));
+  const userPropertyIds = userProperties.map(p => p.id);
+  const totalProperties = userProperties.length;
+  const propTotalUnits = userProperties.reduce((s, p) => s + p.totalUnits, 0);
 
-  // All payments for active tenants
+  const pendingMaintenanceCount = userPropertyIds.length > 0
+    ? (await db.select({ count: sql<number>`count(*)::int` }).from(maintenanceRequestsTable)
+        .where(
+          sql`${maintenanceRequestsTable.propertyId} = ANY(${sql.raw(`ARRAY[${userPropertyIds.join(",")}]::int[]`)}) AND ${maintenanceRequestsTable.status} IN ('open', 'in_progress')`
+        ))[0]?.count ?? 0
+    : 0;
+
+  const activeTenants = userPropertyIds.length > 0
+    ? await db
+        .select({ id: tenantsTable.id, rentAmount: tenantsTable.rentAmount, leaseStart: tenantsTable.leaseStart })
+        .from(tenantsTable)
+        .where(sql`${tenantsTable.status} = 'active' AND ${tenantsTable.propertyId} = ANY(${sql.raw(`ARRAY[${userPropertyIds.join(",")}]::int[]`)})`)
+    : [];
+
   const activeTenantIds = activeTenants.map(t => t.id);
   const todayStr = now.toISOString().split("T")[0];
   const allPayments = activeTenantIds.length > 0
@@ -42,22 +51,18 @@ router.get("/dashboard/summary", requireAuth, async (_req, res): Promise<void> =
         .where(inArray(paymentsTable.tenantId, activeTenantIds))
     : [];
 
-  // Today's collection: sum of payments received today
   const todayCollection = allPayments
     .filter(p => p.paymentDate === todayStr)
     .reduce((s, p) => s + parseFloat(String(p.amount)), 0);
 
-  // Monthly income: sum of all payments received this month
   const monthlyIncome = allPayments
     .filter(p => p.month === currentMonth && p.year === currentYear)
     .reduce((s, p) => s + parseFloat(String(p.amount)), 0);
 
-  // Rent due this month: sum of all active tenant rents
   const rentDueThisMonth = activeTenants.reduce(
     (sum, t) => sum + parseFloat(String(t.rentAmount)), 0
   );
 
-  // Total unpaid balance (Due): sum of (monthsElapsed × rent − totalPaid) for each active tenant
   const paymentsByTenant = new Map<number, number>();
   for (const p of allPayments) {
     paymentsByTenant.set(p.tenantId, (paymentsByTenant.get(p.tenantId) ?? 0) + parseFloat(String(p.amount)));
@@ -67,22 +72,20 @@ router.get("/dashboard/summary", requireAuth, async (_req, res): Promise<void> =
     const months = monthsElapsed(t.leaseStart);
     const expected = months * parseFloat(String(t.rentAmount));
     const paid = paymentsByTenant.get(t.id) ?? 0;
-    const balance = Math.max(0, expected - paid);
-    totalDue += balance;
+    totalDue += Math.max(0, expected - paid);
   }
 
-  const propTotalUnits = Number(propStats.totalUnits);
   const totalVacantUnits = Math.max(0, propTotalUnits - activeTenants.length);
   const occupancyPercentage = propTotalUnits > 0 ? Math.round((activeTenants.length / propTotalUnits) * 100) : 0;
   const collectionRate = rentDueThisMonth > 0 ? Math.round((monthlyIncome / rentDueThisMonth) * 100) : 0;
 
   res.json({
-    totalProperties: propStats.count,
+    totalProperties,
     totalTenants: activeTenants.length,
     rentDueThisMonth,
     monthlyIncome,
     todayCollection,
-    pendingMaintenance: pendingMaintenance.count,
+    pendingMaintenance: pendingMaintenanceCount,
     overdueRents: totalDue,
     totalVacantUnits,
     occupancyPercentage,

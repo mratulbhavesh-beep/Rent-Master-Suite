@@ -15,19 +15,22 @@ export default function LoginScreen() {
   const loginMutation = useLogin();
 
   const handleLogin = () => {
-    if (!email || !password) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
       Alert.alert("Error", "Please fill in all fields");
       return;
     }
     loginMutation.mutate(
-      { data: { email, password } },
+      { data: { email: trimmedEmail, password } },
       {
         onSuccess: async (data) => {
           await setAuthData(data.token, data.user);
           router.replace("/(tabs)");
         },
-        onError: (err) => {
-          Alert.alert("Login Failed", "Invalid credentials");
+        onError: (err: unknown) => {
+          const data = (err as { data?: { error?: string } })?.data;
+          const message = data?.error ?? "Invalid email or password. Please try again.";
+          Alert.alert("Login Failed", message);
         },
       }
     );
@@ -51,6 +54,7 @@ export default function LoginScreen() {
             onChangeText={setEmail}
             keyboardType="email-address"
             autoCapitalize="none"
+            autoCorrect={false}
           />
           <TextInput
             style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}

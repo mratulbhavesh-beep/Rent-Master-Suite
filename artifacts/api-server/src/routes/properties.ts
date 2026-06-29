@@ -1,63 +1,76 @@
 import { Router, type IRouter } from "express";
-import { eq, ilike, or, sql } from "drizzle-orm";
+import { and, eq, ilike, or, sql } from "drizzle-orm";
 import { db, propertiesTable, tenantsTable } from "@workspace/db";
-import { requireAuth } from "../middlewares/auth";
+import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
-router.get("/properties", requireAuth, async (req, res): Promise<void> => {
-  const { search, type } = req.query as { search?: string; type?: string };
-  let query = db.select().from(propertiesTable);
-  const conditions: ReturnType<typeof eq>[] = [];
-  if (type) conditions.push(eq(propertiesTable.type, type));
-  let rows;
-  if (search && conditions.length > 0) {
-    rows = await db.select().from(propertiesTable).where(
-      or(ilike(propertiesTable.name, `%${search}%`), ilike(propertiesTable.address, `%${search}%`))
-    );
-  } else if (search) {
-    rows = await db.select().from(propertiesTable).where(
-      or(ilike(propertiesTable.name, `%${search}%`), ilike(propertiesTable.address, `%${search}%`))
-    );
-  } else {
-    rows = await query;
-  }
-  const tenantCounts = await db
-    .select({ propertyId: tenantsTable.propertyId, count: sql<number>`count(*)::int` })
-    .from(tenantsTable)
-    .where(eq(tenantsTable.status, "active"))
-    .groupBy(tenantsTable.propertyId);
-  const countMap = Object.fromEntries(tenantCounts.map(r => [r.propertyId!, Number(r.count)]));
-  res.json(rows.map(p => ({
-    ...p,
+function formatProperty(p: typeof propertiesTable.$inferSelect, occupiedUnits = 0) {
+  const { userId: _uid, ...rest } = p;
+  return {
+    ...rest,
     rentAmount: parseFloat(String(p.rentAmount)),
     createdAt: p.createdAt.toISOString(),
-    occupiedUnits: countMap[p.id] ?? 0,
-  })));
+    occupiedUnits,
+  };
+}
+
+router.get("/properties", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { search, type } = req.query as { search?: string; type?: string };
+
+  const conditions: ReturnType<typeof eq>[] = [eq(propertiesTable.userId, userId)];
+  if (type) conditions.push(eq(propertiesTable.type, type));
+
+  let rows;
+  if (search) {
+    rows = await db.select().from(propertiesTable).where(
+      and(
+        and(...conditions),
+        or(ilike(propertiesTable.name, `%${search}%`), ilike(propertiesTable.address, `%${search}%`))
+      )
+    );
+  } else {
+    rows = await db.select().from(propertiesTable).where(and(...conditions));
+  }
+
+  const tenantCounts = rows.length > 0
+    ? await db
+        .select({ propertyId: tenantsTable.propertyId, count: sql<number>`count(*)::int` })
+        .from(tenantsTable)
+        .where(eq(tenantsTable.status, "active"))
+        .groupBy(tenantsTable.propertyId)
+    : [];
+  const countMap = Object.fromEntries(tenantCounts.map(r => [r.propertyId!, Number(r.count)]));
+  res.json(rows.map(p => formatProperty(p, countMap[p.id] ?? 0)));
 });
 
-router.post("/properties", requireAuth, async (req, res): Promise<void> => {
+router.post("/properties", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
   const { name, address, type, totalUnits, rentAmount, status, description } = req.body;
   if (!name || !address || !rentAmount) {
     res.status(400).json({ error: "Name, address, and rentAmount are required" });
     return;
   }
   const [property] = await db.insert(propertiesTable).values({
-    name, address, type: type ?? "apartment", totalUnits: totalUnits ?? 1,
+    userId, name, address, type: type ?? "apartment", totalUnits: totalUnits ?? 1,
     rentAmount: String(rentAmount), status: status ?? "available", description,
   }).returning();
-  res.status(201).json({ ...property, rentAmount: parseFloat(String(property.rentAmount)), createdAt: property.createdAt.toISOString() });
+  res.status(201).json(formatProperty(property));
 });
 
-router.get("/properties/:id", requireAuth, async (req, res): Promise<void> => {
+router.get("/properties/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
-  const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, id));
+  const [property] = await db.select().from(propertiesTable)
+    .where(and(eq(propertiesTable.id, id), eq(propertiesTable.userId, userId)));
   if (!property) { res.status(404).json({ error: "Property not found" }); return; }
-  res.json({ ...property, rentAmount: parseFloat(String(property.rentAmount)), createdAt: property.createdAt.toISOString() });
+  res.json(formatProperty(property));
 });
 
-router.patch("/properties/:id", requireAuth, async (req, res): Promise<void> => {
+router.patch("/properties/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   const { name, address, type, totalUnits, rentAmount, status, description } = req.body;
@@ -69,15 +82,19 @@ router.patch("/properties/:id", requireAuth, async (req, res): Promise<void> => 
   if (rentAmount !== undefined) updates.rentAmount = String(rentAmount);
   if (status !== undefined) updates.status = status;
   if (description !== undefined) updates.description = description;
-  const [property] = await db.update(propertiesTable).set(updates).where(eq(propertiesTable.id, id)).returning();
+  const [property] = await db.update(propertiesTable).set(updates)
+    .where(and(eq(propertiesTable.id, id), eq(propertiesTable.userId, userId))).returning();
   if (!property) { res.status(404).json({ error: "Property not found" }); return; }
-  res.json({ ...property, rentAmount: parseFloat(String(property.rentAmount)), createdAt: property.createdAt.toISOString() });
+  res.json(formatProperty(property));
 });
 
-router.delete("/properties/:id", requireAuth, async (req, res): Promise<void> => {
+router.delete("/properties/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
-  await db.delete(propertiesTable).where(eq(propertiesTable.id, id));
+  const deleted = await db.delete(propertiesTable)
+    .where(and(eq(propertiesTable.id, id), eq(propertiesTable.userId, userId))).returning();
+  if (!deleted.length) { res.status(404).json({ error: "Property not found" }); return; }
   res.sendStatus(204);
 });
 

@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, loansTable, loanPaymentsTable, propertiesTable } from "@workspace/db";
-import { requireAuth } from "../middlewares/auth";
+import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
@@ -9,8 +9,9 @@ function formatLoan(l: typeof loansTable.$inferSelect, propertyName?: string | n
   const principal = parseFloat(String(l.principalAmount));
   const emi = parseFloat(String(l.emiAmount));
   const remaining = Math.max(0, principal - (l.paidMonths * emi));
+  const { userId: _uid, ...rest } = l;
   return {
-    ...l,
+    ...rest,
     principalAmount: principal,
     interestRate: parseFloat(String(l.interestRate)),
     emiAmount: emi,
@@ -20,22 +21,30 @@ function formatLoan(l: typeof loansTable.$inferSelect, propertyName?: string | n
   };
 }
 
-router.get("/loans", requireAuth, async (_req, res): Promise<void> => {
+router.get("/loans", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
   const rows = await db
     .select({ loan: loansTable, propertyName: propertiesTable.name })
     .from(loansTable)
-    .leftJoin(propertiesTable, eq(loansTable.propertyId, propertiesTable.id));
+    .leftJoin(propertiesTable, eq(loansTable.propertyId, propertiesTable.id))
+    .where(eq(loansTable.userId, userId));
   res.json(rows.map(r => formatLoan(r.loan, r.propertyName)));
 });
 
-router.post("/loans", requireAuth, async (req, res): Promise<void> => {
+router.post("/loans", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
   const { lenderName, principalAmount, interestRate, emiAmount, startDate, totalMonths, propertyId, notes } = req.body;
   if (!lenderName || !principalAmount || !interestRate || !emiAmount || !startDate || !totalMonths) {
     res.status(400).json({ error: "Required fields missing" });
     return;
   }
+  if (propertyId) {
+    const [property] = await db.select({ id: propertiesTable.id }).from(propertiesTable)
+      .where(and(eq(propertiesTable.id, propertyId), eq(propertiesTable.userId, userId)));
+    if (!property) { res.status(403).json({ error: "Property not found" }); return; }
+  }
   const [loan] = await db.insert(loansTable).values({
-    lenderName, principalAmount: String(principalAmount), interestRate: String(interestRate),
+    userId, lenderName, principalAmount: String(principalAmount), interestRate: String(interestRate),
     emiAmount: String(emiAmount), startDate, totalMonths, propertyId: propertyId ?? null, notes,
   }).returning();
   let propertyName: string | null = null;
@@ -46,18 +55,24 @@ router.post("/loans", requireAuth, async (req, res): Promise<void> => {
   res.status(201).json(formatLoan(loan, propertyName));
 });
 
-router.patch("/loans/:id", requireAuth, async (req, res): Promise<void> => {
+router.patch("/loans/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
+  const [existing] = await db.select({ id: loansTable.id }).from(loansTable)
+    .where(and(eq(loansTable.id, id), eq(loansTable.userId, userId)));
+  if (!existing) { res.status(404).json({ error: "Loan not found" }); return; }
+
   const body = req.body as Record<string, unknown>;
   const updates: Record<string, unknown> = {};
-  for (const key of ["lenderName","startDate","totalMonths","status","propertyId","notes"]) {
+  for (const key of ["lenderName", "startDate", "totalMonths", "status", "propertyId", "notes"]) {
     if (body[key] !== undefined) updates[key] = body[key];
   }
-  for (const key of ["principalAmount","interestRate","emiAmount"]) {
+  for (const key of ["principalAmount", "interestRate", "emiAmount"]) {
     if (body[key] !== undefined) updates[key] = String(body[key]);
   }
-  const [loan] = await db.update(loansTable).set(updates).where(eq(loansTable.id, id)).returning();
+  const [loan] = await db.update(loansTable).set(updates)
+    .where(and(eq(loansTable.id, id), eq(loansTable.userId, userId))).returning();
   if (!loan) { res.status(404).json({ error: "Loan not found" }); return; }
   let propertyName: string | null = null;
   if (loan.propertyId) {
@@ -67,14 +82,18 @@ router.patch("/loans/:id", requireAuth, async (req, res): Promise<void> => {
   res.json(formatLoan(loan, propertyName));
 });
 
-router.delete("/loans/:id", requireAuth, async (req, res): Promise<void> => {
+router.delete("/loans/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
-  await db.delete(loansTable).where(eq(loansTable.id, id));
+  const deleted = await db.delete(loansTable)
+    .where(and(eq(loansTable.id, id), eq(loansTable.userId, userId))).returning();
+  if (!deleted.length) { res.status(404).json({ error: "Loan not found" }); return; }
   res.sendStatus(204);
 });
 
-router.post("/loans/:id/payments", requireAuth, async (req, res): Promise<void> => {
+router.post("/loans/:id/payments", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   const { amount, paymentDate, notes } = req.body;
@@ -82,14 +101,16 @@ router.post("/loans/:id/payments", requireAuth, async (req, res): Promise<void> 
     res.status(400).json({ error: "Amount and paymentDate required" });
     return;
   }
-  const [loan] = await db.select().from(loansTable).where(eq(loansTable.id, id));
+  const [loan] = await db.select().from(loansTable)
+    .where(and(eq(loansTable.id, id), eq(loansTable.userId, userId)));
   if (!loan) { res.status(404).json({ error: "Loan not found" }); return; }
   const [loanPayment] = await db.insert(loanPaymentsTable).values({
     loanId: id, amount: String(amount), paymentDate, notes,
   }).returning();
   const newPaidMonths = loan.paidMonths + 1;
   const newStatus = newPaidMonths >= loan.totalMonths ? "completed" : loan.status;
-  await db.update(loansTable).set({ paidMonths: newPaidMonths, status: newStatus }).where(eq(loansTable.id, id));
+  await db.update(loansTable).set({ paidMonths: newPaidMonths, status: newStatus })
+    .where(and(eq(loansTable.id, id), eq(loansTable.userId, userId)));
   res.status(201).json({ ...loanPayment, amount: parseFloat(String(loanPayment.amount)), createdAt: loanPayment.createdAt.toISOString() });
 });
 

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useQueryClient } from "@tanstack/react-query";
 import { User } from "@workspace/api-client-react";
 
 interface AuthContextType {
@@ -17,6 +18,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     async function loadAuth() {
@@ -24,8 +26,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const storedToken = await AsyncStorage.getItem("auth_token");
         const storedUser = await AsyncStorage.getItem("auth_user");
         if (storedToken && storedUser) {
-          setToken(storedToken);
-          setUser(JSON.parse(storedUser));
+          try {
+            const baseUrl = `https://${process.env.EXPO_PUBLIC_DOMAIN}`;
+            const response = await fetch(`${baseUrl}/api/auth/me`, {
+              headers: { Authorization: `Bearer ${storedToken}` },
+            });
+            if (response.status === 401) {
+              await AsyncStorage.removeItem("auth_token");
+              await AsyncStorage.removeItem("auth_user");
+            } else {
+              setToken(storedToken);
+              setUser(JSON.parse(storedUser));
+            }
+          } catch {
+            setToken(storedToken);
+            setUser(JSON.parse(storedUser));
+          }
         }
       } catch (e) {
         console.error("Failed to load auth state", e);
@@ -51,6 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await AsyncStorage.removeItem("auth_token");
       await AsyncStorage.removeItem("auth_user");
+      queryClient.clear();
       setToken(null);
       setUser(null);
     } catch (e) {
