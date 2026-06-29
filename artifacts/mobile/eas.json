@@ -14,6 +14,9 @@
     },
     "preview": {
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_DOMAIN": "rent-master-suite.replit.app"
+      },
       "android": {
         "buildType": "apk"
       }
