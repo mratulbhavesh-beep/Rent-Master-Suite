@@ -35,12 +35,7 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      "expo-web-browser",
-      "react-native-keyboard-controller",
-      [
-        "react-native-reanimated",
-        {}
-      ]
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
