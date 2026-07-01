@@ -28,6 +28,10 @@ tags:
     description: Maintenance requests
   - name: reports
     description: Monthly and yearly reports
+  - name: agreements
+    description: Rent agreement management
+  - name: documents
+    description: Tenant document management
 paths:
   /healthz:
     get:
@@ -251,6 +255,10 @@ paths:
           in: query
           schema:
             type: integer
+        - name: expiringIn30Days
+          in: query
+          schema:
+            type: boolean
       responses:
         "200":
           description: List of tenants
@@ -444,6 +452,124 @@ paths:
           description: Deleted
         "404":
           description: Not found
+
+  /tenants/{id}/agreements:
+    get:
+      operationId: listTenantAgreements
+      tags: [agreements]
+      summary: List all agreements for a tenant
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of agreements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Agreement"
+    post:
+      operationId: createAgreement
+      tags: [agreements]
+      summary: Create a rent agreement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgreementInput"
+      responses:
+        "201":
+          description: Agreement created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agreement"
+
+  /agreements/{id}:
+    patch:
+      operationId: updateAgreement
+      tags: [agreements]
+      summary: Update a rent agreement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgreementUpdate"
+      responses:
+        "200":
+          description: Agreement updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agreement"
+    delete:
+      operationId: deleteAgreement
+      tags: [agreements]
+      summary: Delete a rent agreement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /tenants/{id}/documents:
+    get:
+      operationId: listTenantDocuments
+      tags: [documents]
+      summary: List all documents for a tenant
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of documents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TenantDocument"
+
+  /documents/{id}:
+    delete:
+      operationId: deleteDocument
+      tags: [documents]
+      summary: Delete a tenant document
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
 
   /expenses:
     get:
@@ -955,6 +1081,11 @@ components:
           type: number
         currentMonthDue:
           type: number
+        activeAgreementEndDate:
+          type: ["string", "null"]
+        activeAgreementStatus:
+          type: ["string", "null"]
+          enum: [active, expired, null]
 
     TenantInput:
       type: object
@@ -1373,3 +1504,88 @@ components:
           type: number
         netProfit:
           type: number
+
+    Agreement:
+      type: object
+      required: [id, tenantId, agreementNumber, startDate, endDate, monthlyRent, status, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        agreementNumber:
+          type: string
+        startDate:
+          type: string
+        endDate:
+          type: string
+        monthlyRent:
+          type: number
+        securityDeposit:
+          type: ["number", "null"]
+        status:
+          type: string
+          enum: [active, expired]
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    AgreementInput:
+      type: object
+      required: [agreementNumber, startDate, endDate, monthlyRent]
+      properties:
+        agreementNumber:
+          type: string
+        startDate:
+          type: string
+        endDate:
+          type: string
+        monthlyRent:
+          type: number
+        securityDeposit:
+          type: number
+        notes:
+          type: string
+
+    AgreementUpdate:
+      type: object
+      properties:
+        agreementNumber:
+          type: string
+        startDate:
+          type: string
+        endDate:
+          type: string
+        monthlyRent:
+          type: number
+        securityDeposit:
+          type: number
+        notes:
+          type: string
+
+    TenantDocument:
+      type: object
+      required: [id, tenantId, documentType, fileName, originalName, mimeType, fileSize, createdAt, fileUrl]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        documentType:
+          type: string
+          enum: [aadhaar, pan, photo, agreement, other]
+        fileName:
+          type: string
+        originalName:
+          type: string
+        mimeType:
+          type: string
+        fileSize:
+          type: integer
+        fileUrl:
+          type: string
+        createdAt:
+          type: string

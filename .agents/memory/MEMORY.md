@@ -1,1 +1,2 @@
 - [Auth & data isolation patterns](auth-isolation.md) — per-user isolation via userId FK on properties/expenses/loans; tenants/payments/maintenance scoped through property ownership
+- [Agreement & Document management](agreement-docs.md) — rent_agreements and tenant_documents tables added; routes in agreements.ts/documents.ts; req.params.id needs safeId() helper due to string|string[] TS error

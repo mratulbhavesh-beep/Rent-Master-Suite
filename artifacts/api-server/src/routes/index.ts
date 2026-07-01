@@ -9,6 +9,8 @@ import expensesRouter from "./expenses";
 import loansRouter from "./loans";
 import maintenanceRouter from "./maintenance";
 import reportsRouter from "./reports";
+import agreementsRouter from "./agreements";
+import documentsRouter from "./documents";
 
 const router: IRouter = Router();
 
@@ -22,5 +24,7 @@ router.use(expensesRouter);
 router.use(loansRouter);
 router.use(maintenanceRouter);
 router.use(reportsRouter);
+router.use(agreementsRouter);
+router.use(documentsRouter);
 
 export default router;

@@ -696,6 +696,27 @@ export default function PropertyDetailScreen() {
                       </View>
                     </View>
 
+                    {/* Agreement expiry row */}
+                    {(() => {
+                      const ta = tenant as any;
+                      if (!ta.activeAgreementEndDate) return null;
+                      const today = new Date().toISOString().split("T")[0];
+                      const in30d = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+                      const end = ta.activeAgreementEndDate as string;
+                      const isExpired = end < today;
+                      const isExpiringSoon = !isExpired && end <= in30d;
+                      const agrColor = isExpired ? colors.destructive : isExpiringSoon ? colors.warning : colors.success;
+                      const daysLeft = Math.ceil((new Date(end).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                      return (
+                        <View style={[s.agrInfoRow, { borderTopColor: colors.border, backgroundColor: `${agrColor}07` }]}>
+                          <Feather name="file-text" size={11} color={agrColor} />
+                          <Text style={[s.agrInfoText, { color: agrColor }]}>
+                            {isExpired ? "Agreement Expired" : isExpiringSoon ? `Agreement expiring in ${daysLeft}d` : `Agreement until ${new Date(end).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`}
+                          </Text>
+                        </View>
+                      );
+                    })()}
+
                     {/* Row 4: actions */}
                     <View style={[s.actionRow, { borderTopColor: colors.border }]}>
                       <TouchableOpacity
@@ -888,6 +909,8 @@ const s = StyleSheet.create({
   amountBox: {},
   amtLbl: { fontSize: 11, marginBottom: 2 },
   amtVal: { fontSize: 15, fontWeight: "700" },
+  agrInfoRow: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 14, paddingVertical: 7, borderTopWidth: StyleSheet.hairlineWidth },
+  agrInfoText: { fontSize: 11, fontWeight: "600" },
   actionRow: { flexDirection: "row", borderTopWidth: StyleSheet.hairlineWidth, padding: 10, gap: 8 },
   actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 8, borderRadius: 10 },
   actionText: { fontSize: 12, fontWeight: "600" },

@@ -6,6 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './agreement';
+export * from './agreementInput';
+export * from './agreementStatus';
+export * from './agreementUpdate';
 export * from './authResponse';
 export * from './dashboardSummary';
 export * from './expense';
@@ -60,7 +64,10 @@ export * from './registerInputRole';
 export * from './resetPassword200';
 export * from './resetPasswordInput';
 export * from './tenant';
+export * from './tenantActiveAgreementStatus';
 export * from './tenantDepositStatus';
+export * from './tenantDocument';
+export * from './tenantDocumentDocumentType';
 export * from './tenantInput';
 export * from './tenantInputDepositStatus';
 export * from './tenantInputStatus';

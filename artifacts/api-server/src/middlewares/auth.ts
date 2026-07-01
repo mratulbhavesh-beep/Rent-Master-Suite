@@ -7,11 +7,16 @@ export interface AuthRequest extends Request {
 
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
+  let token: string | undefined;
+  if (header && header.startsWith("Bearer ")) {
+    token = header.slice(7);
+  } else if (typeof req.query.token === "string" && req.query.token) {
+    token = req.query.token;
+  }
+  if (!token) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const token = header.slice(7);
   try {
     req.user = verifyToken(token);
     next();

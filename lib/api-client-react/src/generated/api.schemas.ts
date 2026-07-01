@@ -179,6 +179,17 @@ export const TenantDepositStatus = {
   refunded: 'refunded',
 } as const;
 
+/**
+ * @nullable
+ */
+export type TenantActiveAgreementStatus = typeof TenantActiveAgreementStatus[keyof typeof TenantActiveAgreementStatus] | null;
+
+
+export const TenantActiveAgreementStatus = {
+  active: 'active',
+  expired: 'expired',
+} as const;
+
 export interface Tenant {
   id: number;
   name: string;
@@ -208,6 +219,10 @@ export interface Tenant {
   totalPaid?: number;
   balanceDue?: number;
   currentMonthDue?: number;
+  /** @nullable */
+  activeAgreementEndDate?: string | null;
+  /** @nullable */
+  activeAgreementStatus?: TenantActiveAgreementStatus;
 }
 
 export type TenantInputStatus = typeof TenantInputStatus[keyof typeof TenantInputStatus];
@@ -618,6 +633,71 @@ export interface YearlyReport {
   monthlyBreakdown: MonthlyBreakdown[];
 }
 
+export type AgreementStatus = typeof AgreementStatus[keyof typeof AgreementStatus];
+
+
+export const AgreementStatus = {
+  active: 'active',
+  expired: 'expired',
+} as const;
+
+export interface Agreement {
+  id: number;
+  tenantId: number;
+  agreementNumber: string;
+  startDate: string;
+  endDate: string;
+  monthlyRent: number;
+  /** @nullable */
+  securityDeposit?: number | null;
+  status: AgreementStatus;
+  /** @nullable */
+  notes?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface AgreementInput {
+  agreementNumber: string;
+  startDate: string;
+  endDate: string;
+  monthlyRent: number;
+  securityDeposit?: number;
+  notes?: string;
+}
+
+export interface AgreementUpdate {
+  agreementNumber?: string;
+  startDate?: string;
+  endDate?: string;
+  monthlyRent?: number;
+  securityDeposit?: number;
+  notes?: string;
+}
+
+export type TenantDocumentDocumentType = typeof TenantDocumentDocumentType[keyof typeof TenantDocumentDocumentType];
+
+
+export const TenantDocumentDocumentType = {
+  aadhaar: 'aadhaar',
+  pan: 'pan',
+  photo: 'photo',
+  agreement: 'agreement',
+  other: 'other',
+} as const;
+
+export interface TenantDocument {
+  id: number;
+  tenantId: number;
+  documentType: TenantDocumentDocumentType;
+  fileName: string;
+  originalName: string;
+  mimeType: string;
+  fileSize: number;
+  fileUrl: string;
+  createdAt: string;
+}
+
 export type ResetPassword200 = {
   message: string;
 };
@@ -630,6 +710,7 @@ type?: string;
 export type ListTenantsParams = {
 search?: string;
 propertyId?: number;
+expiringIn30Days?: boolean;
 };
 
 export type ListPaymentsParams = {

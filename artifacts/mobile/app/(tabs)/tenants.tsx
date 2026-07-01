@@ -7,12 +7,15 @@ import {
   RefreshControl,
   TouchableOpacity,
   TextInput,
+  ScrollView,
 } from "react-native";
 import { useListTenants, getListTenantsQueryKey } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
+
+type Filter = "all" | "expiring" | "overdue";
 
 type TenantWithBalance = {
   id: number;
@@ -29,17 +32,31 @@ type TenantWithBalance = {
   totalExpected: number;
   totalPaid: number;
   balanceDue: number;
+  activeAgreementEndDate?: string | null;
+  activeAgreementStatus?: string | null;
 };
+
+const FILTERS: { key: Filter; label: string; icon: keyof typeof Feather.glyphMap }[] = [
+  { key: "all", label: "All", icon: "users" },
+  { key: "expiring", label: "Expiring (30d)", icon: "clock" },
+  { key: "overdue", label: "Overdue", icon: "alert-circle" },
+];
 
 export default function TenantsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
 
-  const { data: tenants, isLoading, isFetching, refetch } = useListTenants(
-    { search },
-    { query: { queryKey: getListTenantsQueryKey({ search }) } }
+  const queryParams = {
+    search: search || undefined,
+    expiringIn30Days: filter === "expiring" ? true : undefined,
+  };
+
+  const { data: rawTenants, isLoading, isFetching, refetch } = useListTenants(
+    queryParams,
+    { query: { queryKey: getListTenantsQueryKey(queryParams) } }
   );
 
   useFocusEffect(
@@ -47,6 +64,10 @@ export default function TenantsScreen() {
       refetch();
     }, [refetch])
   );
+
+  const tenants = filter === "overdue"
+    ? ((rawTenants as unknown as TenantWithBalance[]) || []).filter(t => (t.balanceDue ?? 0) > 0)
+    : (rawTenants as unknown as TenantWithBalance[]) || [];
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -57,8 +78,22 @@ export default function TenantsScreen() {
     }
   };
 
+  const getAgreementIndicator = (item: TenantWithBalance) => {
+    if (!item.activeAgreementEndDate) return null;
+    const today = new Date().toISOString().split("T")[0];
+    const in30Days = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const endDate = item.activeAgreementEndDate;
+    if (endDate < today) return { label: "Agreement Expired", color: colors.destructive };
+    if (endDate <= in30Days) {
+      const daysLeft = Math.ceil((new Date(endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+      return { label: `Expiring in ${daysLeft}d`, color: colors.warning };
+    }
+    return null;
+  };
+
   const renderItem = ({ item }: { item: TenantWithBalance }) => {
     const hasDue = (item.balanceDue ?? 0) > 0;
+    const agrIndicator = getAgreementIndicator(item);
     return (
       <TouchableOpacity
         style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
@@ -105,6 +140,13 @@ export default function TenantsScreen() {
             )}
           </View>
         </View>
+
+        {agrIndicator && (
+          <View style={[styles.agrRow, { borderTopColor: colors.border, backgroundColor: `${agrIndicator.color}08` }]}>
+            <Feather name="file-text" size={12} color={agrIndicator.color} />
+            <Text style={[styles.agrText, { color: agrIndicator.color }]}>{agrIndicator.label}</Text>
+          </View>
+        )}
       </TouchableOpacity>
     );
   };
@@ -138,8 +180,43 @@ export default function TenantsScreen() {
         )}
       </View>
 
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.filterRow}
+        contentContainerStyle={styles.filterContent}
+      >
+        {FILTERS.map(f => (
+          <TouchableOpacity
+            key={f.key}
+            style={[
+              styles.filterChip,
+              {
+                backgroundColor: filter === f.key ? colors.primary : colors.card,
+                borderColor: filter === f.key ? colors.primary : colors.border,
+              },
+            ]}
+            onPress={() => setFilter(f.key)}
+          >
+            <Feather
+              name={f.icon}
+              size={13}
+              color={filter === f.key ? colors.primaryForeground : colors.mutedForeground}
+            />
+            <Text
+              style={[
+                styles.filterText,
+                { color: filter === f.key ? colors.primaryForeground : colors.mutedForeground },
+              ]}
+            >
+              {f.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
       <FlatList
-        data={(tenants as unknown as TenantWithBalance[]) || []}
+        data={tenants}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
@@ -153,12 +230,16 @@ export default function TenantsScreen() {
         ListEmptyComponent={
           !isLoading ? (
             <View style={styles.emptyState}>
-              <Feather name="users" size={48} color={colors.mutedForeground} />
+              <Feather
+                name={filter === "expiring" ? "clock" : filter === "overdue" ? "alert-circle" : "users"}
+                size={48}
+                color={colors.mutedForeground}
+              />
               <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-                {search ? "No tenants found" : "No tenants yet"}
+                {search ? "No tenants found" : filter === "expiring" ? "No expiring agreements" : filter === "overdue" ? "No overdue tenants" : "No tenants yet"}
               </Text>
               <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                {search ? "Try a different search" : "Tap + to add your first tenant"}
+                {search ? "Try a different search" : filter !== "all" ? "Try a different filter" : "Tap + to add your first tenant"}
               </Text>
             </View>
           ) : null
@@ -185,12 +266,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     marginHorizontal: 16,
-    marginBottom: 12,
+    marginBottom: 10,
     paddingHorizontal: 14,
     height: 44,
     borderRadius: 10,
   },
   searchInput: { flex: 1, fontSize: 15 },
+  filterRow: { flexGrow: 0 },
+  filterContent: { paddingHorizontal: 16, paddingBottom: 10, gap: 8, flexDirection: "row" },
+  filterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  filterText: { fontSize: 13, fontWeight: "600" },
   listContent: { paddingHorizontal: 16, paddingBottom: 100 },
   card: { borderRadius: 16, borderWidth: 1, marginBottom: 14, overflow: "hidden" },
   cardHeader: {
@@ -228,6 +321,15 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   dueText: { fontSize: 11, fontWeight: "700" },
+  agrRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  agrText: { fontSize: 12, fontWeight: "600" },
   emptyState: { alignItems: "center", paddingVertical: 60, gap: 8 },
   emptyTitle: { fontSize: 16, fontWeight: "600" },
   emptyText: { fontSize: 14 },

@@ -217,7 +217,8 @@ export const DeletePropertyResponse = zod.void()
  */
 export const ListTenantsQueryParams = zod.object({
   "search": zod.coerce.string().optional(),
-  "propertyId": zod.coerce.number().optional()
+  "propertyId": zod.coerce.number().optional(),
+  "expiringIn30Days": zod.coerce.boolean().optional()
 })
 
 export const ListTenantsResponseItem = zod.object({
@@ -242,7 +243,9 @@ export const ListTenantsResponseItem = zod.object({
   "totalExpected": zod.number().optional(),
   "totalPaid": zod.number().optional(),
   "balanceDue": zod.number().optional(),
-  "currentMonthDue": zod.number().optional()
+  "currentMonthDue": zod.number().optional(),
+  "activeAgreementEndDate": zod.string().nullish(),
+  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
 })
 export const ListTenantsResponse = zod.array(ListTenantsResponseItem)
 
@@ -289,7 +292,9 @@ export const CreateTenantResponse = zod.object({
   "totalExpected": zod.number().optional(),
   "totalPaid": zod.number().optional(),
   "balanceDue": zod.number().optional(),
-  "currentMonthDue": zod.number().optional()
+  "currentMonthDue": zod.number().optional(),
+  "activeAgreementEndDate": zod.string().nullish(),
+  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
 })
 
 
@@ -322,7 +327,9 @@ export const GetTenantResponse = zod.object({
   "totalExpected": zod.number().optional(),
   "totalPaid": zod.number().optional(),
   "balanceDue": zod.number().optional(),
-  "currentMonthDue": zod.number().optional()
+  "currentMonthDue": zod.number().optional(),
+  "activeAgreementEndDate": zod.string().nullish(),
+  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
 })
 
 
@@ -372,7 +379,9 @@ export const UpdateTenantResponse = zod.object({
   "totalExpected": zod.number().optional(),
   "totalPaid": zod.number().optional(),
   "balanceDue": zod.number().optional(),
-  "currentMonthDue": zod.number().optional()
+  "currentMonthDue": zod.number().optional(),
+  "activeAgreementEndDate": zod.string().nullish(),
+  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
 })
 
 
@@ -522,6 +531,132 @@ export const DeletePaymentParams = zod.object({
 })
 
 export const DeletePaymentResponse = zod.void()
+
+
+/**
+ * @summary List all agreements for a tenant
+ */
+export const ListTenantAgreementsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ListTenantAgreementsResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "agreementNumber": zod.string(),
+  "startDate": zod.string(),
+  "endDate": zod.string(),
+  "monthlyRent": zod.number(),
+  "securityDeposit": zod.number().nullish(),
+  "status": zod.enum(['active', 'expired']),
+  "notes": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string().optional()
+})
+export const ListTenantAgreementsResponse = zod.array(ListTenantAgreementsResponseItem)
+
+
+/**
+ * @summary Create a rent agreement
+ */
+export const CreateAgreementParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const CreateAgreementBody = zod.object({
+  "agreementNumber": zod.string(),
+  "startDate": zod.string(),
+  "endDate": zod.string(),
+  "monthlyRent": zod.number(),
+  "securityDeposit": zod.number().optional(),
+  "notes": zod.string().optional()
+})
+
+export const CreateAgreementResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "agreementNumber": zod.string(),
+  "startDate": zod.string(),
+  "endDate": zod.string(),
+  "monthlyRent": zod.number(),
+  "securityDeposit": zod.number().nullish(),
+  "status": zod.enum(['active', 'expired']),
+  "notes": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string().optional()
+})
+
+
+/**
+ * @summary Update a rent agreement
+ */
+export const UpdateAgreementParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateAgreementBody = zod.object({
+  "agreementNumber": zod.string().optional(),
+  "startDate": zod.string().optional(),
+  "endDate": zod.string().optional(),
+  "monthlyRent": zod.number().optional(),
+  "securityDeposit": zod.number().optional(),
+  "notes": zod.string().optional()
+})
+
+export const UpdateAgreementResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "agreementNumber": zod.string(),
+  "startDate": zod.string(),
+  "endDate": zod.string(),
+  "monthlyRent": zod.number(),
+  "securityDeposit": zod.number().nullish(),
+  "status": zod.enum(['active', 'expired']),
+  "notes": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string().optional()
+})
+
+
+/**
+ * @summary Delete a rent agreement
+ */
+export const DeleteAgreementParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteAgreementResponse = zod.void()
+
+
+/**
+ * @summary List all documents for a tenant
+ */
+export const ListTenantDocumentsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ListTenantDocumentsResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "documentType": zod.enum(['aadhaar', 'pan', 'photo', 'agreement', 'other']),
+  "fileName": zod.string(),
+  "originalName": zod.string(),
+  "mimeType": zod.string(),
+  "fileSize": zod.number(),
+  "fileUrl": zod.string(),
+  "createdAt": zod.string()
+})
+export const ListTenantDocumentsResponse = zod.array(ListTenantDocumentsResponseItem)
+
+
+/**
+ * @summary Delete a tenant document
+ */
+export const DeleteDocumentParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteDocumentResponse = zod.void()
 
 
 /**

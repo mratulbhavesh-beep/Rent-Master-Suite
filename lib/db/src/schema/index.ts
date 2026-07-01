@@ -5,3 +5,5 @@ export * from "./payments";
 export * from "./expenses";
 export * from "./loans";
 export * from "./maintenance";
+export * from "./rent-agreements";
+export * from "./tenant-documents";

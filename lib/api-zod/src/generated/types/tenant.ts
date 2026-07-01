@@ -5,6 +5,7 @@
  * Gemini Rent Manager API
  * OpenAPI spec version: 0.1.0
  */
+import type { TenantActiveAgreementStatus } from './tenantActiveAgreementStatus';
 import type { TenantDepositStatus } from './tenantDepositStatus';
 import type { TenantStatus } from './tenantStatus';
 
@@ -37,4 +38,8 @@ export interface Tenant {
   totalPaid?: number;
   balanceDue?: number;
   currentMonthDue?: number;
+  /** @nullable */
+  activeAgreementEndDate?: string | null;
+  /** @nullable */
+  activeAgreementStatus?: TenantActiveAgreementStatus;
 }

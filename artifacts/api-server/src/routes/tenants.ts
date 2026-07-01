@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { and, eq, inArray } from "drizzle-orm";
-import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable } from "@workspace/db";
+import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable, rentAgreementsTable, tenantDocumentsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -38,8 +38,10 @@ function computeBalance(
 function formatTenant(
   t: typeof tenantsTable.$inferSelect,
   propertyName: string | null | undefined,
-  payments: { amount: string | number }[] = []
+  payments: { amount: string | number; month?: number | null; year?: number | null }[] = [],
+  latestAgreement?: { endDate: string } | null
 ) {
+  const today = new Date().toISOString().split("T")[0];
   return {
     ...t,
     rentAmount: parseFloat(String(t.rentAmount)),
@@ -48,6 +50,10 @@ function formatTenant(
     propertyName: propertyName ?? null,
     createdAt: t.createdAt.toISOString(),
     ...computeBalance(t, payments),
+    activeAgreementEndDate: latestAgreement?.endDate ?? null,
+    activeAgreementStatus: latestAgreement
+      ? (latestAgreement.endDate >= today ? "active" : "expired")
+      : null,
   };
 }
 
@@ -59,7 +65,11 @@ async function getUserPropertyIds(userId: number): Promise<number[]> {
 
 router.get("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const userId = req.user!.id;
-  const { search, propertyId } = req.query as { search?: string; propertyId?: string };
+  const { search, propertyId, expiringIn30Days } = req.query as {
+    search?: string;
+    propertyId?: string;
+    expiringIn30Days?: string;
+  };
 
   const userPropertyIds = await getUserPropertyIds(userId);
   if (userPropertyIds.length === 0) { res.json([]); return; }
@@ -82,6 +92,7 @@ router.get("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void>
   }
 
   const tenantIds = results.map(r => r.tenant.id);
+
   const allPayments = tenantIds.length > 0
     ? await db.select({ tenantId: paymentsTable.tenantId, amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year })
         .from(paymentsTable).where(inArray(paymentsTable.tenantId, tenantIds))
@@ -93,8 +104,31 @@ router.get("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void>
     paymentsByTenant.get(p.tenantId)!.push({ amount: p.amount, month: p.month, year: p.year });
   }
 
+  const allAgreements = tenantIds.length > 0
+    ? await db.select({ tenantId: rentAgreementsTable.tenantId, endDate: rentAgreementsTable.endDate })
+        .from(rentAgreementsTable)
+        .where(inArray(rentAgreementsTable.tenantId, tenantIds))
+    : [];
+
+  const agreementByTenant = new Map<number, { endDate: string }>();
+  for (const a of allAgreements) {
+    const existing = agreementByTenant.get(a.tenantId);
+    if (!existing || a.endDate > existing.endDate) {
+      agreementByTenant.set(a.tenantId, { endDate: a.endDate });
+    }
+  }
+
+  if (expiringIn30Days === "true") {
+    const today = new Date().toISOString().split("T")[0];
+    const in30Days = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    results = results.filter(r => {
+      const agr = agreementByTenant.get(r.tenant.id);
+      return agr && agr.endDate >= today && agr.endDate <= in30Days;
+    });
+  }
+
   res.json(results.map(r =>
-    formatTenant(r.tenant, r.propertyName, paymentsByTenant.get(r.tenant.id) ?? [])
+    formatTenant(r.tenant, r.propertyName, paymentsByTenant.get(r.tenant.id) ?? [], agreementByTenant.get(r.tenant.id))
   ));
 });
 
@@ -132,7 +166,16 @@ router.get("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise<v
   const payments = await db
     .select({ amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year })
     .from(paymentsTable).where(eq(paymentsTable.tenantId, id));
-  res.json(formatTenant(row.tenant, row.propertyName, payments));
+
+  const agreements = await db
+    .select({ endDate: rentAgreementsTable.endDate })
+    .from(rentAgreementsTable)
+    .where(eq(rentAgreementsTable.tenantId, id));
+  const latestAgreement = agreements.length > 0
+    ? agreements.reduce((best, a) => a.endDate > best.endDate ? a : best)
+    : null;
+
+  res.json(formatTenant(row.tenant, row.propertyName, payments, latestAgreement));
 });
 
 router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {
@@ -158,7 +201,12 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
   const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId));
   const payments = await db.select({ amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year })
     .from(paymentsTable).where(eq(paymentsTable.tenantId, id));
-  res.json(formatTenant(tenant, property?.name, payments));
+  const agreements = await db.select({ endDate: rentAgreementsTable.endDate })
+    .from(rentAgreementsTable).where(eq(rentAgreementsTable.tenantId, id));
+  const latestAgreement = agreements.length > 0
+    ? agreements.reduce((best, a) => a.endDate > best.endDate ? a : best)
+    : null;
+  res.json(formatTenant(tenant, property?.name, payments, latestAgreement));
 });
 
 router.delete("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {
@@ -173,6 +221,8 @@ router.delete("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promis
   if (!existing || existing.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
   await db.delete(paymentsTable).where(eq(paymentsTable.tenantId, id));
   await db.delete(maintenanceRequestsTable).where(eq(maintenanceRequestsTable.tenantId, id));
+  await db.delete(rentAgreementsTable).where(eq(rentAgreementsTable.tenantId, id));
+  await db.delete(tenantDocumentsTable).where(eq(tenantDocumentsTable.tenantId, id));
   const deleted = await db.delete(tenantsTable).where(eq(tenantsTable.id, id)).returning();
   if (!deleted.length) { res.status(404).json({ error: "Tenant not found" }); return; }
   res.sendStatus(204);

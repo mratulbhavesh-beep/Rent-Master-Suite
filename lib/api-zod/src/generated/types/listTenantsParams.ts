@@ -9,4 +9,5 @@
 export type ListTenantsParams = {
 search?: string;
 propertyId?: number;
+expiringIn30Days?: boolean;
 };

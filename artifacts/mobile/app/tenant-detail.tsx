@@ -1,11 +1,52 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform, Linking } from "react-native";
+import {
+  View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
+  ActivityIndicator, Alert, Platform, Linking,
+} from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useGetTenant, getGetTenantQueryKey, useUpdateTenant, useDeleteTenant, useDeletePayment, useListPayments, getListPaymentsQueryKey, getListTenantsQueryKey, getGetDashboardSummaryQueryKey } from "@workspace/api-client-react";
+import {
+  useGetTenant, getGetTenantQueryKey, useUpdateTenant, useDeleteTenant,
+  useDeletePayment, useListPayments, getListPaymentsQueryKey,
+  getListTenantsQueryKey, getGetDashboardSummaryQueryKey,
+  useListTenantAgreements, getListTenantAgreementsQueryKey,
+  useCreateAgreement, useUpdateAgreement, useDeleteAgreement,
+  useListTenantDocuments, getListTenantDocumentsQueryKey,
+  useDeleteDocument,
+  Agreement,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth } from "@/context/AuthContext";
+import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
+import { Image as ExpoImage } from "expo-image";
+
+type ActiveTab = "overview" | "agreement" | "documents";
+
+const DOC_TYPES = [
+  { type: "aadhaar", label: "Aadhaar", icon: "credit-card" as const, isImage: true },
+  { type: "pan", label: "PAN Card", icon: "credit-card" as const, isImage: true },
+  { type: "photo", label: "Tenant Photo", icon: "camera" as const, isImage: true },
+  { type: "agreement", label: "Agreement PDF", icon: "file-text" as const, isImage: false },
+  { type: "other", label: "Other Document", icon: "paperclip" as const, isImage: false },
+] as const;
+
+function docTypeIcon(docType: string): keyof typeof Feather.glyphMap {
+  const t = DOC_TYPES.find(d => d.type === docType);
+  return t ? t.icon : "file";
+}
+
+function isImageMime(mime: string): boolean {
+  return mime.startsWith("image/");
+}
+
+function fmtFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function TenantDetailScreen() {
   const { id } = useLocalSearchParams();
@@ -14,7 +55,14 @@ export default function TenantDetailScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
+  const auth = useAuth();
 
+  const baseUrl = `https://${process.env.EXPO_PUBLIC_DOMAIN}`;
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
+
+  // Overview edit state
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -28,10 +76,23 @@ export default function TenantDetailScreen() {
   const [depositDate, setDepositDate] = useState("");
   const [depositStatus, setDepositStatus] = useState<"held" | "refunded">("held");
 
+  // Agreement form state
+  const [showAgrForm, setShowAgrForm] = useState(false);
+  const [editingAgrId, setEditingAgrId] = useState<number | null>(null);
+  const [agrNumber, setAgrNumber] = useState("");
+  const [agrStart, setAgrStart] = useState("");
+  const [agrEnd, setAgrEnd] = useState("");
+  const [agrRent, setAgrRent] = useState("");
+  const [agrDeposit, setAgrDeposit] = useState("");
+  const [agrNotes, setAgrNotes] = useState("");
+
+  // Document state
+  const [uploading, setUploading] = useState(false);
+
+  // Queries
   const { data: tenant, isLoading } = useGetTenant(tenantId, {
     query: { queryKey: getGetTenantQueryKey(tenantId), enabled: !!tenantId }
   });
-
   const updateMutation = useUpdateTenant();
   const deleteMutation = useDeleteTenant();
   const deletePmtMutation = useDeletePayment();
@@ -41,6 +102,21 @@ export default function TenantDetailScreen() {
     { query: { queryKey: getListPaymentsQueryKey({ tenantId }), enabled: !!tenantId } }
   );
 
+  const { data: agreements, isLoading: agreementsLoading, refetch: refetchAgreements } = useListTenantAgreements(
+    tenantId,
+    { query: { queryKey: getListTenantAgreementsQueryKey(tenantId), enabled: !!tenantId } }
+  );
+
+  const createAgrMutation = useCreateAgreement();
+  const updateAgrMutation = useUpdateAgreement();
+  const deleteAgrMutation = useDeleteAgreement();
+
+  const { data: documents, isLoading: documentsLoading, refetch: refetchDocuments } = useListTenantDocuments(
+    tenantId,
+    { query: { queryKey: getListTenantDocumentsQueryKey(tenantId), enabled: !!tenantId } }
+  );
+  const deleteDocMutation = useDeleteDocument();
+
   useEffect(() => {
     if (tenant) {
       setName(tenant.name);
@@ -49,11 +125,11 @@ export default function TenantDetailScreen() {
       setUnitNumber(tenant.unitNumber);
       setRentAmount(tenant.rentAmount.toString());
       setStatus(tenant.status as "active" | "inactive" | "evicted");
-      setLeaseStart(tenant.leaseStart.split('T')[0]);
-      setLeaseEnd(tenant.leaseEnd.split('T')[0]);
+      setLeaseStart(tenant.leaseStart.split("T")[0]);
+      setLeaseEnd(tenant.leaseEnd.split("T")[0]);
       const t = tenant as any;
       setDepositAmount(t.securityDeposit != null ? String(t.securityDeposit) : "");
-      setDepositDate(t.depositDate ? String(t.depositDate).split('T')[0] : "");
+      setDepositDate(t.depositDate ? String(t.depositDate).split("T")[0] : "");
       setDepositStatus((t.depositStatus as "held" | "refunded") ?? "held");
     }
   }, [tenant]);
@@ -67,14 +143,9 @@ export default function TenantDetailScreen() {
       {
         id: tenantId,
         data: {
-          name,
-          email,
-          phone,
-          unitNumber,
+          name, email, phone, unitNumber,
           rentAmount: parseFloat(rentAmount),
-          status,
-          leaseStart,
-          leaseEnd,
+          status, leaseStart, leaseEnd,
           securityDeposit: depositAmount ? parseFloat(depositAmount) : undefined,
           depositDate: depositDate || undefined,
           depositStatus,
@@ -103,8 +174,7 @@ export default function TenantDetailScreen() {
           queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
           router.back();
         },
-        onError: (err: any) =>
-          Alert.alert("Error", err?.response?.data?.error || "Failed to delete tenant"),
+        onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to delete tenant"),
       }
     );
   };
@@ -112,7 +182,6 @@ export default function TenantDetailScreen() {
   const handleDelete = () => {
     const msg = `Delete "${tenant?.name}"?\n\nAll payment and maintenance records will also be deleted. This cannot be undone.`;
     if (Platform.OS === "web") {
-      // Alert.alert callbacks are unreliable on Expo web — use browser confirm instead
       if (window.confirm(msg)) performDelete();
     } else {
       Alert.alert("Delete Tenant", msg, [
@@ -148,6 +217,177 @@ export default function TenantDetailScreen() {
     }
   };
 
+  // ─── Agreement handlers ─────────────────────────────────────────────────
+
+  const openAgrForm = (agr?: Agreement) => {
+    if (agr) {
+      setEditingAgrId(agr.id);
+      setAgrNumber(agr.agreementNumber);
+      setAgrStart(agr.startDate);
+      setAgrEnd(agr.endDate);
+      setAgrRent(String(agr.monthlyRent));
+      setAgrDeposit(agr.securityDeposit != null ? String(agr.securityDeposit) : "");
+      setAgrNotes(agr.notes ?? "");
+    } else {
+      setEditingAgrId(null);
+      setAgrNumber("");
+      setAgrStart(new Date().toISOString().split("T")[0]);
+      setAgrEnd("");
+      setAgrRent(tenant ? String(tenant.rentAmount) : "");
+      setAgrDeposit("");
+      setAgrNotes("");
+    }
+    setShowAgrForm(true);
+  };
+
+  const closeAgrForm = () => {
+    setShowAgrForm(false);
+    setEditingAgrId(null);
+  };
+
+  const handleSaveAgreement = () => {
+    if (!agrNumber || !agrStart || !agrEnd || !agrRent) {
+      Alert.alert("Error", "Agreement Number, Start Date, End Date and Monthly Rent are required");
+      return;
+    }
+    const data = {
+      agreementNumber: agrNumber,
+      startDate: agrStart,
+      endDate: agrEnd,
+      monthlyRent: parseFloat(agrRent),
+      securityDeposit: agrDeposit ? parseFloat(agrDeposit) : undefined,
+      notes: agrNotes || undefined,
+    };
+    if (editingAgrId) {
+      updateAgrMutation.mutate(
+        { id: editingAgrId, data },
+        {
+          onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: getListTenantAgreementsQueryKey(tenantId) });
+            queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(tenantId) });
+            queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+            closeAgrForm();
+          },
+          onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to update agreement"),
+        }
+      );
+    } else {
+      createAgrMutation.mutate(
+        { id: tenantId, data },
+        {
+          onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: getListTenantAgreementsQueryKey(tenantId) });
+            queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(tenantId) });
+            queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+            closeAgrForm();
+          },
+          onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to create agreement"),
+        }
+      );
+    }
+  };
+
+  const handleDeleteAgreement = (agrId: number) => {
+    const msg = "Delete this rent agreement? This cannot be undone.";
+    const doDelete = () => {
+      deleteAgrMutation.mutate(
+        { id: agrId },
+        {
+          onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: getListTenantAgreementsQueryKey(tenantId) });
+            queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(tenantId) });
+            queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+          },
+          onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to delete agreement"),
+        }
+      );
+    };
+    if (Platform.OS === "web") {
+      if (window.confirm(msg)) doDelete();
+    } else {
+      Alert.alert("Delete Agreement", msg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: doDelete },
+      ]);
+    }
+  };
+
+  // ─── Document handlers ──────────────────────────────────────────────────
+
+  const uploadDocument = async (docType: string, uri: string, fileName: string, mimeType: string) => {
+    try {
+      setUploading(true);
+      const formData = new FormData();
+      formData.append("documentType", docType);
+      formData.append("file", { uri, name: fileName, type: mimeType } as any);
+      const resp = await fetch(`${baseUrl}/api/tenants/${tenantId}/documents/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${auth.token}` },
+        body: formData,
+      });
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error((errData as any).error || "Upload failed");
+      }
+      queryClient.invalidateQueries({ queryKey: getListTenantDocumentsQueryKey(tenantId) });
+      Alert.alert("Success", "Document uploaded successfully");
+    } catch (e: any) {
+      Alert.alert("Upload Error", e.message || "Failed to upload document");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const pickImageAndUpload = async (docType: string) => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert("Permission Needed", "Please allow access to your photo library");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      const fileName = asset.fileName || `${docType}_${Date.now()}.jpg`;
+      await uploadDocument(docType, asset.uri, fileName, asset.mimeType || "image/jpeg");
+    }
+  };
+
+  const pickDocAndUpload = async (docType: string) => {
+    const result = await DocumentPicker.getDocumentAsync({ type: "*/*", copyToCacheDirectory: true });
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      await uploadDocument(docType, asset.uri, asset.name, asset.mimeType || "application/octet-stream");
+    }
+  };
+
+  const handleDeleteDocument = (docId: number, docName: string) => {
+    const msg = `Delete "${docName}"? This cannot be undone.`;
+    const doDelete = () => {
+      deleteDocMutation.mutate(
+        { id: docId },
+        {
+          onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: getListTenantDocumentsQueryKey(tenantId) });
+          },
+          onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to delete document"),
+        }
+      );
+    };
+    if (Platform.OS === "web") {
+      if (window.confirm(msg)) doDelete();
+    } else {
+      Alert.alert("Delete Document", msg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: doDelete },
+      ]);
+    }
+  };
+
+  // ─── Loading / not found ─────────────────────────────────────────────────
+
   if (isLoading) {
     return (
       <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
@@ -168,7 +408,6 @@ export default function TenantDetailScreen() {
     );
   }
 
-  // Balance data from API (server-computed)
   const anyTenant = tenant as any;
   const monthsElapsed: number = anyTenant.monthsElapsed ?? 1;
   const totalExpected: number = anyTenant.totalExpected ?? 0;
@@ -176,15 +415,18 @@ export default function TenantDetailScreen() {
   const balanceDue: number = anyTenant.balanceDue ?? 0;
   const fmt = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
 
+  // ─── Render ──────────────────────────────────────────────────────────────
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      <View style={styles.header}>
+      {/* Header */}
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <TouchableOpacity style={styles.iconButton} onPress={() => router.back()}>
           <Feather name="arrow-left" size={24} color={colors.foreground} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Tenant Details</Text>
         <View style={{ flexDirection: "row", gap: 8 }}>
-          {!isEditing ? (
+          {activeTab === "overview" && !isEditing && (
             <>
               <TouchableOpacity style={styles.iconButton} onPress={() => setIsEditing(true)}>
                 <Feather name="edit-2" size={20} color={colors.foreground} />
@@ -195,408 +437,567 @@ export default function TenantDetailScreen() {
                   : <Feather name="trash-2" size={20} color={colors.destructive} />}
               </TouchableOpacity>
             </>
-          ) : (
-            <TouchableOpacity style={styles.iconButton} onPress={handleSave} disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? (
-                <ActivityIndicator color={colors.primary} />
-              ) : (
-                <Feather name="check" size={24} color={colors.primary} />
-              )}
-            </TouchableOpacity>
+          )}
+          {activeTab === "overview" && isEditing && (
+            <>
+              <TouchableOpacity style={styles.iconButton} onPress={() => setIsEditing(false)}>
+                <Feather name="x" size={22} color={colors.mutedForeground} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.iconButton} onPress={handleSave} disabled={updateMutation.isPending}>
+                {updateMutation.isPending ? (
+                  <ActivityIndicator color={colors.primary} />
+                ) : (
+                  <Feather name="check" size={24} color={colors.primary} />
+                )}
+              </TouchableOpacity>
+            </>
           )}
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {!isEditing ? (
-          <>
-          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <View style={styles.avatarSection}>
-              <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
-                <Text style={{ color: colors.primaryForeground, fontSize: 32, fontWeight: "bold" }}>
-                  {tenant.name.charAt(0).toUpperCase()}
-                </Text>
-              </View>
-              <Text style={[styles.name, { color: colors.foreground }]}>{tenant.name}</Text>
-              <Text style={[styles.propertyText, { color: colors.mutedForeground }]}>{tenant.propertyName} • Unit {tenant.unitNumber}</Text>
-              <View style={[styles.badge, { backgroundColor: `${tenant.status === 'active' ? colors.success : colors.destructive}20`, marginTop: 8 }]}>
-                <Text style={{ color: tenant.status === 'active' ? colors.success : colors.destructive, fontWeight: "bold", fontSize: 12, textTransform: "uppercase" }}>
-                  {tenant.status}
-                </Text>
-              </View>
-            </View>
+      {/* Tab Bar */}
+      <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
+        {(["overview", "agreement", "documents"] as ActiveTab[]).map((tab) => (
+          <TouchableOpacity
+            key={tab}
+            style={[styles.tab, activeTab === tab && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+            onPress={() => { setActiveTab(tab); setIsEditing(false); }}
+          >
+            <Text style={[styles.tabText, { color: activeTab === tab ? colors.primary : colors.mutedForeground }]}>
+              {tab === "overview" ? "Overview" : tab === "agreement" ? "Agreement" : "Documents"}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
-            <View style={styles.divider} />
-
-            <View style={styles.infoRow}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>Email</Text>
-              <Text style={[styles.value, { color: colors.cardForeground }]}>{tenant.email}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>Phone</Text>
-              <Text style={[styles.value, { color: colors.cardForeground }]}>{tenant.phone}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>Rent Amount</Text>
-              <Text style={[styles.value, { color: colors.cardForeground }]}>₹{tenant.rentAmount.toLocaleString("en-IN")}/mo</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>Lease Start</Text>
-              <Text style={[styles.value, { color: colors.cardForeground }]}>{new Date(tenant.leaseStart).toLocaleDateString()}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>Lease End</Text>
-              <Text style={[styles.value, { color: colors.cardForeground }]}>{new Date(tenant.leaseEnd).toLocaleDateString()}</Text>
-            </View>
-          </View>
-
-          {/* Balance / Due Summary */}
-          <View style={[styles.balanceCard, {
-            backgroundColor: balanceDue > 0 ? `${colors.destructive}08` : `${colors.success}08`,
-            borderColor: balanceDue > 0 ? `${colors.destructive}30` : `${colors.success}30`,
-            marginTop: 16,
-          }]}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <Feather
-                name={balanceDue > 0 ? "alert-circle" : "check-circle"}
-                size={16}
-                color={balanceDue > 0 ? colors.destructive : colors.success}
-              />
-              <Text style={{ fontSize: 15, fontWeight: "700", color: balanceDue > 0 ? colors.destructive : colors.success }}>
-                {balanceDue > 0 ? "Outstanding Balance" : "All Paid Up"}
-              </Text>
-            </View>
-            {[
-              { label: "Monthly Rent", value: fmt(tenant.rentAmount), color: colors.foreground },
-              { label: "Months Active", value: `${monthsElapsed} months`, color: colors.foreground },
-              { label: "Total Expected", value: fmt(totalExpected), color: colors.primary },
-              { label: "Total Paid", value: fmt(totalPaid), color: colors.success },
-              { label: "Balance Due", value: fmt(balanceDue), color: balanceDue > 0 ? colors.destructive : colors.success },
-            ].map(row => (
-              <View key={row.label} style={[styles.balanceRow, { borderBottomColor: colors.border }]}>
-                <Text style={[styles.label, { color: colors.mutedForeground }]}>{row.label}</Text>
-                <Text style={[styles.value, { color: row.color }]}>{row.value}</Text>
-              </View>
-            ))}
-          </View>
-
-          {/* Action buttons */}
-          <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
-            <TouchableOpacity
-              style={[styles.recordBtn, { backgroundColor: colors.primary, flex: 1 }]}
-              onPress={() => router.push(`/payment-add?tenantId=${tenantId}&propertyId=${tenant.propertyId}` as any)}
-              activeOpacity={0.85}
-            >
-              <Feather name="plus-circle" size={16} color={colors.primaryForeground} />
-              <Text style={{ color: colors.primaryForeground, fontWeight: "700", fontSize: 14 }}>Record Payment</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.recordBtn, { backgroundColor: "#25D366", flex: 1 }]}
-              onPress={() => {
-                if (!tenant.phone) {
-                  Alert.alert("No Phone Number", "This tenant has no phone number on file.");
-                  return;
-                }
-                let digits = tenant.phone.replace(/\D/g, "");
-                if (digits.length === 10) digits = "91" + digits;
-                else if (digits.startsWith("0")) digits = "91" + digits.slice(1);
-                const leaseEndStr = new Date(tenant.leaseEnd).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
-                const message = [
-                  `Hello ${tenant.name},`,
-                  ``,
-                  `This is a friendly reminder for your rent payment.`,
-                  ``,
-                  `🏠 Property: ${tenant.propertyName}`,
-                  `📦 Unit: ${tenant.unitNumber}`,
-                  `💰 Monthly Rent: ₹${Math.round(tenant.rentAmount).toLocaleString("en-IN")}`,
-                  `⚠️ Balance Due: ₹${Math.round(balanceDue).toLocaleString("en-IN")}`,
-                  `📅 Lease End: ${leaseEndStr}`,
-                  ``,
-                  `Please make the payment at your earliest convenience.`,
-                  ``,
-                  `Thank you,`,
-                  `Gemini Rent Manager`,
-                ].join("\n");
-                const url = `whatsapp://send?phone=${digits}&text=${encodeURIComponent(message)}`;
-                Linking.openURL(url).catch(() =>
-                  Alert.alert("WhatsApp Not Available", "Please check if WhatsApp is installed and the phone number is valid.")
-                );
-              }}
-              activeOpacity={0.85}
-            >
-              <Feather name="message-circle" size={16} color="#fff" />
-              <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>Send Reminder</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Security Deposit card */}
-          {(() => {
-            const t = tenant as any;
-            const hasDeposit = t.securityDeposit != null;
-            const isRefunded = t.depositStatus === "refunded";
-            const depositColor = isRefunded ? colors.mutedForeground : colors.warning;
-            return (
-              <View style={[styles.card, { backgroundColor: colors.card, borderColor: isRefunded ? colors.border : `${colors.warning}40`, marginTop: 16 }]}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Feather name="shield" size={16} color={depositColor} />
-                    <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Security Deposit</Text>
+      {/* ─── OVERVIEW TAB ─────────────────────────────────────────────── */}
+      {activeTab === "overview" && (
+        <ScrollView contentContainerStyle={styles.content}>
+          {!isEditing ? (
+            <>
+              {/* Profile card */}
+              <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={styles.avatarSection}>
+                  <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
+                    <Text style={{ color: colors.primaryForeground, fontSize: 32, fontWeight: "bold" }}>
+                      {tenant.name.charAt(0).toUpperCase()}
+                    </Text>
                   </View>
-                  {hasDeposit && (
-                    <View style={[styles.badge, { backgroundColor: `${depositColor}18` }]}>
-                      <Text style={{ fontSize: 11, fontWeight: "800", color: depositColor, textTransform: "uppercase" }}>
-                        {isRefunded ? "Refunded" : "Held"}
-                      </Text>
-                    </View>
-                  )}
+                  <Text style={[styles.name, { color: colors.foreground }]}>{tenant.name}</Text>
+                  <Text style={[styles.propertyText, { color: colors.mutedForeground }]}>
+                    {(tenant as any).propertyName} • Unit {tenant.unitNumber}
+                  </Text>
+                  <View style={[styles.badge, { backgroundColor: `${tenant.status === "active" ? colors.success : colors.destructive}20`, marginTop: 8 }]}>
+                    <Text style={{ color: tenant.status === "active" ? colors.success : colors.destructive, fontWeight: "bold", fontSize: 12, textTransform: "uppercase" }}>
+                      {tenant.status}
+                    </Text>
+                  </View>
                 </View>
-                {!hasDeposit ? (
-                  <TouchableOpacity
-                    style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12 }}
-                    onPress={() => setIsEditing(true)}
-                  >
-                    <Feather name="plus-circle" size={16} color={colors.primary} />
-                    <Text style={{ color: colors.primary, fontWeight: "600", fontSize: 14 }}>Add security deposit</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <>
-                    <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
-                      <Text style={[styles.label, { color: colors.mutedForeground }]}>Amount</Text>
-                      <Text style={[styles.value, { color: colors.foreground }]}>₹{Number(t.securityDeposit).toLocaleString("en-IN")}</Text>
-                    </View>
-                    {t.depositDate ? (
-                      <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
-                        <Text style={[styles.label, { color: colors.mutedForeground }]}>Deposit Date</Text>
-                        <Text style={[styles.value, { color: colors.foreground }]}>{new Date(t.depositDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</Text>
+                <View style={styles.divider} />
+                {[
+                  { label: "Email", value: tenant.email },
+                  { label: "Phone", value: tenant.phone },
+                  { label: "Rent Amount", value: `₹${tenant.rentAmount.toLocaleString("en-IN")}/mo` },
+                  { label: "Lease Start", value: new Date(tenant.leaseStart).toLocaleDateString() },
+                  { label: "Lease End", value: new Date(tenant.leaseEnd).toLocaleDateString() },
+                ].map(row => (
+                  <View key={row.label} style={[styles.infoRow, { borderBottomColor: colors.border }]}>
+                    <Text style={[styles.label, { color: colors.mutedForeground }]}>{row.label}</Text>
+                    <Text style={[styles.value, { color: colors.cardForeground }]}>{row.value}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Balance card */}
+              <View style={[styles.balanceCard, {
+                backgroundColor: balanceDue > 0 ? `${colors.destructive}08` : `${colors.success}08`,
+                borderColor: balanceDue > 0 ? `${colors.destructive}30` : `${colors.success}30`,
+                marginTop: 16,
+              }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <Feather name={balanceDue > 0 ? "alert-circle" : "check-circle"} size={16}
+                    color={balanceDue > 0 ? colors.destructive : colors.success} />
+                  <Text style={{ fontSize: 15, fontWeight: "700", color: balanceDue > 0 ? colors.destructive : colors.success }}>
+                    {balanceDue > 0 ? "Outstanding Balance" : "All Paid Up"}
+                  </Text>
+                </View>
+                {[
+                  { label: "Monthly Rent", value: fmt(tenant.rentAmount), color: colors.foreground },
+                  { label: "Months Active", value: `${monthsElapsed} months`, color: colors.foreground },
+                  { label: "Total Expected", value: fmt(totalExpected), color: colors.primary },
+                  { label: "Total Paid", value: fmt(totalPaid), color: colors.success },
+                  { label: "Balance Due", value: fmt(balanceDue), color: balanceDue > 0 ? colors.destructive : colors.success },
+                ].map(row => (
+                  <View key={row.label} style={[styles.balanceRow, { borderBottomColor: colors.border }]}>
+                    <Text style={[styles.label, { color: colors.mutedForeground }]}>{row.label}</Text>
+                    <Text style={[styles.value, { color: row.color }]}>{row.value}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Action buttons */}
+              <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
+                <TouchableOpacity
+                  style={[styles.recordBtn, { backgroundColor: colors.primary, flex: 1 }]}
+                  onPress={() => router.push(`/payment-add?tenantId=${tenantId}&propertyId=${tenant.propertyId}` as any)}
+                  activeOpacity={0.85}
+                >
+                  <Feather name="plus-circle" size={16} color={colors.primaryForeground} />
+                  <Text style={{ color: colors.primaryForeground, fontWeight: "700", fontSize: 14 }}>Record Payment</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.recordBtn, { backgroundColor: "#25D366", flex: 1 }]}
+                  onPress={() => {
+                    if (!tenant.phone) { Alert.alert("No Phone Number", "This tenant has no phone number on file."); return; }
+                    let digits = tenant.phone.replace(/\D/g, "");
+                    if (digits.length === 10) digits = "91" + digits;
+                    else if (digits.startsWith("0")) digits = "91" + digits.slice(1);
+                    const leaseEndStr = new Date(tenant.leaseEnd).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
+                    const message = [
+                      `Hello ${tenant.name},`, ``,
+                      `This is a friendly reminder for your rent payment.`, ``,
+                      `🏠 Property: ${(tenant as any).propertyName}`,
+                      `📦 Unit: ${tenant.unitNumber}`,
+                      `💰 Monthly Rent: ₹${Math.round(tenant.rentAmount).toLocaleString("en-IN")}`,
+                      `⚠️ Balance Due: ₹${Math.round(balanceDue).toLocaleString("en-IN")}`,
+                      `📅 Lease End: ${leaseEndStr}`, ``,
+                      `Please make the payment at your earliest convenience.`, ``,
+                      `Thank you,`, `Gemini Rent Manager`,
+                    ].join("\n");
+                    const url = `whatsapp://send?phone=${digits}&text=${encodeURIComponent(message)}`;
+                    Linking.openURL(url).catch(() =>
+                      Alert.alert("WhatsApp Not Available", "Please check if WhatsApp is installed and the phone number is valid.")
+                    );
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Feather name="message-circle" size={16} color="#fff" />
+                  <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>Send Reminder</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Security deposit card */}
+              {(() => {
+                const t = tenant as any;
+                const hasDeposit = t.securityDeposit != null;
+                const isRefunded = t.depositStatus === "refunded";
+                const depositColor = isRefunded ? colors.mutedForeground : colors.warning;
+                return (
+                  <View style={[styles.card, { backgroundColor: colors.card, borderColor: isRefunded ? colors.border : `${colors.warning}40`, marginTop: 16 }]}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <Feather name="shield" size={16} color={depositColor} />
+                        <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Security Deposit</Text>
                       </View>
-                    ) : null}
-                    {!isRefunded && (
-                      <TouchableOpacity
-                        style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: `${colors.success}12`, borderWidth: 1, borderColor: `${colors.success}30` }}
-                        onPress={() => {
-                          const msg = `Mark the deposit of ₹${Number(t.securityDeposit).toLocaleString("en-IN")} as refunded?`;
-                          const doRefund = () => {
-                            updateMutation.mutate(
-                              { id: tenantId, data: { depositStatus: "refunded" } as any },
-                              {
-                                onSuccess: (data) => {
-                                  queryClient.setQueryData(getGetTenantQueryKey(tenantId), data);
-                                  queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
-                                },
-                                onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to update deposit"),
-                              }
-                            );
-                          };
-                          if (Platform.OS === "web") {
-                            if (window.confirm(msg)) doRefund();
-                          } else {
-                            Alert.alert("Refund Deposit", msg, [
-                              { text: "Cancel", style: "cancel" },
-                              { text: "Mark Refunded", style: "default", onPress: doRefund },
-                            ]);
-                          }
-                        }}
-                        disabled={updateMutation.isPending}
-                      >
-                        {updateMutation.isPending ? (
-                          <ActivityIndicator size="small" color={colors.success} />
-                        ) : (
-                          <Feather name="check-circle" size={15} color={colors.success} />
-                        )}
-                        <Text style={{ color: colors.success, fontWeight: "700", fontSize: 14 }}>Mark as Refunded</Text>
+                      {hasDeposit && (
+                        <View style={[styles.badge, { backgroundColor: `${depositColor}18` }]}>
+                          <Text style={{ fontSize: 11, fontWeight: "800", color: depositColor, textTransform: "uppercase" }}>
+                            {isRefunded ? "Refunded" : "Held"}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                    {!hasDeposit ? (
+                      <TouchableOpacity style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12 }} onPress={() => setIsEditing(true)}>
+                        <Feather name="plus-circle" size={16} color={colors.primary} />
+                        <Text style={{ color: colors.primary, fontWeight: "600", fontSize: 14 }}>Add security deposit</Text>
                       </TouchableOpacity>
+                    ) : (
+                      <>
+                        <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
+                          <Text style={[styles.label, { color: colors.mutedForeground }]}>Amount</Text>
+                          <Text style={[styles.value, { color: colors.foreground }]}>₹{Number(t.securityDeposit).toLocaleString("en-IN")}</Text>
+                        </View>
+                        {t.depositDate ? (
+                          <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
+                            <Text style={[styles.label, { color: colors.mutedForeground }]}>Deposit Date</Text>
+                            <Text style={[styles.value, { color: colors.foreground }]}>{new Date(t.depositDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</Text>
+                          </View>
+                        ) : null}
+                        {!isRefunded && (
+                          <TouchableOpacity
+                            style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: `${colors.success}12`, borderWidth: 1, borderColor: `${colors.success}30` }}
+                            onPress={() => {
+                              const msg = `Mark the deposit of ₹${Number(t.securityDeposit).toLocaleString("en-IN")} as refunded?`;
+                              const doRefund = () => {
+                                updateMutation.mutate(
+                                  { id: tenantId, data: { depositStatus: "refunded" } as any },
+                                  {
+                                    onSuccess: (data) => {
+                                      queryClient.setQueryData(getGetTenantQueryKey(tenantId), data);
+                                      queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+                                    },
+                                    onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to update deposit"),
+                                  }
+                                );
+                              };
+                              if (Platform.OS === "web") { if (window.confirm(msg)) doRefund(); }
+                              else { Alert.alert("Refund Deposit", msg, [{ text: "Cancel", style: "cancel" }, { text: "Mark Refunded", style: "default", onPress: doRefund }]); }
+                            }}
+                            disabled={updateMutation.isPending}
+                          >
+                            {updateMutation.isPending ? <ActivityIndicator size="small" color={colors.success} /> : <Feather name="check-circle" size={15} color={colors.success} />}
+                            <Text style={{ color: colors.success, fontWeight: "700", fontSize: 14 }}>Mark as Refunded</Text>
+                          </TouchableOpacity>
+                        )}
+                      </>
                     )}
-                  </>
+                  </View>
+                );
+              })()}
+
+              {/* Rent Ledger */}
+              <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Rent Ledger</Text>
+                  <Text style={{ fontSize: 12, color: colors.mutedForeground }}>{payments?.length ?? 0} records</Text>
+                </View>
+                {paymentsLoading ? (
+                  <View style={{ padding: 20, alignItems: "center" }}><ActivityIndicator color={colors.primary} /></View>
+                ) : !payments || payments.length === 0 ? (
+                  <View style={{ alignItems: "center", paddingVertical: 24, gap: 8 }}>
+                    <Feather name="inbox" size={32} color={colors.mutedForeground} />
+                    <Text style={{ color: colors.mutedForeground, fontSize: 14 }}>No payments recorded yet</Text>
+                  </View>
+                ) : (
+                  [...payments].reverse().map((p, idx) => {
+                    const monthLabel = new Date(p.year, p.month - 1).toLocaleString("default", { month: "short", year: "numeric" });
+                    const statusColor = p.status === "paid" ? colors.success : p.status === "partial" ? colors.warning : colors.destructive;
+                    return (
+                      <View key={p.id} style={[styles.ledgerRow, { borderBottomColor: colors.border }, idx === payments.length - 1 && { borderBottomWidth: 0 }]}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground }}>{monthLabel}</Text>
+                          <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>
+                            {p.method.replace(/_/g, " ")} • {new Date(p.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: "700", color: colors.foreground, marginRight: 8 }}>
+                          ₹{Number(p.amount).toLocaleString("en-IN")}
+                        </Text>
+                        <View style={[styles.badge, { backgroundColor: `${statusColor}20` }]}>
+                          <Text style={{ fontSize: 9, fontWeight: "800", color: statusColor }}>{p.status.toUpperCase()}</Text>
+                        </View>
+                        <TouchableOpacity style={{ padding: 8 }} onPress={() => router.push(`/payment-edit?id=${p.id}` as any)}>
+                          <Feather name="edit-2" size={14} color={colors.primary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={{ padding: 8 }} onPress={() => router.push(`/payment-receipt?id=${p.id}` as any)}>
+                          <Feather name="external-link" size={14} color={colors.mutedForeground} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={{ padding: 8 }} onPress={() => handleDeletePayment(p.id)} disabled={deletePmtMutation.isPending}>
+                          <Feather name="trash-2" size={14} color={colors.destructive} />
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })
                 )}
               </View>
-            );
-          })()}
-
-          {/* Rent Ledger */}
-          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Rent Ledger</Text>
-              <Text style={{ fontSize: 12, color: colors.mutedForeground }}>{payments?.length ?? 0} records</Text>
+            </>
+          ) : (
+            /* Edit form */
+            <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Full Name</Text>
+              <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={name} onChangeText={setName} />
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Email</Text>
+              <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Phone</Text>
+              <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+              <View style={styles.row}>
+                <View style={styles.flex1}>
+                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Unit Number</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={unitNumber} onChangeText={setUnitNumber} />
+                </View>
+                <View style={styles.flex1}>
+                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Rent Amount</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={rentAmount} onChangeText={setRentAmount} keyboardType="numeric" />
+                </View>
+              </View>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Status</Text>
+              <View style={[styles.segmentedControl, { marginBottom: 16 }]}>
+                {(["active", "inactive", "evicted"] as const).map(s => (
+                  <TouchableOpacity key={s} style={[styles.segmentOption, status === s && { backgroundColor: colors.primary }]} onPress={() => setStatus(s)}>
+                    <Text style={{ fontSize: 12, color: status === s ? colors.primaryForeground : colors.mutedForeground, textTransform: "capitalize" }}>{s}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={styles.row}>
+                <View style={styles.flex1}>
+                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease Start (YYYY-MM-DD)</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={leaseStart} onChangeText={setLeaseStart} />
+                </View>
+                <View style={styles.flex1}>
+                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease End (YYYY-MM-DD)</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={leaseEnd} onChangeText={setLeaseEnd} />
+                </View>
+              </View>
+              <View style={[styles.sectionDivider, { backgroundColor: colors.border }]} />
+              <Text style={[styles.inputLabel, { color: colors.foreground, marginBottom: 4 }]}>Security Deposit (Optional)</Text>
+              <View style={styles.row}>
+                <View style={styles.flex1}>
+                  <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Amount (₹)</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={depositAmount} onChangeText={setDepositAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.mutedForeground} />
+                </View>
+                <View style={styles.flex1}>
+                  <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Date (YYYY-MM-DD)</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={depositDate} onChangeText={setDepositDate} placeholder="YYYY-MM-DD" placeholderTextColor={colors.mutedForeground} />
+                </View>
+              </View>
+              <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 8 }]}>Status</Text>
+              <View style={[styles.segmentedControl, { marginBottom: 8 }]}>
+                {(["held", "refunded"] as const).map(s => (
+                  <TouchableOpacity key={s} style={[styles.segmentOption, depositStatus === s && { backgroundColor: s === "refunded" ? colors.success : colors.warning }]} onPress={() => setDepositStatus(s)}>
+                    <Text style={{ fontSize: 12, color: depositStatus === s ? colors.primaryForeground : colors.mutedForeground, textTransform: "capitalize" }}>{s}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
-            {paymentsLoading ? (
-              <View style={{ padding: 20, alignItems: "center" }}>
-                <ActivityIndicator color={colors.primary} />
+          )}
+        </ScrollView>
+      )}
+
+      {/* ─── AGREEMENT TAB ────────────────────────────────────────────── */}
+      {activeTab === "agreement" && (
+        <ScrollView contentContainerStyle={styles.content}>
+          {/* Agreement creation / edit form */}
+          {showAgrForm && (
+            <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.primary, borderWidth: 1.5, marginBottom: 16 }]}>
+              <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground, marginBottom: 16 }}>
+                {editingAgrId ? "Edit Agreement" : "New Rent Agreement"}
+              </Text>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Agreement Number *</Text>
+              <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={agrNumber} onChangeText={setAgrNumber} placeholder="e.g. AGR-2025-001" placeholderTextColor={colors.mutedForeground} />
+              <View style={styles.row}>
+                <View style={styles.flex1}>
+                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Start Date *</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={agrStart} onChangeText={setAgrStart} placeholder="YYYY-MM-DD" placeholderTextColor={colors.mutedForeground} />
+                </View>
+                <View style={styles.flex1}>
+                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>End Date *</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={agrEnd} onChangeText={setAgrEnd} placeholder="YYYY-MM-DD" placeholderTextColor={colors.mutedForeground} />
+                </View>
               </View>
-            ) : !payments || payments.length === 0 ? (
-              <View style={{ alignItems: "center", paddingVertical: 24, gap: 8 }}>
-                <Feather name="inbox" size={32} color={colors.mutedForeground} />
-                <Text style={{ color: colors.mutedForeground, fontSize: 14 }}>No payments recorded yet</Text>
+              <View style={styles.row}>
+                <View style={styles.flex1}>
+                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Monthly Rent (₹) *</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={agrRent} onChangeText={setAgrRent} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.mutedForeground} />
+                </View>
+                <View style={styles.flex1}>
+                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Security Deposit (₹)</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={agrDeposit} onChangeText={setAgrDeposit} keyboardType="numeric" placeholder="Optional" placeholderTextColor={colors.mutedForeground} />
+                </View>
               </View>
-            ) : (
-              [...payments].reverse().map((p, idx) => {
-                const monthLabel = new Date(p.year, p.month - 1).toLocaleString("default", { month: "short", year: "numeric" });
-                const statusColor = p.status === "paid" ? colors.success : p.status === "partial" ? colors.warning : colors.destructive;
-                return (
-                  <View
-                    key={p.id}
-                    style={[
-                      styles.ledgerRow,
-                      { borderBottomColor: colors.border },
-                      idx === payments.length - 1 && { borderBottomWidth: 0 },
-                    ]}
-                  >
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Notes</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border, height: 80, textAlignVertical: "top", paddingTop: 10 }]}
+                value={agrNotes}
+                onChangeText={setAgrNotes}
+                placeholder="Optional notes..."
+                placeholderTextColor={colors.mutedForeground}
+                multiline
+              />
+              <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+                <TouchableOpacity style={[styles.recordBtn, { flex: 1, backgroundColor: colors.input, borderWidth: 1, borderColor: colors.border }]} onPress={closeAgrForm}>
+                  <Text style={{ color: colors.foreground, fontWeight: "600" }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.recordBtn, { flex: 1, backgroundColor: colors.primary }]}
+                  onPress={handleSaveAgreement}
+                  disabled={createAgrMutation.isPending || updateAgrMutation.isPending}
+                >
+                  {(createAgrMutation.isPending || updateAgrMutation.isPending)
+                    ? <ActivityIndicator color={colors.primaryForeground} />
+                    : <Text style={{ color: colors.primaryForeground, fontWeight: "700" }}>{editingAgrId ? "Update" : "Create"} Agreement</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Add Agreement button */}
+          {!showAgrForm && (
+            <TouchableOpacity
+              style={[styles.recordBtn, { backgroundColor: colors.primary, marginBottom: 16 }]}
+              onPress={() => openAgrForm()}
+            >
+              <Feather name="plus" size={18} color={colors.primaryForeground} />
+              <Text style={{ color: colors.primaryForeground, fontWeight: "700", fontSize: 15 }}>Add Rent Agreement</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Agreements list */}
+          {agreementsLoading ? (
+            <ActivityIndicator color={colors.primary} style={{ marginVertical: 30 }} />
+          ) : !agreements || agreements.length === 0 ? (
+            <View style={{ alignItems: "center", paddingVertical: 48, gap: 10 }}>
+              <Feather name="file-text" size={48} color={colors.mutedForeground} />
+              <Text style={{ fontSize: 16, fontWeight: "600", color: colors.foreground }}>No Agreements Yet</Text>
+              <Text style={{ fontSize: 14, color: colors.mutedForeground, textAlign: "center" }}>
+                Tap "Add Rent Agreement" to create the first agreement for this tenant.
+              </Text>
+            </View>
+          ) : (
+            agreements.map(agr => {
+              const isActive = agr.status === "active";
+              const today = new Date().toISOString().split("T")[0];
+              const in30Days = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+              const isExpiringSoon = isActive && agr.endDate <= in30Days;
+              const statusColor = isActive ? (isExpiringSoon ? colors.warning : colors.success) : colors.destructive;
+              return (
+                <View key={agr.id} style={[styles.card, { backgroundColor: colors.card, borderColor: isExpiringSoon ? `${colors.warning}50` : colors.border, marginBottom: 14 }]}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground }}>{monthLabel}</Text>
-                      <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>
-                        {p.method.replace(/_/g, " ")} • {new Date(p.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                      <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>{agr.agreementNumber}</Text>
+                      <Text style={{ fontSize: 12, color: colors.mutedForeground, marginTop: 2 }}>
+                        Created {new Date(agr.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                       </Text>
                     </View>
-                    <Text style={{ fontSize: 14, fontWeight: "700", color: colors.foreground, marginRight: 8 }}>
-                      ₹{Number(p.amount).toLocaleString("en-IN")}
-                    </Text>
-                    <View style={[styles.badge, { backgroundColor: `${statusColor}20` }]}>
-                      <Text style={{ fontSize: 9, fontWeight: "800", color: statusColor }}>{p.status.toUpperCase()}</Text>
+                    <View style={[styles.badge, { backgroundColor: `${statusColor}18` }]}>
+                      <Text style={{ fontSize: 11, fontWeight: "800", color: statusColor, textTransform: "uppercase" }}>
+                        {isExpiringSoon ? "Expiring Soon" : agr.status}
+                      </Text>
                     </View>
+                  </View>
+                  {[
+                    { label: "Start Date", value: new Date(agr.startDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) },
+                    { label: "End Date", value: new Date(agr.endDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) },
+                    { label: "Monthly Rent", value: `₹${agr.monthlyRent.toLocaleString("en-IN")}` },
+                    ...(agr.securityDeposit != null ? [{ label: "Security Deposit", value: `₹${agr.securityDeposit.toLocaleString("en-IN")}` }] : []),
+                  ].map(row => (
+                    <View key={row.label} style={[styles.infoRow, { borderBottomColor: colors.border }]}>
+                      <Text style={[styles.label, { color: colors.mutedForeground }]}>{row.label}</Text>
+                      <Text style={[styles.value, { color: colors.foreground }]}>{row.value}</Text>
+                    </View>
+                  ))}
+                  {agr.notes ? (
+                    <View style={{ marginTop: 10, padding: 10, backgroundColor: `${colors.primary}08`, borderRadius: 8 }}>
+                      <Text style={{ fontSize: 12, color: colors.mutedForeground, fontStyle: "italic" }}>{agr.notes}</Text>
+                    </View>
+                  ) : null}
+                  <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
                     <TouchableOpacity
-                      style={{ padding: 8 }}
-                      onPress={() => router.push(`/payment-edit?id=${p.id}` as any)}
+                      style={[styles.recordBtn, { flex: 1, backgroundColor: colors.input, borderWidth: 1, borderColor: colors.border }]}
+                      onPress={() => openAgrForm(agr)}
                     >
-                      <Feather name="edit-2" size={14} color={colors.primary} />
+                      <Feather name="edit-2" size={14} color={colors.foreground} />
+                      <Text style={{ color: colors.foreground, fontWeight: "600", fontSize: 14 }}>Edit</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={{ padding: 8 }}
-                      onPress={() => router.push(`/payment-receipt?id=${p.id}` as any)}
+                      style={[styles.recordBtn, { flex: 1, backgroundColor: `${colors.destructive}10`, borderWidth: 1, borderColor: `${colors.destructive}30` }]}
+                      onPress={() => handleDeleteAgreement(agr.id)}
+                      disabled={deleteAgrMutation.isPending}
                     >
-                      <Feather name="external-link" size={14} color={colors.mutedForeground} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{ padding: 8 }}
-                      onPress={() => handleDeletePayment(p.id)}
-                      disabled={deletePmtMutation.isPending}
-                    >
-                      <Feather name="trash-2" size={14} color={colors.destructive} />
+                      {deleteAgrMutation.isPending
+                        ? <ActivityIndicator size="small" color={colors.destructive} />
+                        : <Feather name="trash-2" size={14} color={colors.destructive} />}
+                      <Text style={{ color: colors.destructive, fontWeight: "600", fontSize: 14 }}>Delete</Text>
                     </TouchableOpacity>
                   </View>
-                );
-              })
+                </View>
+              );
+            })
+          )}
+        </ScrollView>
+      )}
+
+      {/* ─── DOCUMENTS TAB ────────────────────────────────────────────── */}
+      {activeTab === "documents" && (
+        <ScrollView contentContainerStyle={styles.content}>
+          {/* Upload section */}
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 16 }]}>
+            <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground, marginBottom: 14 }}>Upload Documents</Text>
+            {uploading && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={{ color: colors.primary, fontSize: 14 }}>Uploading...</Text>
+              </View>
             )}
-          </View>
-          </>
-        ) : (
-          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.inputLabel, { color: colors.foreground }]}>Full Name</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-              value={name}
-              onChangeText={setName}
-            />
-
-            <Text style={[styles.inputLabel, { color: colors.foreground }]}>Email</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-
-            <Text style={[styles.inputLabel, { color: colors.foreground }]}>Phone</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-            />
-
-            <View style={styles.row}>
-              <View style={styles.flex1}>
-                <Text style={[styles.inputLabel, { color: colors.foreground }]}>Unit Number</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                  value={unitNumber}
-                  onChangeText={setUnitNumber}
-                />
-              </View>
-              <View style={styles.flex1}>
-                <Text style={[styles.inputLabel, { color: colors.foreground }]}>Rent Amount</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                  value={rentAmount}
-                  onChangeText={setRentAmount}
-                  keyboardType="numeric"
-                />
-              </View>
-            </View>
-
-            <Text style={[styles.inputLabel, { color: colors.foreground }]}>Status</Text>
-            <View style={[styles.segmentedControl, { marginBottom: 16 }]}>
-              {(["active", "inactive", "evicted"] as const).map(s => (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+              {DOC_TYPES.map(dt => (
                 <TouchableOpacity
-                  key={s}
-                  style={[styles.segmentOption, status === s && { backgroundColor: colors.primary }]}
-                  onPress={() => setStatus(s)}
+                  key={dt.type}
+                  style={[styles.uploadBtn, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}30` }]}
+                  onPress={() => dt.isImage ? pickImageAndUpload(dt.type) : pickDocAndUpload(dt.type)}
+                  disabled={uploading}
                 >
-                  <Text style={{ fontSize: 12, color: status === s ? colors.primaryForeground : colors.mutedForeground, textTransform: "capitalize" }}>{s}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <View style={styles.row}>
-              <View style={styles.flex1}>
-                <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease Start (YYYY-MM-DD)</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                  value={leaseStart}
-                  onChangeText={setLeaseStart}
-                />
-              </View>
-              <View style={styles.flex1}>
-                <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease End (YYYY-MM-DD)</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                  value={leaseEnd}
-                  onChangeText={setLeaseEnd}
-                />
-              </View>
-            </View>
-
-            <View style={[styles.sectionDivider, { backgroundColor: colors.border }]} />
-            <Text style={[styles.inputLabel, { color: colors.foreground, marginBottom: 4 }]}>Security Deposit (Optional)</Text>
-
-            <View style={styles.row}>
-              <View style={styles.flex1}>
-                <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Amount (₹)</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                  value={depositAmount}
-                  onChangeText={setDepositAmount}
-                  keyboardType="numeric"
-                  placeholder="0"
-                  placeholderTextColor={colors.mutedForeground}
-                />
-              </View>
-              <View style={styles.flex1}>
-                <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Date (YYYY-MM-DD)</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                  value={depositDate}
-                  onChangeText={setDepositDate}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={colors.mutedForeground}
-                />
-              </View>
-            </View>
-
-            <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 8 }]}>Status</Text>
-            <View style={[styles.segmentedControl, { marginBottom: 8 }]}>
-              {(["held", "refunded"] as const).map(s => (
-                <TouchableOpacity
-                  key={s}
-                  style={[styles.segmentOption, depositStatus === s && { backgroundColor: s === "refunded" ? colors.success : colors.warning }]}
-                  onPress={() => setDepositStatus(s)}
-                >
-                  <Text style={{ fontSize: 12, color: depositStatus === s ? colors.primaryForeground : colors.mutedForeground, textTransform: "capitalize" }}>{s}</Text>
+                  <Feather name={dt.icon} size={18} color={colors.primary} />
+                  <Text style={{ fontSize: 12, color: colors.primary, fontWeight: "600", textAlign: "center" }}>{dt.label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           </View>
-        )}
-      </ScrollView>
+
+          {/* Documents list */}
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Uploaded Documents</Text>
+            <Text style={{ fontSize: 12, color: colors.mutedForeground }}>{documents?.length ?? 0} files</Text>
+          </View>
+
+          {documentsLoading ? (
+            <ActivityIndicator color={colors.primary} style={{ marginVertical: 30 }} />
+          ) : !documents || documents.length === 0 ? (
+            <View style={{ alignItems: "center", paddingVertical: 48, gap: 10 }}>
+              <Feather name="folder" size={48} color={colors.mutedForeground} />
+              <Text style={{ fontSize: 16, fontWeight: "600", color: colors.foreground }}>No Documents Yet</Text>
+              <Text style={{ fontSize: 14, color: colors.mutedForeground, textAlign: "center" }}>
+                Upload Aadhaar, PAN, photo, agreement PDF or other documents above.
+              </Text>
+            </View>
+          ) : (
+            documents.map(doc => {
+              const isImg = isImageMime(doc.mimeType);
+              const docTypeInfo = DOC_TYPES.find(d => d.type === doc.documentType);
+              const fileUrl = `${baseUrl}${doc.fileUrl}?token=${auth.token}`;
+              return (
+                <View key={doc.id} style={[styles.docCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <View style={styles.docLeft}>
+                    {isImg ? (
+                      <ExpoImage
+                        source={{ uri: fileUrl }}
+                        style={styles.docThumbnail}
+                        contentFit="cover"
+                      />
+                    ) : (
+                      <View style={[styles.docIconBox, { backgroundColor: `${colors.primary}12` }]}>
+                        <Feather name={docTypeIcon(doc.documentType)} size={22} color={colors.primary} />
+                      </View>
+                    )}
+                    <View style={styles.docInfo}>
+                      <Text style={[styles.docName, { color: colors.foreground }]} numberOfLines={1}>{doc.originalName}</Text>
+                      <View style={{ flexDirection: "row", gap: 8, marginTop: 3 }}>
+                        <View style={[styles.badge, { backgroundColor: `${colors.primary}12` }]}>
+                          <Text style={[styles.badgeText, { color: colors.primary }]}>
+                            {docTypeInfo?.label || doc.documentType}
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 11, color: colors.mutedForeground }}>{fmtFileSize(doc.fileSize)}</Text>
+                      </View>
+                      <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>
+                        {new Date(doc.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 4 }}>
+                    <TouchableOpacity
+                      style={[styles.iconButton, { backgroundColor: `${colors.primary}10`, borderRadius: 8 }]}
+                      onPress={() => Linking.openURL(fileUrl).catch(() => Alert.alert("Error", "Cannot open file"))}
+                    >
+                      <Feather name="external-link" size={16} color={colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.iconButton, { backgroundColor: `${colors.destructive}10`, borderRadius: 8 }]}
+                      onPress={() => handleDeleteDocument(doc.id, doc.originalName)}
+                      disabled={deleteDocMutation.isPending}
+                    >
+                      {deleteDocMutation.isPending
+                        ? <ActivityIndicator size="small" color={colors.destructive} />
+                        : <Feather name="trash-2" size={16} color={colors.destructive} />}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -604,23 +1005,40 @@ export default function TenantDetailScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(0,0,0,0.08)" },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
   iconButton: { width: 40, height: 40, justifyContent: "center", alignItems: "center" },
   headerTitle: { fontSize: 20, fontWeight: "bold" },
+  tabBar: {
+    flexDirection: "row",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  tabText: { fontSize: 13, fontWeight: "600" },
   content: { padding: 16, paddingBottom: 60 },
-  card: { padding: 20, borderRadius: 16, borderWidth: 1 },
+  card: { padding: 16, borderRadius: 16, borderWidth: 1, marginBottom: 4 },
   avatarSection: { alignItems: "center", marginBottom: 24 },
   avatar: { width: 80, height: 80, borderRadius: 40, justifyContent: "center", alignItems: "center", marginBottom: 12 },
   name: { fontSize: 24, fontWeight: "bold", marginBottom: 4 },
   propertyText: { fontSize: 16 },
-  badge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  badge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
+  badgeText: { fontSize: 10, fontWeight: "bold" },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: "rgba(0,0,0,0.1)", marginBottom: 12 },
-  infoRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(0,0,0,0.08)" },
+  infoRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   label: { fontSize: 14, fontWeight: "500" },
   value: { fontSize: 14, fontWeight: "700" },
   balanceCard: { padding: 16, borderRadius: 16, borderWidth: 1 },
   balanceRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
-  recordBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, height: 52, borderRadius: 12 },
+  recordBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, height: 48, borderRadius: 12 },
   ledgerRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, gap: 4 },
   sectionDivider: { height: StyleSheet.hairlineWidth, marginVertical: 16 },
   inputLabel: { fontSize: 14, fontWeight: "600", marginBottom: 8, marginTop: 12 },
@@ -629,4 +1047,11 @@ const styles = StyleSheet.create({
   flex1: { flex: 1 },
   segmentedControl: { flexDirection: "row", backgroundColor: "rgba(0,0,0,0.05)", borderRadius: 8, padding: 4, marginBottom: 8 },
   segmentOption: { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: 6 },
+  uploadBtn: { width: "47%", paddingVertical: 14, paddingHorizontal: 10, borderRadius: 12, borderWidth: 1, alignItems: "center", gap: 6 },
+  docCard: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12, borderRadius: 12, borderWidth: 1, marginBottom: 10 },
+  docLeft: { flexDirection: "row", alignItems: "center", gap: 12, flex: 1 },
+  docThumbnail: { width: 48, height: 48, borderRadius: 8 },
+  docIconBox: { width: 48, height: 48, borderRadius: 8, justifyContent: "center", alignItems: "center" },
+  docInfo: { flex: 1 },
+  docName: { fontSize: 14, fontWeight: "600" },
 });
