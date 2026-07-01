@@ -31,6 +31,8 @@ export const LoginResponse = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "role": zod.enum(['admin', 'employee']),
+  "phone": zod.string().optional(),
+  "company": zod.string().optional(),
   "createdAt": zod.string()
 })
 })
@@ -53,6 +55,8 @@ export const RegisterResponse = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "role": zod.enum(['admin', 'employee']),
+  "phone": zod.string().optional(),
+  "company": zod.string().optional(),
   "createdAt": zod.string()
 })
 })
@@ -79,7 +83,43 @@ export const GetMeResponse = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "role": zod.enum(['admin', 'employee']),
+  "phone": zod.string().optional(),
+  "company": zod.string().optional(),
   "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Update current user profile
+ */
+export const UpdateProfileBody = zod.object({
+  "name": zod.string().optional(),
+  "email": zod.string().optional(),
+  "phone": zod.string().optional(),
+  "company": zod.string().optional()
+})
+
+export const UpdateProfileResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "role": zod.enum(['admin', 'employee']),
+  "phone": zod.string().optional(),
+  "company": zod.string().optional(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Change current user password
+ */
+export const ChangePasswordBody = zod.object({
+  "currentPassword": zod.string(),
+  "newPassword": zod.string()
+})
+
+export const ChangePasswordResponse = zod.object({
+  "message": zod.string()
 })
 
 

@@ -47,12 +47,26 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
+  phone?: string;
+  company?: string;
   createdAt: string;
 }
 
 export interface AuthResponse {
   token: string;
   user: User;
+}
+
+export interface UpdateProfileInput {
+  name?: string;
+  email?: string;
+  phone?: string;
+  company?: string;
+}
+
+export interface ChangePasswordInput {
+  currentPassword: string;
+  newPassword: string;
 }
 
 export interface DashboardSummary {
@@ -699,6 +713,10 @@ export interface TenantDocument {
 }
 
 export type ResetPassword200 = {
+  message: string;
+};
+
+export type ChangePassword200 = {
   message: string;
 };
 

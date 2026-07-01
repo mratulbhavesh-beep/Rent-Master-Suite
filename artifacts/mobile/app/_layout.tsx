@@ -59,6 +59,8 @@ function RootLayoutNav() {
       <Stack.Screen name="reports" />
       <Stack.Screen name="payments" />
       <Stack.Screen name="rent-ledger-detail" />
+      <Stack.Screen name="profile" />
+      <Stack.Screen name="change-password" />
     </Stack>
   );
 }

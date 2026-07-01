@@ -8,6 +8,7 @@ interface AuthContextType {
   token: string | null;
   login: (token: string, user: User) => Promise<void>;
   logout: () => Promise<void>;
+  updateUser: (updates: Partial<User>) => Promise<void>;
   isLoading: boolean;
   isAuthenticated: boolean;
 }
@@ -75,6 +76,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateUser = async (updates: Partial<User>) => {
+    if (!user) return;
+    const updated = { ...user, ...updates } as User;
+    try {
+      await AsyncStorage.setItem("auth_user", JSON.stringify(updated));
+      setUser(updated);
+    } catch (e) {
+      console.error("Failed to update user state", e);
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -82,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token,
         login,
         logout,
+        updateUser,
         isLoading,
         isAuthenticated: !!token,
       }}

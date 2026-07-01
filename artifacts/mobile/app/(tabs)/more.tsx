@@ -43,7 +43,11 @@ export default function MoreScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={[styles.profileCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <TouchableOpacity
+          style={[styles.profileCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+          onPress={() => router.push("/profile")}
+          activeOpacity={0.75}
+        >
           <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
             <Text style={{ color: colors.primaryForeground, fontSize: 24, fontWeight: "bold" }}>
               {user?.name?.charAt(0).toUpperCase() || "U"}
@@ -56,6 +60,16 @@ export default function MoreScreen() {
               <Text style={[styles.roleText, { color: colors.accent }]}>{user?.role.toUpperCase()}</Text>
             </View>
           </View>
+          <Feather name="chevron-right" size={20} color={colors.mutedForeground} />
+        </TouchableOpacity>
+
+        <View style={[styles.menuSection, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Account</Text>
+          <MenuItem
+            title="My Profile"
+            icon="user"
+            onPress={() => router.push("/profile")}
+          />
         </View>
 
         <View style={[styles.menuSection, { backgroundColor: colors.card, borderColor: colors.border }]}>

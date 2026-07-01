@@ -80,7 +80,91 @@ router.get("/auth/me", requireAuth, async (req: AuthRequest, res): Promise<void>
     res.status(404).json({ error: "User not found" });
     return;
   }
-  res.json({ id: user.id, name: user.name, email: user.email, role: user.role, createdAt: user.createdAt.toISOString() });
+  res.json({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    phone: user.phone ?? undefined,
+    company: user.company ?? undefined,
+    createdAt: user.createdAt.toISOString(),
+  });
+});
+
+router.put("/auth/profile", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const { name, email, phone, company } = req.body as {
+    name?: string; email?: string; phone?: string; company?: string;
+  };
+
+  if (email) {
+    const [conflict] = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.email, email));
+    if (conflict && conflict.id !== req.user!.id) {
+      res.status(400).json({ error: "Email already in use" });
+      return;
+    }
+  }
+
+  const updates: Record<string, string | null> = {};
+  if (name !== undefined) updates.name = name.trim() || null;
+  if (email !== undefined) updates.email = email.trim().toLowerCase() || null;
+  if (phone !== undefined) updates.phone = phone.trim() || null;
+  if (company !== undefined) updates.company = company.trim() || null;
+
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "No fields to update" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(usersTable)
+    .set(updates)
+    .where(eq(usersTable.id, req.user!.id))
+    .returning();
+
+  res.json({
+    id: updated.id,
+    name: updated.name,
+    email: updated.email,
+    role: updated.role,
+    phone: updated.phone ?? undefined,
+    company: updated.company ?? undefined,
+    createdAt: updated.createdAt.toISOString(),
+  });
+});
+
+router.post("/auth/change-password", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const { currentPassword, newPassword } = req.body as {
+    currentPassword?: string; newPassword?: string;
+  };
+
+  if (!currentPassword || !newPassword) {
+    res.status(400).json({ error: "Current and new password are required" });
+    return;
+  }
+  if (newPassword.length < 6) {
+    res.status(400).json({ error: "New password must be at least 6 characters" });
+    return;
+  }
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, req.user!.id));
+  if (!user) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  const valid = await comparePassword(currentPassword, user.passwordHash);
+  if (!valid) {
+    res.status(400).json({ error: "Current password is incorrect" });
+    return;
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  await db.update(usersTable).set({ passwordHash }).where(eq(usersTable.id, user.id));
+
+  res.json({ message: "Password changed successfully" });
 });
 
 export default router;

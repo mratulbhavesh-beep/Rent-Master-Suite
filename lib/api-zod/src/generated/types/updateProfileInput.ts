@@ -5,14 +5,10 @@
  * Gemini Rent Manager API
  * OpenAPI spec version: 0.1.0
  */
-import type { UserRole } from './userRole';
 
-export interface User {
-  id: number;
-  name: string;
-  email: string;
-  role: UserRole;
+export interface UpdateProfileInput {
+  name?: string;
+  email?: string;
   phone?: string;
   company?: string;
-  createdAt: string;
 }
