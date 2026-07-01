@@ -57,6 +57,8 @@ function RootLayoutNav() {
       <Stack.Screen name="loan-detail" />
       <Stack.Screen name="maintenance" />
       <Stack.Screen name="reports" />
+      <Stack.Screen name="rent-ledger" />
+      <Stack.Screen name="rent-ledger-detail" />
     </Stack>
   );
 }
