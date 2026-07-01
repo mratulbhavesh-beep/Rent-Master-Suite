@@ -136,12 +136,7 @@ export default function PaymentsScreen() {
           <Text style={[styles.amount, { color: colors.foreground }]}>
             ₹{Number(item.amount).toLocaleString("en-IN")}
           </Text>
-          <View
-            style={[
-              styles.badge,
-              { backgroundColor: `${getStatusColor(item.status)}20` },
-            ]}
-          >
+          <View style={[styles.badge, { backgroundColor: `${getStatusColor(item.status)}20` }]}>
             <Text style={[styles.badgeText, { color: getStatusColor(item.status) }]}>
               {getStatusLabel(item.status)}
             </Text>
@@ -174,21 +169,15 @@ export default function PaymentsScreen() {
   );
 
   return (
-    <View
-      style={[
-        styles.container,
-        { backgroundColor: colors.background, paddingTop: insets.top },
-      ]}
-    >
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={[styles.headerTitle, { color: colors.foreground }]}>
-            Payments
-          </Text>
-          <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
-            {selectedYear}
-          </Text>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+      {/* Header with back button */}
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <Feather name="arrow-left" size={24} color={colors.foreground} />
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>Payments</Text>
+          <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>{selectedYear}</Text>
         </View>
         <TouchableOpacity
           style={[styles.addBtn, { backgroundColor: colors.primary }]}
@@ -218,12 +207,7 @@ export default function PaymentsScreen() {
               ]}
               onPress={() => setSelectedMonth(mn)}
             >
-              <Text
-                style={[
-                  styles.monthTabText,
-                  { color: isSelected ? colors.primaryForeground : colors.mutedForeground },
-                ]}
-              >
+              <Text style={[styles.monthTabText, { color: isSelected ? colors.primaryForeground : colors.mutedForeground }]}>
                 {m}
               </Text>
             </TouchableOpacity>
@@ -351,16 +335,17 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 10,
   },
-  headerTitle: { fontSize: 28, fontWeight: "bold" },
-  headerSub: { fontSize: 13, marginTop: 2 },
+  backBtn: { width: 40, height: 40, justifyContent: "center", alignItems: "center" },
+  headerTitle: { fontSize: 22, fontWeight: "bold" },
+  headerSub: { fontSize: 13, marginTop: 1 },
   addBtn: { width: 42, height: 42, borderRadius: 21, justifyContent: "center", alignItems: "center" },
-  monthScroll: { paddingHorizontal: 16, paddingBottom: 12, gap: 8, flexDirection: "row" },
+  monthScroll: { paddingHorizontal: 16, paddingVertical: 10, gap: 8, flexDirection: "row" },
   monthTab: {
     paddingHorizontal: 16,
     paddingVertical: 7,
@@ -381,7 +366,7 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 16, fontWeight: "800" },
   statLabel: { fontSize: 10, marginTop: 2, fontWeight: "500" },
   statDivider: { width: 1, marginHorizontal: 8 },
-  listContent: { paddingHorizontal: 16, paddingBottom: 100 },
+  listContent: { paddingHorizontal: 16, paddingBottom: 40 },
   card: { borderRadius: 14, borderWidth: 1, marginBottom: 12, overflow: "hidden" },
   cardTop: {
     flexDirection: "row",

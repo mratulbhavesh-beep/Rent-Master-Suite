@@ -61,10 +61,9 @@ export default function MoreScreen() {
         <View style={[styles.menuSection, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Finance</Text>
           <MenuItem 
-            title="Rent Ledger" 
-            icon="book-open" 
-            color={colors.primary}
-            onPress={() => router.push("/rent-ledger")} 
+            title="Payments" 
+            icon="credit-card" 
+            onPress={() => router.push("/payments")} 
           />
           <MenuItem 
             title="Expenses" 
@@ -73,7 +72,7 @@ export default function MoreScreen() {
           />
           <MenuItem 
             title="Loans & EMIs" 
-            icon="credit-card" 
+            icon="dollar-sign" 
             onPress={() => router.push("/loans")} 
           />
           <MenuItem 

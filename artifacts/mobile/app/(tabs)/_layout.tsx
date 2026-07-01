@@ -23,9 +23,9 @@ function NativeTabLayout() {
         <Icon sf={{ default: "person.2", selected: "person.2.fill" }} />
         <Label>Tenants</Label>
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="payments">
-        <Icon sf={{ default: "indianrupeesign.circle", selected: "indianrupeesign.circle.fill" }} />
-        <Label>Payments</Label>
+      <NativeTabs.Trigger name="rent-ledger">
+        <Icon sf={{ default: "book.pages", selected: "book.pages.fill" }} />
+        <Label>Ledger</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="more">
         <Icon sf={{ default: "line.3.horizontal", selected: "line.3.horizontal" }} />
@@ -92,11 +92,11 @@ function ClassicTabLayout() {
         }}
       />
       <Tabs.Screen
-        name="payments"
+        name="rent-ledger"
         options={{
-          title: "Payments",
+          title: "Ledger",
           tabBarIcon: ({ color }) => (
-            isIOS ? <SymbolView name="indianrupeesign.circle" tintColor={color} size={24} /> : <MaterialIcons name="payment" size={24} color={color} />
+            isIOS ? <SymbolView name="book.pages" tintColor={color} size={24} /> : <Feather name="book-open" size={22} color={color} />
           ),
         }}
       />

@@ -76,11 +76,11 @@ const STATUS_CONFIG = {
   due: { label: "Due", bg: "#fee2e2", text: "#dc2626" },
 };
 
-export default function RentLedgerScreen() {
+export default function RentLedgerTab() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const queryClient = useQueryClient();
+  useQueryClient();
 
   const [search, setSearch] = useState("");
   const [selectedPropertyId, setSelectedPropertyId] = useState<number | null>(null);
@@ -96,7 +96,7 @@ export default function RentLedgerScreen() {
     {},
     { query: { queryKey: getListPaymentsQueryKey() } }
   );
-  const { data: properties, isLoading: propsLoading } = useListProperties(
+  const { data: properties } = useListProperties(
     {},
     { query: { queryKey: getListPropertiesQueryKey() } }
   );
@@ -145,7 +145,6 @@ export default function RentLedgerScreen() {
     return list;
   }, [tenants, payments, search, selectedPropertyId, statusFilter, filterMonth, filterYear]);
 
-  // Summary counts
   const paidCount = tenants.filter(t => getLedgerStatus(t, payments, filterMonth, filterYear) === "paid").length;
   const partialCount = tenants.filter(t => getLedgerStatus(t, payments, filterMonth, filterYear) === "partial").length;
   const dueCount = tenants.filter(t => getLedgerStatus(t, payments, filterMonth, filterYear) === "due").length;
@@ -168,7 +167,6 @@ export default function RentLedgerScreen() {
         onPress={() => router.push(`/rent-ledger-detail?id=${item.id}` as any)}
         activeOpacity={0.78}
       >
-        {/* Card Header */}
         <View style={styles.cardHeader}>
           <View style={styles.avatarRow}>
             <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
@@ -188,7 +186,6 @@ export default function RentLedgerScreen() {
           </View>
         </View>
 
-        {/* Metrics Row */}
         <View style={[styles.metricsRow, { borderTopColor: colors.border, borderBottomColor: colors.border }]}>
           <View style={styles.metric}>
             <Text style={[styles.metricLbl, { color: colors.mutedForeground }]}>Monthly</Text>
@@ -218,7 +215,6 @@ export default function RentLedgerScreen() {
           </View>
         </View>
 
-        {/* Footer */}
         <View style={styles.cardFooter}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
             <Feather name="calendar" size={12} color={colors.mutedForeground} />
@@ -239,18 +235,17 @@ export default function RentLedgerScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
+      {/* Header — tab style (no back button) */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity style={styles.iconBtn} onPress={() => router.back()}>
-          <Feather name="arrow-left" size={24} color={colors.foreground} />
-        </TouchableOpacity>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>Rent Ledger</Text>
           <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
             {filteredTenants.length} tenant{filteredTenants.length !== 1 ? "s" : ""}
           </Text>
         </View>
-        <View style={{ flexDirection: "row", gap: 4 }}>
+
+        {/* Summary count pills */}
+        <View style={{ flexDirection: "row", gap: 4, marginRight: 8 }}>
           <View style={[styles.countPill, { backgroundColor: `${STATUS_CONFIG.paid.text}15` }]}>
             <Text style={[styles.countText, { color: STATUS_CONFIG.paid.text }]}>{paidCount}P</Text>
           </View>
@@ -261,6 +256,15 @@ export default function RentLedgerScreen() {
             <Text style={[styles.countText, { color: STATUS_CONFIG.due.text }]}>{dueCount}D</Text>
           </View>
         </View>
+
+        {/* Payments shortcut */}
+        <TouchableOpacity
+          style={[styles.paymentsBtn, { backgroundColor: `${colors.primary}12`, borderColor: `${colors.primary}30` }]}
+          onPress={() => router.push("/payments")}
+        >
+          <Feather name="credit-card" size={15} color={colors.primary} />
+          <Text style={[styles.paymentsBtnText, { color: colors.primary }]}>Payments</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Search */}
@@ -302,7 +306,7 @@ export default function RentLedgerScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Property filter */}
+      {/* Property filter chips */}
       {(properties ?? []).length > 1 && (
         <ScrollView
           horizontal
@@ -369,7 +373,11 @@ export default function RentLedgerScreen() {
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={false} onRefresh={() => { refetchTenants(); refetchPayments(); }} tintColor={colors.primary} />
+            <RefreshControl
+              refreshing={false}
+              onRefresh={() => { refetchTenants(); refetchPayments(); }}
+              tintColor={colors.primary}
+            />
           }
           ListEmptyComponent={
             <View style={styles.centered}>
@@ -396,25 +404,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: 12,
   },
-  iconBtn: { width: 40, height: 40, justifyContent: "center", alignItems: "center" },
-  headerTitle: { fontSize: 20, fontWeight: "bold" },
+  headerTitle: { fontSize: 22, fontWeight: "bold" },
   headerSub: { fontSize: 12 },
   countPill: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 4,
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
   },
-  countText: { fontSize: 11, fontWeight: "800" },
+  countText: { fontSize: 10, fontWeight: "800" },
+  paymentsBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  paymentsBtnText: { fontSize: 12, fontWeight: "700" },
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     marginHorizontal: 16,
-    marginTop: 12,
+    marginTop: 10,
     marginBottom: 8,
     paddingHorizontal: 14,
     height: 44,
