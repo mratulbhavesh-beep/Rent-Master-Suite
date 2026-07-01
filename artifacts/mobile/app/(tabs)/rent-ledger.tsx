@@ -244,19 +244,6 @@ export default function RentLedgerTab() {
           </Text>
         </View>
 
-        {/* Summary count pills */}
-        <View style={{ flexDirection: "row", gap: 4, marginRight: 8 }}>
-          <View style={[styles.countPill, { backgroundColor: `${STATUS_CONFIG.paid.text}15` }]}>
-            <Text style={[styles.countText, { color: STATUS_CONFIG.paid.text }]}>{paidCount}P</Text>
-          </View>
-          <View style={[styles.countPill, { backgroundColor: `${STATUS_CONFIG.partial.text}15` }]}>
-            <Text style={[styles.countText, { color: STATUS_CONFIG.partial.text }]}>{partialCount}~</Text>
-          </View>
-          <View style={[styles.countPill, { backgroundColor: `${STATUS_CONFIG.due.text}15` }]}>
-            <Text style={[styles.countText, { color: STATUS_CONFIG.due.text }]}>{dueCount}D</Text>
-          </View>
-        </View>
-
         {/* Payments shortcut */}
         <TouchableOpacity
           style={[styles.paymentsBtn, { backgroundColor: `${colors.primary}12`, borderColor: `${colors.primary}30` }]}
@@ -265,6 +252,21 @@ export default function RentLedgerTab() {
           <Feather name="credit-card" size={15} color={colors.primary} />
           <Text style={[styles.paymentsBtnText, { color: colors.primary }]}>Payments</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* Status summary badges */}
+      <View style={[styles.badgesRow, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+        {([
+          { label: "Paid",    count: paidCount,    bg: "#dcfce7", text: "#15803d", icon: "check-circle" as const },
+          { label: "Partial", count: partialCount, bg: "#fef9c3", text: "#a16207", icon: "alert-circle" as const },
+          { label: "Due",     count: dueCount,     bg: "#fee2e2", text: "#b91c1c", icon: "x-circle" as const },
+        ]).map(b => (
+          <View key={b.label} style={[styles.badge, { backgroundColor: b.bg }]}>
+            <Feather name={b.icon} size={14} color={b.text} />
+            <Text style={[styles.badgeLabel, { color: b.text }]}>{b.label}</Text>
+            <Text style={[styles.badgeCount, { color: b.text }]}>{b.count}</Text>
+          </View>
+        ))}
       </View>
 
       {/* Search */}
@@ -407,14 +409,25 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 22, fontWeight: "bold" },
   headerSub: { fontSize: 12 },
-  countPill: {
-    paddingHorizontal: 7,
-    paddingVertical: 4,
-    borderRadius: 10,
+  badgesRow: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  badge: {
+    flex: 1,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 5,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: 24,
   },
-  countText: { fontSize: 10, fontWeight: "800" },
+  badgeLabel: { fontSize: 13, fontWeight: "600" },
+  badgeCount: { fontSize: 16, fontWeight: "800" },
   paymentsBtn: {
     flexDirection: "row",
     alignItems: "center",
