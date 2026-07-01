@@ -14,6 +14,7 @@ import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import * as FileSystem from "expo-file-system";
 
 type MonthRow = {
   month: number;
@@ -290,36 +291,64 @@ export default function RentLedgerDetailScreen() {
     }
   };
 
-  const handleSharePDF = async () => {
-    setGeneratingPdf(true);
-    const uri = await handleGeneratePDF();
-    if (uri) {
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (isAvailable) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "application/pdf",
-          dialogTitle: `Rent Ledger — ${tenant?.name}`,
-          UTI: "com.adobe.pdf",
-        });
-      } else {
-        Alert.alert("Sharing not available", "Sharing is not supported on this device.");
-      }
+  const handleDownload = async () => {
+    if (!tenant) return;
+
+    if (Platform.OS === "web") {
+      Alert.alert("Download PDF", "PDF download is available on the Android or iOS app.");
+      return;
     }
-    setGeneratingPdf(false);
+
+    setGeneratingPdf(true);
+    try {
+      const html = generateLedgerHTML(
+        tenant.name,
+        anyTenant?.propertyName ?? "—",
+        tenant.unitNumber,
+        tenant.phone,
+        tenant.rentAmount,
+        totalExpected,
+        totalPaid,
+        balanceDue,
+        advanceBalance,
+        tenant.leaseStart,
+        tenant.leaseEnd,
+        monthHistory,
+        (payments as Payment[]) ?? []
+      );
+      const { uri: tempUri } = await Print.printToFileAsync({ html, base64: false });
+      const safeName = tenant.name.replace(/[^a-zA-Z0-9]/g, "_");
+      const date = new Date().toISOString().slice(0, 10);
+      const filename = `RentLedger_${safeName}_${date}.pdf`;
+      const tempFile = new FileSystem.File(tempUri);
+
+      if (Platform.OS === "android") {
+        const pickedDir = await FileSystem.Directory.pickDirectoryAsync();
+        const bytes = await tempFile.bytes();
+        const destFile = pickedDir.createFile(filename, "application/pdf");
+        destFile.write(bytes);
+        Alert.alert("Download Complete", `"${filename}" has been saved to your selected folder.`);
+      } else {
+        const destFile = new FileSystem.File(FileSystem.Paths.document, filename);
+        await tempFile.copy(destFile);
+        Alert.alert(
+          "PDF Saved",
+          `"${filename}" has been saved to the Files app. Use the Share button to send it.`,
+          [{ text: "OK" }]
+        );
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message.toLowerCase() : "";
+      if (!msg.includes("cancel")) {
+        Alert.alert("Error", "Could not download the PDF. Please try again.");
+      }
+    } finally {
+      setGeneratingPdf(false);
+    }
   };
 
   const handleShare = async () => {
     if (!tenant) return;
-
-    if (Platform.OS === "web") {
-      Alert.alert(
-        "Share on Device",
-        "PDF sharing works on the Android or iOS app. On web, use the WhatsApp button to share a text summary.",
-        [{ text: "OK" }]
-      );
-      return;
-    }
-
     setIsSharing(true);
     try {
       const html = generateLedgerHTML(
@@ -338,19 +367,11 @@ export default function RentLedgerDetailScreen() {
         (payments as Payment[]) ?? []
       );
       const { uri } = await Print.printToFileAsync({ html, base64: false });
-      const available = await Sharing.isAvailableAsync();
-      if (available) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "application/pdf",
-          dialogTitle: `Rent Ledger — ${tenant.name}`,
-          UTI: "com.adobe.pdf",
-        });
-      } else {
-        Alert.alert(
-          "Share Unavailable",
-          "Native sharing is not available on this device. Use the WhatsApp button to share a summary."
-        );
-      }
+      await Sharing.shareAsync(uri, {
+        mimeType: "application/pdf",
+        dialogTitle: `Rent Ledger — ${tenant.name}`,
+        UTI: "com.adobe.pdf",
+      });
     } catch {
       Alert.alert("Error", "Could not generate or share the PDF.");
     } finally {
@@ -694,7 +715,7 @@ export default function RentLedgerDetailScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.bigActionBtn, { backgroundColor: `${colors.primary}15`, borderColor: `${colors.primary}30` }]}
-            onPress={handleSharePDF}
+            onPress={handleDownload}
             disabled={generatingPdf}
           >
             <Feather name="download" size={20} color={colors.primary} />
