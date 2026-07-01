@@ -207,6 +207,7 @@ export default function RentLedgerDetailScreen() {
   const insets = useSafeAreaInsets();
   const [activeSection, setActiveSection] = useState<ActiveSection>("history");
   const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
 
   const { data: tenant, isLoading: tenantLoading } = useGetTenant(tenantId, {
     query: { queryKey: getGetTenantQueryKey(tenantId), enabled: !!tenantId }
@@ -307,6 +308,56 @@ export default function RentLedgerDetailScreen() {
     setGeneratingPdf(false);
   };
 
+  const handleShare = async () => {
+    if (!tenant) return;
+
+    if (Platform.OS === "web") {
+      Alert.alert(
+        "Share on Device",
+        "PDF sharing works on the Android or iOS app. On web, use the WhatsApp button to share a text summary.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
+
+    setIsSharing(true);
+    try {
+      const html = generateLedgerHTML(
+        tenant.name,
+        anyTenant?.propertyName ?? "—",
+        tenant.unitNumber,
+        tenant.phone,
+        tenant.rentAmount,
+        totalExpected,
+        totalPaid,
+        balanceDue,
+        advanceBalance,
+        tenant.leaseStart,
+        tenant.leaseEnd,
+        monthHistory,
+        (payments as Payment[]) ?? []
+      );
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      const available = await Sharing.isAvailableAsync();
+      if (available) {
+        await Sharing.shareAsync(uri, {
+          mimeType: "application/pdf",
+          dialogTitle: `Rent Ledger — ${tenant.name}`,
+          UTI: "com.adobe.pdf",
+        });
+      } else {
+        Alert.alert(
+          "Share Unavailable",
+          "Native sharing is not available on this device. Use the WhatsApp button to share a summary."
+        );
+      }
+    } catch {
+      Alert.alert("Error", "Could not generate or share the PDF.");
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
   const handleWhatsApp = async () => {
     if (!tenant) return;
     const digits = tenant.phone.replace(/\D/g, "");
@@ -388,10 +439,12 @@ export default function RentLedgerDetailScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionBtn, { backgroundColor: `${colors.primary}15` }]}
-            onPress={handleSharePDF}
-            disabled={generatingPdf}
+            onPress={handleShare}
+            disabled={isSharing}
           >
-            <Feather name="share-2" size={18} color={colors.primary} />
+            {isSharing
+              ? <ActivityIndicator size="small" color={colors.primary} />
+              : <Feather name="share-2" size={18} color={colors.primary} />}
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionBtn, { backgroundColor: "#25D36615" }]}
