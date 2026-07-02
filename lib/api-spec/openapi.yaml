@@ -32,6 +32,8 @@ tags:
     description: Rent agreement management
   - name: documents
     description: Tenant document management
+  - name: backup
+    description: Backup and restore user data
 paths:
   /healthz:
     get:
@@ -179,6 +181,84 @@ paths:
           description: Wrong current password or validation error
         "401":
           description: Unauthorized
+
+  /backup:
+    post:
+      operationId: createBackup
+      tags: [backup]
+      summary: Create a manual backup of all user data
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBackupInput"
+      responses:
+        "201":
+          description: Backup created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupMeta"
+        "401":
+          description: Unauthorized
+    get:
+      operationId: listBackups
+      tags: [backup]
+      summary: List all backups for the current user
+      responses:
+        "200":
+          description: List of backups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BackupMeta"
+        "401":
+          description: Unauthorized
+
+  /backup/{id}/restore:
+    post:
+      operationId: restoreBackup
+      tags: [backup]
+      summary: Restore data from a backup
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Restore completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestoreResult"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Backup not found
+
+  /backup/{id}:
+    delete:
+      operationId: deleteBackup
+      tags: [backup]
+      summary: Delete a backup
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Backup not found
 
   /dashboard/summary:
     get:
@@ -923,6 +1003,34 @@ paths:
 
 components:
   schemas:
+    BackupMeta:
+      type: object
+      required: [id, label, sizeBytes, createdAt]
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+        sizeBytes:
+          type: integer
+        createdAt:
+          type: string
+
+    CreateBackupInput:
+      type: object
+      properties:
+        label:
+          type: string
+
+    RestoreResult:
+      type: object
+      required: [message, restoredAt]
+      properties:
+        message:
+          type: string
+        restoredAt:
+          type: string
+
     HealthStatus:
       type: object
       properties:

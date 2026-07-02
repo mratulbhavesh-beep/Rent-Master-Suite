@@ -24,8 +24,10 @@ import type {
   AgreementInput,
   AgreementUpdate,
   AuthResponse,
+  BackupMeta,
   ChangePassword200,
   ChangePasswordInput,
+  CreateBackupInput,
   DashboardSummary,
   Expense,
   ExpenseInput,
@@ -56,6 +58,7 @@ import type {
   RegisterInput,
   ResetPassword200,
   ResetPasswordInput,
+  RestoreResult,
   Tenant,
   TenantDocument,
   TenantInput,
@@ -594,6 +597,293 @@ export const useChangePassword = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getChangePasswordMutationOptions(options));
+    }
+
+export const getCreateBackupUrl = () => {
+
+
+
+
+  return `/api/backup`
+}
+
+/**
+ * @summary Create a manual backup of all user data
+ */
+export const createBackup = async (createBackupInput: CreateBackupInput, options?: RequestInit): Promise<BackupMeta> => {
+
+  return customFetch<BackupMeta>(getCreateBackupUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createBackupInput)
+  }
+);}
+
+
+
+
+export const getCreateBackupMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBackup>>, TError,{data: BodyType<CreateBackupInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createBackup>>, TError,{data: BodyType<CreateBackupInput>}, TContext> => {
+
+const mutationKey = ['createBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createBackup>>, {data: BodyType<CreateBackupInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createBackup(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateBackupMutationResult = NonNullable<Awaited<ReturnType<typeof createBackup>>>
+    export type CreateBackupMutationBody = BodyType<CreateBackupInput>
+    export type CreateBackupMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a manual backup of all user data
+ */
+export const useCreateBackup = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBackup>>, TError,{data: BodyType<CreateBackupInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createBackup>>,
+        TError,
+        {data: BodyType<CreateBackupInput>},
+        TContext
+      > => {
+      return useMutation(getCreateBackupMutationOptions(options));
+    }
+
+export const getListBackupsUrl = () => {
+
+
+
+
+  return `/api/backup`
+}
+
+/**
+ * @summary List all backups for the current user
+ */
+export const listBackups = async ( options?: RequestInit): Promise<BackupMeta[]> => {
+
+  return customFetch<BackupMeta[]>(getListBackupsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListBackupsQueryKey = () => {
+    return [
+    `/api/backup`
+    ] as const;
+    }
+
+
+export const getListBackupsQueryOptions = <TData = Awaited<ReturnType<typeof listBackups>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBackups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListBackupsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listBackups>>> = ({ signal }) => listBackups({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listBackups>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListBackupsQueryResult = NonNullable<Awaited<ReturnType<typeof listBackups>>>
+export type ListBackupsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List all backups for the current user
+ */
+
+export function useListBackups<TData = Awaited<ReturnType<typeof listBackups>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBackups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListBackupsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRestoreBackupUrl = (id: number,) => {
+
+
+
+
+  return `/api/backup/${id}/restore`
+}
+
+/**
+ * @summary Restore data from a backup
+ */
+export const restoreBackup = async (id: number, options?: RequestInit): Promise<RestoreResult> => {
+
+  return customFetch<RestoreResult>(getRestoreBackupUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRestoreBackupMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreBackup>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof restoreBackup>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['restoreBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof restoreBackup>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  restoreBackup(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RestoreBackupMutationResult = NonNullable<Awaited<ReturnType<typeof restoreBackup>>>
+
+    export type RestoreBackupMutationError = ErrorType<void>
+
+    /**
+ * @summary Restore data from a backup
+ */
+export const useRestoreBackup = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreBackup>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof restoreBackup>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getRestoreBackupMutationOptions(options));
+    }
+
+export const getDeleteBackupUrl = (id: number,) => {
+
+
+
+
+  return `/api/backup/${id}`
+}
+
+/**
+ * @summary Delete a backup
+ */
+export const deleteBackup = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteBackupUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteBackupMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteBackup>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteBackup>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteBackup>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteBackup(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteBackupMutationResult = NonNullable<Awaited<ReturnType<typeof deleteBackup>>>
+
+    export type DeleteBackupMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete a backup
+ */
+export const useDeleteBackup = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteBackup>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteBackup>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteBackupMutationOptions(options));
     }
 
 export const getGetDashboardSummaryUrl = () => {

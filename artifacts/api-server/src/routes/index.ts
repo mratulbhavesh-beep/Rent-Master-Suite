@@ -11,6 +11,7 @@ import maintenanceRouter from "./maintenance";
 import reportsRouter from "./reports";
 import agreementsRouter from "./agreements";
 import documentsRouter from "./documents";
+import backupRouter from "./backup";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(maintenanceRouter);
 router.use(reportsRouter);
 router.use(agreementsRouter);
 router.use(documentsRouter);
+router.use(backupRouter);
 
 export default router;

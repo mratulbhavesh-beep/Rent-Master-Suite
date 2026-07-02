@@ -5,6 +5,22 @@
  * Gemini Rent Manager API
  * OpenAPI spec version: 0.1.0
  */
+export interface BackupMeta {
+  id: number;
+  label: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface CreateBackupInput {
+  label?: string;
+}
+
+export interface RestoreResult {
+  message: string;
+  restoredAt: string;
+}
+
 export interface HealthStatus {
   status: string;
 }

@@ -124,6 +124,56 @@ export const ChangePasswordResponse = zod.object({
 
 
 /**
+ * @summary Create a manual backup of all user data
+ */
+export const CreateBackupBody = zod.object({
+  "label": zod.string().optional()
+})
+
+export const CreateBackupResponse = zod.object({
+  "id": zod.number(),
+  "label": zod.string(),
+  "sizeBytes": zod.number(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary List all backups for the current user
+ */
+export const ListBackupsResponseItem = zod.object({
+  "id": zod.number(),
+  "label": zod.string(),
+  "sizeBytes": zod.number(),
+  "createdAt": zod.string()
+})
+export const ListBackupsResponse = zod.array(ListBackupsResponseItem)
+
+
+/**
+ * @summary Restore data from a backup
+ */
+export const RestoreBackupParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const RestoreBackupResponse = zod.object({
+  "message": zod.string(),
+  "restoredAt": zod.string()
+})
+
+
+/**
+ * @summary Delete a backup
+ */
+export const DeleteBackupParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteBackupResponse = zod.void()
+
+
+/**
  * @summary Get dashboard summary stats
  */
 export const GetDashboardSummaryResponse = zod.object({
