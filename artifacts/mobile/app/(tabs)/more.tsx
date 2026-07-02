@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { Feather, MaterialIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -102,6 +102,44 @@ export default function MoreScreen() {
             title="Maintenance Requests" 
             icon="tool" 
             onPress={() => router.push("/maintenance")} 
+          />
+        </View>
+
+        <View style={[styles.menuSection, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>App & Support</Text>
+          <MenuItem
+            title="About App"
+            icon="info"
+            onPress={() =>
+              Alert.alert(
+                "Gemini Rent Manager",
+                "Version 1.0.0\n\nA complete property management solution for landlords and property managers."
+              )
+            }
+          />
+          <MenuItem
+            title="App Version"
+            icon="tag"
+            onPress={() => {}}
+          />
+          <MenuItem
+            title="Privacy Policy"
+            icon="shield"
+            onPress={() => Alert.alert("Privacy Policy", "Privacy policy will be available soon.")}
+          />
+          <MenuItem
+            title="Terms & Conditions"
+            icon="file-text"
+            onPress={() => Alert.alert("Terms & Conditions", "Terms & Conditions will be available soon.")}
+          />
+          <MenuItem
+            title="Help & Support"
+            icon="help-circle"
+            onPress={() =>
+              Linking.openURL("mailto:support@geminirm.app").catch(() =>
+                Alert.alert("Support", "Contact support at support@geminirm.app")
+              )
+            }
           />
         </View>
 

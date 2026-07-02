@@ -8,8 +8,6 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
-  Platform,
-  Linking,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,7 +19,6 @@ import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
 import { useUpdateProfile } from "@workspace/api-client-react";
 
-const APP_VERSION = "1.0.0";
 const AVATAR_STORAGE_KEY = "profile_photo_uri";
 
 function SectionLabel({ label }: { label: string }) {
@@ -352,42 +349,6 @@ export default function ProfileScreen() {
             icon="lock"
             label="Change Password"
             onPress={() => router.push("/change-password")}
-          />
-          <MenuRow
-            icon="shield"
-            label="Privacy Policy"
-            onPress={() => Alert.alert("Privacy Policy", "Privacy policy will be available soon.")}
-          />
-          <MenuRow
-            icon="file-text"
-            label="Terms & Conditions"
-            onPress={() => Alert.alert("Terms & Conditions", "Terms & Conditions will be available soon.")}
-          />
-          <MenuRow
-            icon="help-circle"
-            label="Help & Support"
-            onPress={() => Linking.openURL("mailto:support@geminirm.app").catch(() => Alert.alert("Support", "Contact support at support@geminirm.app"))}
-            isLast
-          />
-        </View>
-
-        {/* About */}
-        <SectionLabel label="About" />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <MenuRow
-            icon="info"
-            label="About App"
-            onPress={() =>
-              Alert.alert(
-                "Gemini Rent Manager",
-                `Version ${APP_VERSION}\n\nA complete property management solution for landlords and property managers.`
-              )
-            }
-          />
-          <MenuRow
-            icon="tag"
-            label="App Version"
-            rightLabel={APP_VERSION}
             isLast
           />
         </View>
