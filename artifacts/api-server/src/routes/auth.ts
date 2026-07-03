@@ -17,6 +17,10 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
+  if (!user.passwordHash) {
+    res.status(401).json({ error: "This account uses Google Sign-In. Please use the 'Sign in with Google' button." });
+    return;
+  }
   const valid = await comparePassword(password, user.passwordHash);
   if (!valid) {
     res.status(401).json({ error: "Invalid credentials" });
@@ -67,6 +71,10 @@ router.post("/auth/reset-password", async (req, res): Promise<void> => {
   const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
   if (!user) {
     res.status(404).json({ error: "No account found with that email" });
+    return;
+  }
+  if (user.provider === "google") {
+    res.status(400).json({ error: "This account uses Google Sign-In and does not have a password. Please sign in with Google." });
     return;
   }
   const passwordHash = await hashPassword(newPassword);
@@ -155,6 +163,10 @@ router.post("/auth/change-password", requireAuth, async (req: AuthRequest, res):
     return;
   }
 
+  if (!user.passwordHash) {
+    res.status(400).json({ error: "This account uses Google Sign-In and does not have a password." });
+    return;
+  }
   const valid = await comparePassword(currentPassword, user.passwordHash);
   if (!valid) {
     res.status(400).json({ error: "Current password is incorrect" });
