@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "910455573442",
+    "project_id": "gemini-maneger",
+    "storage_bucket": "gemini-maneger.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:910455573442:android:7b0e4b8b025b6ff6d0a45b",
+        "android_client_info": {
+          "package_name": "com.geminirentmanager.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAVE_olK7yX5IpK7U4N7MHL-p4xZUgJ1kY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
