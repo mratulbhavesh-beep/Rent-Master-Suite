@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, Alert, Platform, Linking,
+  ActivityIndicator, Alert, Linking,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
@@ -13,12 +13,12 @@ import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
-import * as FileSystem from "expo-file-system";
 import {
   buildReceiptHTML,
   getReceiptNo,
+  printPDF,
+  downloadPDF,
+  sharePDF,
   printReceiptPDF,
   downloadReceiptPDF,
   shareReceiptPDF,
@@ -285,54 +285,30 @@ export default function RentLedgerDetailScreen() {
     }
   };
 
-  const handleGeneratePDF = async (): Promise<string | null> => {
-    if (!tenant) return null;
-    const html = generateLedgerHTML(
-      tenant.name,
+  const getLedgerHTML = () =>
+    generateLedgerHTML(
+      tenant!.name,
       anyTenant?.propertyName ?? "—",
-      tenant.unitNumber,
-      tenant.phone,
-      tenant.rentAmount,
+      tenant!.unitNumber,
+      tenant!.phone,
+      tenant!.rentAmount,
       totalExpected,
       totalPaid,
       balanceDue,
       advanceBalance,
-      tenant.leaseStart,
-      tenant.leaseEnd,
+      tenant!.leaseStart,
+      tenant!.leaseEnd,
       monthHistory,
       (payments as Payment[]) ?? []
     );
-    try {
-      const { uri } = await Print.printToFileAsync({ html, base64: false });
-      return uri;
-    } catch {
-      Alert.alert("Error", "Failed to generate PDF");
-      return null;
-    }
-  };
 
   const handlePrint = async () => {
     if (!tenant) return;
     setGeneratingPdf(true);
-    const html = generateLedgerHTML(
-      tenant.name,
-      anyTenant?.propertyName ?? "—",
-      tenant.unitNumber,
-      tenant.phone,
-      tenant.rentAmount,
-      totalExpected,
-      totalPaid,
-      balanceDue,
-      advanceBalance,
-      tenant.leaseStart,
-      tenant.leaseEnd,
-      monthHistory,
-      (payments as Payment[]) ?? []
-    );
     try {
-      await Print.printAsync({ html });
-    } catch (e) {
-      Alert.alert("Error", "Printing failed");
+      await printPDF(getLedgerHTML());
+    } catch {
+      Alert.alert("Error", "Printing failed.");
     } finally {
       setGeneratingPdf(false);
     }
@@ -340,50 +316,12 @@ export default function RentLedgerDetailScreen() {
 
   const handleDownload = async () => {
     if (!tenant) return;
-
-    if (Platform.OS === "web") {
-      Alert.alert("Download PDF", "PDF download is available on the Android or iOS app.");
-      return;
-    }
-
     setGeneratingPdf(true);
     try {
-      const html = generateLedgerHTML(
-        tenant.name,
-        anyTenant?.propertyName ?? "—",
-        tenant.unitNumber,
-        tenant.phone,
-        tenant.rentAmount,
-        totalExpected,
-        totalPaid,
-        balanceDue,
-        advanceBalance,
-        tenant.leaseStart,
-        tenant.leaseEnd,
-        monthHistory,
-        (payments as Payment[]) ?? []
-      );
-      const { uri: tempUri } = await Print.printToFileAsync({ html, base64: false });
       const safeName = tenant.name.replace(/[^a-zA-Z0-9]/g, "_");
       const date = new Date().toISOString().slice(0, 10);
-      const filename = `RentLedger_${safeName}_${date}.pdf`;
-      const tempFile = new FileSystem.File(tempUri);
-
-      if (Platform.OS === "android") {
-        const pickedDir = await FileSystem.Directory.pickDirectoryAsync();
-        const bytes = await tempFile.bytes();
-        const destFile = pickedDir.createFile(filename, "application/pdf");
-        destFile.write(bytes);
-        Alert.alert("Download Complete", `"${filename}" has been saved to your selected folder.`);
-      } else {
-        const destFile = new FileSystem.File(FileSystem.Paths.document, filename);
-        await tempFile.copy(destFile);
-        Alert.alert(
-          "PDF Saved",
-          `"${filename}" has been saved to the Files app. Use the Share button to send it.`,
-          [{ text: "OK" }]
-        );
-      }
+      const fileName = `RentLedger_${safeName}_${date}.pdf`;
+      await downloadPDF(getLedgerHTML(), fileName);
     } catch (e) {
       const msg = e instanceof Error ? e.message.toLowerCase() : "";
       if (!msg.includes("cancel")) {
@@ -398,27 +336,7 @@ export default function RentLedgerDetailScreen() {
     if (!tenant) return;
     setIsSharing(true);
     try {
-      const html = generateLedgerHTML(
-        tenant.name,
-        anyTenant?.propertyName ?? "—",
-        tenant.unitNumber,
-        tenant.phone,
-        tenant.rentAmount,
-        totalExpected,
-        totalPaid,
-        balanceDue,
-        advanceBalance,
-        tenant.leaseStart,
-        tenant.leaseEnd,
-        monthHistory,
-        (payments as Payment[]) ?? []
-      );
-      const { uri } = await Print.printToFileAsync({ html, base64: false });
-      await Sharing.shareAsync(uri, {
-        mimeType: "application/pdf",
-        dialogTitle: `Rent Ledger — ${tenant.name}`,
-        UTI: "com.adobe.pdf",
-      });
+      await sharePDF(getLedgerHTML(), `Rent Ledger — ${tenant.name}`);
     } catch {
       Alert.alert("Error", "Could not generate or share the PDF.");
     } finally {

@@ -3,7 +3,90 @@ import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system";
 import { Platform, Alert } from "react-native";
 
-// ── QR placeholder (CSS table) ───────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// GENERIC PDF OPERATIONS
+// These are the single source of truth for Download / Print / Share behaviour.
+// Every screen in the app should use these (or the receipt-specific wrappers).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Open the native system print dialog (Android/iOS) or browser print dialog (web).
+ * This is always the correct behaviour for a Print button — no platform guard needed.
+ */
+export async function printPDF(html: string): Promise<void> {
+  await Print.printAsync({ html });
+}
+
+/**
+ * Save the HTML as a PDF file to the device.
+ *
+ * • Web  → shows "PDF download is available in the Android app." and returns.
+ *          Does NOT open the print dialog.
+ * • Android native → prompts the user to pick a folder, then saves the PDF there.
+ * • iOS native → saves to the Files app (app Documents directory).
+ */
+export async function downloadPDF(html: string, fileName: string): Promise<void> {
+  if (Platform.OS === "web") {
+    Alert.alert(
+      "Download Unavailable",
+      "PDF download is available in the Android app."
+    );
+    return;
+  }
+
+  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  const tempFile = new FileSystem.File(uri);
+
+  if (Platform.OS === "android") {
+    const pickedDir = await FileSystem.Directory.pickDirectoryAsync();
+    if (!pickedDir) return; // user cancelled the folder picker — silently abort
+    const bytes = await tempFile.bytes();
+    const destFile = pickedDir.createFile(fileName, "application/pdf");
+    destFile.write(bytes);
+    Alert.alert("Downloaded", `"${fileName}" saved to your selected folder.`);
+  } else {
+    // iOS — copy to app's Documents directory
+    const destFile = new FileSystem.File(FileSystem.Paths.document, fileName);
+    await tempFile.copy(destFile);
+    Alert.alert(
+      "Saved",
+      `"${fileName}" saved to the Files app. You can access it from Files → On My iPhone.`
+    );
+  }
+}
+
+/**
+ * Share the HTML as a PDF using the native share sheet.
+ *
+ * • Web  → shows "PDF sharing is available in the Android app." and returns.
+ * • Native → generates a temp PDF and opens the OS share dialog.
+ */
+export async function sharePDF(html: string, dialogTitle: string): Promise<void> {
+  if (Platform.OS === "web") {
+    Alert.alert(
+      "Share Unavailable",
+      "PDF sharing is available in the Android app."
+    );
+    return;
+  }
+
+  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  const canShare = await Sharing.isAvailableAsync();
+  if (!canShare) {
+    Alert.alert("Not Available", "Sharing is not available on this device.");
+    return;
+  }
+  await Sharing.shareAsync(uri, {
+    mimeType: "application/pdf",
+    dialogTitle,
+    UTI: "com.adobe.pdf",
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RECEIPT HTML BUILDER
+// ─────────────────────────────────────────────────────────────────────────────
+
 function qrPlaceholder(receiptNo: string): string {
   const cell = (dark: boolean) =>
     `<td style="width:5px;height:5px;background:${dark ? "#1B4F8A" : "#f1f5f9"};"></td>`;
@@ -29,7 +112,6 @@ function qrPlaceholder(receiptNo: string): string {
     </div>`;
 }
 
-// ── Receipt HTML builder ─────────────────────────────────────────────────────
 export function buildReceiptHTML(
   payment: any,
   tenantRentAmount: number,
@@ -65,8 +147,7 @@ export function buildReceiptHTML(
   const methodLabel = (payment.method ?? "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c: string) => c.toUpperCase());
-  const receiptNo =
-    payment.receiptNumber || `RCP-${String(payment.id).padStart(6, "0")}`;
+  const receiptNo = getReceiptNo(payment);
   const initials = businessName
     .split(" ").map((w: string) => w[0] ?? "").join("").slice(0, 2).toUpperCase() || "GR";
 
@@ -183,49 +264,26 @@ export function getReceiptNo(payment: any): string {
   return payment.receiptNumber || `RCP-${String(payment.id).padStart(6, "0")}`;
 }
 
-// ── PDF actions ──────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// RECEIPT-SPECIFIC WRAPPERS
+// Thin wrappers that derive the correct filename / dialog title and delegate
+// to the generic functions above.
+// ─────────────────────────────────────────────────────────────────────────────
+
 export async function printReceiptPDF(html: string): Promise<void> {
-  await Print.printAsync({ html });
+  return printPDF(html);
 }
 
 export async function downloadReceiptPDF(
   html: string,
   receiptNo: string
 ): Promise<void> {
-  const fileName = `Receipt-${receiptNo}.pdf`;
-  const { uri } = await Print.printToFileAsync({ html, base64: false });
-  const tempFile = new FileSystem.File(uri);
-
-  if (Platform.OS === "android") {
-    const pickedDir = await FileSystem.Directory.pickDirectoryAsync();
-    if (!pickedDir) return;
-    const bytes = await tempFile.bytes();
-    const destFile = pickedDir.createFile(fileName, "application/pdf");
-    destFile.write(bytes);
-    Alert.alert("Downloaded", `Receipt saved as "${fileName}"`);
-  } else {
-    const destFile = new FileSystem.File(FileSystem.Paths.document, fileName);
-    await tempFile.copy(destFile);
-    Alert.alert(
-      "Saved",
-      `"${fileName}" saved to Files app. Use Share to send it elsewhere.`
-    );
-  }
+  return downloadPDF(html, `Receipt-${receiptNo}.pdf`);
 }
 
 export async function shareReceiptPDF(
   html: string,
   receiptNo: string
 ): Promise<void> {
-  const { uri } = await Print.printToFileAsync({ html, base64: false });
-  const canShare = await Sharing.isAvailableAsync();
-  if (!canShare) {
-    Alert.alert("Not Available", "Sharing is not available on this device.");
-    return;
-  }
-  await Sharing.shareAsync(uri, {
-    mimeType: "application/pdf",
-    dialogTitle: `Share Receipt – ${receiptNo}`,
-    UTI: "com.adobe.pdf",
-  });
+  return sharePDF(html, `Share Receipt – ${receiptNo}`);
 }

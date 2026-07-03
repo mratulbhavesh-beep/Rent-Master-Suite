@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, ActivityIndicator, Alert, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
 import {
   useGetYearlyReport, getGetYearlyReportQueryKey,
   useGetMonthlyReport, getGetMonthlyReportQueryKey,
@@ -10,8 +10,7 @@ import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
+import { downloadPDF } from "@/utils/receiptPdf";
 
 type ReportTab = "yearly" | "monthly" | "property" | "due";
 
@@ -102,13 +101,11 @@ export default function ReportsScreen() {
     </body></html>`;
 
   const exportPDF = async () => {
-    if (Platform.OS === "web") {
-      Alert.alert("PDF Export", "PDF export is available on mobile only.");
-      return;
-    }
     setExporting(true);
     try {
       let html = "";
+      let fileName = "Report.pdf";
+
       if (activeTab === "yearly" && yearlyReport) {
         const rows = yearlyReport.monthlyBreakdown
           .map(m => `<tr><td>${MONTH_FULL[m.month - 1]}</td><td class="green">${fmt(m.income)}</td><td class="red">${fmt(m.expenses)}</td><td class="${m.netProfit >= 0 ? "green" : "red"}">${fmt(m.netProfit)}</td></tr>`)
@@ -121,6 +118,7 @@ export default function ReportsScreen() {
           </div>
           <table><thead><tr><th>Month</th><th>Income</th><th>Expenses</th><th>Net Profit</th></tr></thead><tbody>${rows}</tbody></table>`
         );
+        fileName = `YearlyReport_${year}.pdf`;
       } else if (activeTab === "monthly" && monthlyReport) {
         const rows = (monthlyReport.payments || [])
           .filter(p => p.status === "paid" || p.status === "partial")
@@ -134,6 +132,7 @@ export default function ReportsScreen() {
           </div>
           <table><thead><tr><th>Tenant</th><th>Property</th><th>Amount</th><th>Date</th></tr></thead><tbody>${rows || "<tr><td colspan='4' style='text-align:center;color:#888'>No payments</td></tr>"}</tbody></table>`
         );
+        fileName = `MonthlyReport_${MONTH_FULL[selectedMonth - 1]}_${year}.pdf`;
       } else if (activeTab === "property") {
         const rows = propertyIncome
           .map(p => `<tr><td>${p.name}</td><td class="green">${fmt(p.income)}</td></tr>`)
@@ -141,6 +140,7 @@ export default function ReportsScreen() {
         html = htmlBase(`Property-wise Income — ${year}`,
           `<table><thead><tr><th>Property</th><th>Total Income</th></tr></thead><tbody>${rows || "<tr><td colspan='2' style='text-align:center;color:#888'>No data</td></tr>"}</tbody></table>`
         );
+        fileName = `PropertyIncome_${year}.pdf`;
       } else if (activeTab === "due") {
         const rows = dueTenants
           .map(t => `<tr><td>${t.name}</td><td>${(t as any).unitNumber ? `Unit ${(t as any).unitNumber}` : "—"}</td><td class="red">${fmt((t as any).balanceDue ?? 0)}</td></tr>`)
@@ -148,14 +148,18 @@ export default function ReportsScreen() {
         html = htmlBase("Due Collection Report",
           `<table><thead><tr><th>Tenant</th><th>Unit</th><th>Amount Due</th></tr></thead><tbody>${rows || "<tr><td colspan='3' style='text-align:center;color:#888'>No dues</td></tr>"}</tbody></table>`
         );
+        fileName = `DueCollection_${year}.pdf`;
       } else {
         Alert.alert("No Data", "Please wait for data to load before exporting.");
         return;
       }
-      const { uri } = await Print.printToFileAsync({ html });
-      await Sharing.shareAsync(uri, { mimeType: "application/pdf", UTI: ".pdf" });
-    } catch {
-      Alert.alert("Error", "Failed to export PDF.");
+
+      await downloadPDF(html, fileName);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message.toLowerCase() : "";
+      if (!msg.includes("cancel")) {
+        Alert.alert("Error", "Failed to export PDF.");
+      }
     } finally {
       setExporting(false);
     }
