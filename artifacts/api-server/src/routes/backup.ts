@@ -207,6 +207,21 @@ async function restoreFromData(userId: number, snap: any) {
 
 // ── CREATE ────────────────────────────────────────────────────────────────────
 
+const MAX_BACKUPS_PER_USER = 20;
+
+async function enforceBackupLimit(userId: number): Promise<void> {
+  const all = await db
+    .select({ id: backupsTable.id })
+    .from(backupsTable)
+    .where(eq(backupsTable.userId, userId))
+    .orderBy(backupsTable.createdAt); // oldest first
+
+  if (all.length > MAX_BACKUPS_PER_USER) {
+    const toDelete = all.slice(0, all.length - MAX_BACKUPS_PER_USER).map(b => b.id);
+    await db.delete(backupsTable).where(inArray(backupsTable.id, toDelete));
+  }
+}
+
 router.post("/backup", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const userId = req.user!.id;
   const customLabel = (req.body as { label?: string })?.label?.trim();
@@ -220,6 +235,9 @@ router.post("/backup", requireAuth, async (req: AuthRequest, res): Promise<void>
     .insert(backupsTable)
     .values({ userId, label, sizeBytes, data })
     .returning();
+
+  // Auto-cleanup: keep at most MAX_BACKUPS_PER_USER per user (deletes oldest)
+  await enforceBackupLimit(userId);
 
   res.status(201).json({
     id: backup.id,
@@ -327,6 +345,9 @@ router.post("/backup/import", requireAuth, async (req: AuthRequest, res): Promis
     .insert(backupsTable)
     .values({ userId, label: importLabel, sizeBytes, data })
     .returning();
+
+  // Auto-cleanup after import too
+  await enforceBackupLimit(userId);
 
   res.status(201).json({
     id: backup.id,

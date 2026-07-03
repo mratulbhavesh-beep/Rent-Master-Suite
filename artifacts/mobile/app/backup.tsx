@@ -9,6 +9,7 @@ import {
   Alert,
   RefreshControl,
   Platform,
+  Linking,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,6 +17,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
+import {
+  StorageAccessFramework,
+  readAsStringAsync as fsReadAsStringAsync,
+} from "expo-file-system/legacy";
 import { useColors } from "@/hooks/useColors";
 import {
   useListBackups,
@@ -53,6 +58,7 @@ type Schedule = "off" | "daily" | "weekly" | "monthly";
 
 const SCHEDULE_KEY = "backup_schedule";
 const LAST_AUTO_BACKUP_KEY = "last_auto_backup_ts";
+const SAF_EXPORT_DIR_KEY = "grm_export_saf_dir_uri";
 const GRM_MAGIC = "GeminiRentManager";
 const GRM_FORMAT_VERSION = "1.0";
 
@@ -164,6 +170,47 @@ function computeNextBackup(lastTs: number, schedule: Schedule): Date | null {
 
 function grmFileName(label: string): string {
   return `${label}.grm`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SAF: Get (or request) access to Downloads/Gemini Rent Manager/
+// Caches the granted directory URI so the permission picker only shows once.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getOrRequestExportDir(): Promise<string> {
+  const cached = await AsyncStorage.getItem(SAF_EXPORT_DIR_KEY);
+  if (cached) return cached;
+
+  const downloadsUri = StorageAccessFramework.getUriForDirectoryInRoot("Download");
+  const perm = await StorageAccessFramework.requestDirectoryPermissionsAsync(downloadsUri);
+  if (!perm.granted) throw new Error("permission_denied");
+
+  let dirUri: string;
+  try {
+    dirUri = await StorageAccessFramework.makeDirectoryAsync(
+      perm.directoryUri,
+      "Gemini Rent Manager"
+    );
+  } catch {
+    dirUri = perm.directoryUri;
+  }
+
+  await AsyncStorage.setItem(SAF_EXPORT_DIR_KEY, dirUri);
+  return dirUri;
+}
+
+async function openDownloadsFolder() {
+  const uris = [
+    "content://com.android.externalstorage.documents/document/primary%3ADownload%2FGemini%20Rent%20Manager",
+    "content://com.android.externalstorage.documents/tree/primary%3ADownload",
+  ];
+  for (const uri of uris) {
+    try {
+      const can = await Linking.canOpenURL(uri);
+      if (can) { await Linking.openURL(uri); return; }
+    } catch {}
+  }
+  Alert.alert("File Location", "Find your backup at:\nFiles → Downloads → Gemini Rent Manager");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -324,7 +371,7 @@ export default function BackupScreen() {
     );
   }, [deleteBackup, queryClient]);
 
-  // ── Export (.grm file) ─────────────────────────────────────────────────
+  // ── Export (.grm file to Downloads/Gemini Rent Manager/) ─────────────────
   const handleExport = useCallback(async (backup: BackupMeta) => {
     if (Platform.OS === "web") {
       Alert.alert("Export Unavailable", "File export is available in the Android app.");
@@ -332,33 +379,64 @@ export default function BackupScreen() {
     }
     setExportingId(backup.id);
     try {
+      // 1. Fetch backup data from server
       const res = await apiFetch<{ id: number; label: string; version: string; data: object }>(
         `/api/backup/${backup.id}/data`
       );
+
+      // 2. Encode as proprietary .grm format
       const fileContent = encodeGRMFile(res.data, backup.label);
       const fileName = grmFileName(backup.label);
-      const cacheDir = FileSystem.Paths.cache;
-      const tempUri = cacheDir.uri + fileName;
-      const tempFile = new FileSystem.File(tempUri);
-      tempFile.write(new TextEncoder().encode(fileContent));
 
       if (Platform.OS === "android") {
-        const pickedDir = await FileSystem.Directory.pickDirectoryAsync();
-        if (!pickedDir) return;
-        const bytes = await tempFile.bytes();
-        const destFile = pickedDir.createFile(fileName, "application/octet-stream");
-        destFile.write(bytes);
-        Alert.alert("Exported", `"${fileName}" saved to your selected folder.`);
+        // 3. Get or request SAF permission for Downloads/Gemini Rent Manager/
+        let exportDirUri: string;
+        try {
+          exportDirUri = await getOrRequestExportDir();
+        } catch (permErr: any) {
+          if (String(permErr?.message).includes("permission_denied")) return; // user cancelled picker
+          throw permErr;
+        }
+
+        // 4. Write file directly to Downloads/Gemini Rent Manager/
+        let fileUri: string;
+        try {
+          fileUri = await StorageAccessFramework.createFileAsync(
+            exportDirUri,
+            fileName,
+            "application/octet-stream"
+          );
+        } catch (createErr: any) {
+          // SAF URI may be stale — clear cache and let user re-grant next time
+          await AsyncStorage.removeItem(SAF_EXPORT_DIR_KEY);
+          throw new Error("Storage access expired. Please tap Export again to reconnect.");
+        }
+        await StorageAccessFramework.writeAsStringAsync(fileUri, fileContent);
+
+        // 5. Show success dialog with Open Folder / Done
+        Alert.alert(
+          "Backup Exported Successfully",
+          `Your backup has been saved to:\nDownloads/Gemini Rent Manager/\n\n📄 ${fileName}`,
+          [
+            { text: "Open Folder", onPress: openDownloadsFolder },
+            { text: "Done" },
+          ]
+        );
       } else {
+        // iOS: write to app Documents directory
         const docDir = FileSystem.Paths.document;
         const destFile = new FileSystem.File(docDir.uri + fileName);
-        await tempFile.copy(destFile);
-        Alert.alert("Exported", `"${fileName}" saved to the Files app.`);
+        destFile.write(new TextEncoder().encode(fileContent));
+        Alert.alert(
+          "Backup Exported Successfully",
+          `"${fileName}" has been saved to the Files app.`,
+          [{ text: "Done" }]
+        );
       }
     } catch (e: any) {
-      const msg = e instanceof Error ? e.message.toLowerCase() : "";
-      if (!msg.includes("cancel")) {
-        Alert.alert("Export Failed", e?.message ?? "Could not export backup file.");
+      const msg = String(e?.message ?? "").toLowerCase();
+      if (!msg.includes("cancel") && !msg.includes("permission_denied")) {
+        Alert.alert("Export Failed", e?.message ?? "Could not export the backup file.");
       }
     } finally {
       setExportingId(null);
@@ -385,9 +463,7 @@ export default function BackupScreen() {
         return;
       }
 
-      const content = await FileSystem.readAsStringAsync(file.uri, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
+      const content = await fsReadAsStringAsync(file.uri, { encoding: "utf8" });
 
       const decoded = decodeGRMFile(content);
       if (!decoded) {
