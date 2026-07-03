@@ -10,11 +10,19 @@ import {
   Payment,
 } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
+import { useAuth } from "@/context/AuthContext";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system";
+import {
+  buildReceiptHTML,
+  getReceiptNo,
+  printReceiptPDF,
+  downloadReceiptPDF,
+  shareReceiptPDF,
+} from "@/utils/receiptPdf";
 
 type MonthRow = {
   month: number;
@@ -209,6 +217,12 @@ export default function RentLedgerDetailScreen() {
   const [activeSection, setActiveSection] = useState<ActiveSection>("history");
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  const { user } = useAuth();
+  const businessName =
+    (user as any)?.company?.trim() || (user as any)?.name || "Gemini Rent Manager";
+  const ownerName = (user as any)?.name || "Property Manager";
 
   const { data: tenant, isLoading: tenantLoading } = useGetTenant(tenantId, {
     query: { queryKey: getGetTenantQueryKey(tenantId), enabled: !!tenantId }
@@ -237,6 +251,39 @@ export default function RentLedgerDetailScreen() {
     [...(payments ?? [])].sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime()),
     [payments]
   );
+
+  // ── Per-payment receipt actions ──────────────────────────────────────────
+  const handlePaymentAction = async (
+    action: "view" | "download" | "print" | "share",
+    p: Payment
+  ) => {
+    const key = `${p.id}-${action}`;
+    if (busyKey !== null) return;
+    if (action === "view") {
+      router.push(`/payment-receipt?id=${p.id}` as any);
+      return;
+    }
+    setBusyKey(key);
+    const html = buildReceiptHTML(
+      p as any,
+      tenant?.rentAmount ?? 0,
+      businessName,
+      ownerName
+    );
+    const receiptNo = getReceiptNo(p);
+    try {
+      if (action === "print") await printReceiptPDF(html);
+      else if (action === "download") await downloadReceiptPDF(html, receiptNo);
+      else await shareReceiptPDF(html, receiptNo);
+    } catch (err: any) {
+      const msg = err?.message ?? "";
+      if (!msg.toLowerCase().includes("cancel")) {
+        Alert.alert("Error", msg || "Could not process request.");
+      }
+    } finally {
+      setBusyKey(null);
+    }
+  };
 
   const handleGeneratePDF = async (): Promise<string | null> => {
     if (!tenant) return null;
@@ -613,6 +660,7 @@ export default function RentLedgerDetailScreen() {
               const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
               const monthLabel = p.month ? `${MONTHS[p.month - 1]} ${p.year}` : "—";
               const statusColor = p.status === "paid" ? colors.success : p.status === "partial" ? colors.warning : colors.destructive;
+              const anyBusy = busyKey !== null;
               return (
                 <View key={p.id} style={styles.timelineItem}>
                   <View style={styles.timelineLeft}>
@@ -639,6 +687,38 @@ export default function RentLedgerDetailScreen() {
                         </Text>
                       </View>
                     </View>
+                    {/* Receipt action row */}
+                    <View style={[styles.timelineActions, { borderTopColor: `${colors.border}` }]}>
+                      {([
+                        { action: "view", icon: "eye", label: "View" },
+                        { action: "download", icon: "download", label: "Download" },
+                        { action: "print", icon: "printer", label: "Print" },
+                        { action: "share", icon: "share-2", label: "Share" },
+                      ] as const).map(({ action, icon, label }) => {
+                        const isThis = busyKey === `${p.id}-${action}`;
+                        const isShare = action === "share";
+                        return (
+                          <TouchableOpacity
+                            key={action}
+                            style={[
+                              styles.timelineActionBtn,
+                              isShare && { backgroundColor: colors.primary },
+                            ]}
+                            onPress={() => handlePaymentAction(action, p)}
+                            disabled={anyBusy}
+                          >
+                            {isThis ? (
+                              <ActivityIndicator size="small" color={isShare ? "#fff" : colors.primary} style={{ width: 11, height: 11 }} />
+                            ) : (
+                              <Feather name={icon} size={11} color={isShare ? "#fff" : colors.primary} />
+                            )}
+                            <Text style={[styles.timelineActionText, { color: isShare ? "#fff" : colors.primary }]}>
+                              {label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                   </View>
                 </View>
               );
@@ -659,39 +739,81 @@ export default function RentLedgerDetailScreen() {
               const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
               const monthLabel = p.month ? `${MONTHS[p.month - 1]} ${p.year}` : "—";
               const statusColor = p.status === "paid" ? colors.success : p.status === "partial" ? colors.warning : colors.destructive;
+              const anyBusy = busyKey !== null;
+              const isLast2 = idx === sortedPayments.length - 1;
               return (
                 <View
                   key={p.id}
                   style={[
-                    styles.receiptItem,
+                    styles.receiptItemWrap,
                     { borderBottomColor: colors.border },
-                    idx === sortedPayments.length - 1 && { borderBottomWidth: 0 },
+                    isLast2 && { borderBottomWidth: 0 },
                   ]}
                 >
-                  <View style={[styles.receiptIcon, { backgroundColor: `${colors.primary}12` }]}>
-                    <Feather name="file-text" size={18} color={colors.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: "700", color: colors.foreground }}>
-                      {p.receiptNumber || `RCP-${p.id}`}
-                    </Text>
-                    <Text style={{ fontSize: 12, color: colors.mutedForeground, marginTop: 2 }}>
-                      {monthLabel} · {new Date(p.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-                    </Text>
-                    <Text style={{ fontSize: 12, color: colors.mutedForeground }}>
-                      {p.method.replace(/_/g, " ")}
-                      {p.notes ? ` · ${p.notes}` : ""}
-                    </Text>
-                  </View>
-                  <View style={{ alignItems: "flex-end", gap: 4 }}>
-                    <Text style={{ fontSize: 15, fontWeight: "800", color: colors.success }}>
-                      {fmt(Number(p.amount))}
-                    </Text>
-                    <View style={[styles.statusBadge, { backgroundColor: `${statusColor}18` }]}>
-                      <Text style={{ fontSize: 9, fontWeight: "800", color: statusColor }}>
-                        {p.status.toUpperCase()}
+                  {/* Info row — tappable → View Receipt */}
+                  <TouchableOpacity
+                    style={styles.receiptInfoRow}
+                    onPress={() => handlePaymentAction("view", p)}
+                    activeOpacity={0.75}
+                    disabled={anyBusy}
+                  >
+                    <View style={[styles.receiptIcon, { backgroundColor: `${colors.primary}12` }]}>
+                      <Feather name="file-text" size={18} color={colors.primary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: colors.foreground }}>
+                        {p.receiptNumber || `RCP-${p.id}`}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors.mutedForeground, marginTop: 2 }}>
+                        {monthLabel} · {new Date(p.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors.mutedForeground }}>
+                        {p.method.replace(/_/g, " ")}
+                        {p.notes ? ` · ${p.notes}` : ""}
                       </Text>
                     </View>
+                    <View style={{ alignItems: "flex-end", gap: 4 }}>
+                      <Text style={{ fontSize: 15, fontWeight: "800", color: colors.success }}>
+                        {fmt(Number(p.amount))}
+                      </Text>
+                      <View style={[styles.statusBadge, { backgroundColor: `${statusColor}18` }]}>
+                        <Text style={{ fontSize: 9, fontWeight: "800", color: statusColor }}>
+                          {p.status.toUpperCase()}
+                        </Text>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                  {/* 4 action buttons */}
+                  <View style={[styles.receiptActionsRow, { borderTopColor: colors.border }]}>
+                    {([
+                      { action: "view", icon: "eye", label: "View" },
+                      { action: "download", icon: "download", label: "Download" },
+                      { action: "print", icon: "printer", label: "Print" },
+                      { action: "share", icon: "share-2", label: "Share" },
+                    ] as const).map(({ action, icon, label }) => {
+                      const isThis = busyKey === `${p.id}-${action}`;
+                      const isShare = action === "share";
+                      return (
+                        <TouchableOpacity
+                          key={action}
+                          style={[
+                            styles.receiptActionBtn,
+                            isShare && { backgroundColor: colors.primary },
+                          ]}
+                          onPress={() => handlePaymentAction(action, p)}
+                          disabled={anyBusy}
+                        >
+                          {isThis ? (
+                            <ActivityIndicator size="small" color={isShare ? "#fff" : colors.primary} style={{ width: 12, height: 12 }} />
+                          ) : (
+                            <Feather name={icon} size={12} color={isShare ? "#fff" : colors.primary} />
+                          )}
+                          <Text style={[styles.receiptActionText, { color: isShare ? "#fff" : colors.primary }]}>
+                            {label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 </View>
               );
@@ -801,6 +923,53 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  receiptItemWrap: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  receiptInfoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+  },
+  receiptActionsRow: {
+    flexDirection: "row",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  receiptActionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  receiptActionText: { fontSize: 11, fontWeight: "700" },
+  timelineActions: {
+    flexDirection: "row",
+    gap: 5,
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  timelineActionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    paddingVertical: 6,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  timelineActionText: { fontSize: 10, fontWeight: "700" },
   receiptIcon: { width: 40, height: 40, borderRadius: 10, justifyContent: "center", alignItems: "center" },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   actionsRow: { flexDirection: "row", gap: 10, marginTop: 4 },
