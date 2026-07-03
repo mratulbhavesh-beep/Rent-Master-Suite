@@ -124,6 +124,27 @@ export const ChangePasswordResponse = zod.object({
 
 
 /**
+ * @summary Sign in or register with Google ID token
+ */
+export const GoogleSignInBody = zod.object({
+  "idToken": zod.string()
+})
+
+export const GoogleSignInResponse = zod.object({
+  "token": zod.string(),
+  "user": zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "role": zod.enum(['admin', 'employee']),
+  "phone": zod.string().optional(),
+  "company": zod.string().optional(),
+  "createdAt": zod.string()
+})
+})
+
+
+/**
  * @summary Create a manual backup of all user data
  */
 export const CreateBackupBody = zod.object({

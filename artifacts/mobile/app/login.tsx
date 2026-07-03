@@ -1,7 +1,17 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, SafeAreaView } from "react-native";
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  Alert,
+  SafeAreaView,
+} from "react-native";
 import { useRouter, Link } from "expo-router";
-import { useLogin } from "@workspace/api-client-react";
+import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
+import { useLogin, useGoogleSignIn } from "@workspace/api-client-react";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
@@ -9,10 +19,12 @@ import { Feather } from "@expo/vector-icons";
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [googleLoading, setGoogleLoading] = useState(false);
   const { login: setAuthData } = useAuth();
   const router = useRouter();
   const colors = useColors();
   const loginMutation = useLogin();
+  const googleSignInMutation = useGoogleSignIn();
 
   const handleLogin = () => {
     const trimmedEmail = email.trim();
@@ -35,6 +47,48 @@ export default function LoginScreen() {
       }
     );
   };
+
+  const handleGoogleSignIn = async () => {
+    try {
+      setGoogleLoading(true);
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      const response = await GoogleSignin.signIn();
+
+      if (!isSuccessResponse(response)) {
+        return;
+      }
+
+      const idToken = response.data.idToken;
+      if (!idToken) {
+        Alert.alert("Error", "Could not get Google ID token. Please try again.");
+        return;
+      }
+
+      googleSignInMutation.mutate(
+        { data: { idToken } },
+        {
+          onSuccess: async (data) => {
+            await setAuthData(data.token, data.user);
+            router.replace("/(tabs)");
+          },
+          onError: (err: unknown) => {
+            const data = (err as { data?: { error?: string } })?.data;
+            const message = data?.error ?? "Google Sign-In failed. Please try again.";
+            Alert.alert("Sign-In Failed", message);
+          },
+        }
+      );
+    } catch (error: unknown) {
+      const e = error as { code?: number };
+      if (e.code !== -5) {
+        Alert.alert("Error", "Google Sign-In failed. Please try again.");
+      }
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const isLoading = loginMutation.isPending || googleLoading || googleSignInMutation.isPending;
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -68,7 +122,7 @@ export default function LoginScreen() {
           <TouchableOpacity
             style={[styles.button, { backgroundColor: colors.primary }]}
             onPress={handleLogin}
-            disabled={loginMutation.isPending}
+            disabled={isLoading}
           >
             {loginMutation.isPending ? (
               <ActivityIndicator color={colors.primaryForeground} />
@@ -78,10 +132,33 @@ export default function LoginScreen() {
           </TouchableOpacity>
 
           <Link href="/forgot-password" asChild>
-            <TouchableOpacity style={styles.forgotButton}>
+            <TouchableOpacity style={styles.forgotButton} disabled={isLoading}>
               <Text style={[styles.forgotText, { color: colors.primary }]}>Forgot Password?</Text>
             </TouchableOpacity>
           </Link>
+
+          <View style={styles.dividerRow}>
+            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+            <Text style={[styles.dividerText, { color: colors.mutedForeground }]}>or</Text>
+            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+          </View>
+
+          <TouchableOpacity
+            style={[styles.googleButton, { backgroundColor: colors.card, borderColor: colors.border }]}
+            onPress={handleGoogleSignIn}
+            disabled={isLoading}
+          >
+            {googleLoading || googleSignInMutation.isPending ? (
+              <ActivityIndicator color={colors.foreground} />
+            ) : (
+              <>
+                <Text style={styles.googleIcon}>G</Text>
+                <Text style={[styles.googleButtonText, { color: colors.foreground }]}>
+                  Continue with Google
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
 
         <View style={styles.footer}>
@@ -146,6 +223,37 @@ const styles = StyleSheet.create({
   },
   forgotText: {
     fontSize: 14,
+    fontWeight: "600",
+  },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginVertical: 4,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+  },
+  dividerText: {
+    fontSize: 14,
+  },
+  googleButton: {
+    height: 52,
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 10,
+  },
+  googleIcon: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#4285F4",
+  },
+  googleButtonText: {
+    fontSize: 16,
     fontWeight: "600",
   },
   footer: {

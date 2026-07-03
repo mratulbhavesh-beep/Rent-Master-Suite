@@ -26,6 +26,7 @@ export * from './expenseUpdate';
 export * from './expenseUpdateCategory';
 export * from './getMonthlyReportParams';
 export * from './getYearlyReportParams';
+export * from './googleSignInInput';
 export * from './healthStatus';
 export * from './importBackupInput';
 export * from './importBackupInputData';

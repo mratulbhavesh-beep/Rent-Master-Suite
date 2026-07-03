@@ -103,6 +103,10 @@ export interface ChangePasswordInput {
   newPassword: string;
 }
 
+export interface GoogleSignInInput {
+  idToken: string;
+}
+
 export interface DashboardSummary {
   totalProperties: number;
   totalTenants: number;

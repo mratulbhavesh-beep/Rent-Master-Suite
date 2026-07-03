@@ -35,6 +35,7 @@ import type {
   ExpenseUpdate,
   GetMonthlyReportParams,
   GetYearlyReportParams,
+  GoogleSignInInput,
   HealthStatus,
   ImportBackupInput,
   ListExpensesParams,
@@ -599,6 +600,76 @@ export const useChangePassword = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getChangePasswordMutationOptions(options));
+    }
+
+export const getGoogleSignInUrl = () => {
+
+
+
+
+  return `/api/auth/google`
+}
+
+/**
+ * @summary Sign in or register with Google ID token
+ */
+export const googleSignIn = async (googleSignInInput: GoogleSignInInput, options?: RequestInit): Promise<AuthResponse> => {
+
+  return customFetch<AuthResponse>(getGoogleSignInUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(googleSignInInput)
+  }
+);}
+
+
+
+
+export const getGoogleSignInMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof googleSignIn>>, TError,{data: BodyType<GoogleSignInInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof googleSignIn>>, TError,{data: BodyType<GoogleSignInInput>}, TContext> => {
+
+const mutationKey = ['googleSignIn'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof googleSignIn>>, {data: BodyType<GoogleSignInInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  googleSignIn(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GoogleSignInMutationResult = NonNullable<Awaited<ReturnType<typeof googleSignIn>>>
+    export type GoogleSignInMutationBody = BodyType<GoogleSignInInput>
+    export type GoogleSignInMutationError = ErrorType<void>
+
+    /**
+ * @summary Sign in or register with Google ID token
+ */
+export const useGoogleSignIn = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof googleSignIn>>, TError,{data: BodyType<GoogleSignInInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof googleSignIn>>,
+        TError,
+        {data: BodyType<GoogleSignInInput>},
+        TContext
+      > => {
+      return useMutation(getGoogleSignInMutationOptions(options));
     }
 
 export const getCreateBackupUrl = () => {

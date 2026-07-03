@@ -12,7 +12,20 @@
           "package_name": "com.geminirentmanager.app"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "910455573442-dq27c47rbrqvlecoqs042b78n652mn0e.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.geminirentmanager.app",
+            "certificate_hash": "cb6648effdf5aea542522f5ab64a46a8c31b7d69"
+          }
+        },
+        {
+          "client_id": "910455573442-ni8hs248tapqpnimin4il8grhg38f645.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAVE_olK7yX5IpK7U4N7MHL-p4xZUgJ1kY"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "910455573442-ni8hs248tapqpnimin4il8grhg38f645.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

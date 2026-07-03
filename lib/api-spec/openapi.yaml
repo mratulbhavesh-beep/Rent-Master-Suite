@@ -182,6 +182,29 @@ paths:
         "401":
           description: Unauthorized
 
+  /auth/google:
+    post:
+      operationId: googleSignIn
+      tags: [auth]
+      summary: Sign in or register with Google ID token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GoogleSignInInput"
+      responses:
+        "200":
+          description: Sign in successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Missing or invalid token
+        "401":
+          description: Token verification failed
+
   /backup:
     post:
       operationId: createBackup
@@ -1191,6 +1214,13 @@ components:
         currentPassword:
           type: string
         newPassword:
+          type: string
+
+    GoogleSignInInput:
+      type: object
+      required: [idToken]
+      properties:
+        idToken:
           type: string
 
     DashboardSummary:

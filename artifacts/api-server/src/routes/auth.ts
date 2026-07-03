@@ -4,6 +4,14 @@ import { db, usersTable } from "@workspace/db";
 import { hashPassword, comparePassword, signToken } from "../lib/auth";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
+interface GoogleTokenPayload {
+  sub: string;
+  email: string;
+  name?: string;
+  aud: string;
+  error_description?: string;
+}
+
 const router: IRouter = Router();
 
 router.post("/auth/login", async (req, res): Promise<void> => {
@@ -177,6 +185,80 @@ router.post("/auth/change-password", requireAuth, async (req: AuthRequest, res):
   await db.update(usersTable).set({ passwordHash }).where(eq(usersTable.id, user.id));
 
   res.json({ message: "Password changed successfully" });
+});
+
+router.post("/auth/google", async (req, res): Promise<void> => {
+  const { idToken } = req.body as { idToken?: string };
+  if (!idToken) {
+    res.status(400).json({ error: "idToken required" });
+    return;
+  }
+
+  const googleClientId =
+    process.env.GOOGLE_WEB_CLIENT_ID ??
+    "910455573442-ni8hs248tapqpnimin4il8grhg38f645.apps.googleusercontent.com";
+
+  let payload: GoogleTokenPayload;
+  try {
+    const tokenInfoRes = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`
+    );
+    payload = (await tokenInfoRes.json()) as GoogleTokenPayload;
+    if (!tokenInfoRes.ok || payload.error_description) {
+      res.status(401).json({ error: "Google token verification failed" });
+      return;
+    }
+  } catch {
+    res.status(401).json({ error: "Could not verify Google token" });
+    return;
+  }
+
+  if (payload.aud !== googleClientId) {
+    res.status(401).json({ error: "Token audience mismatch" });
+    return;
+  }
+
+  const { sub: googleId, email, name } = payload;
+  if (!email) {
+    res.status(400).json({ error: "Google account has no email" });
+    return;
+  }
+
+  let user = (await db.select().from(usersTable).where(eq(usersTable.googleId, googleId)))[0];
+
+  if (!user) {
+    const [emailUser] = await db.select().from(usersTable).where(eq(usersTable.email, email));
+    if (emailUser) {
+      [user] = await db
+        .update(usersTable)
+        .set({ googleId, provider: "google" })
+        .where(eq(usersTable.id, emailUser.id))
+        .returning();
+    } else {
+      [user] = await db
+        .insert(usersTable)
+        .values({
+          name: name ?? email.split("@")[0],
+          email,
+          provider: "google",
+          googleId,
+          role: "employee",
+        })
+        .returning();
+    }
+  }
+
+  const token = signToken({ id: user.id, email: user.email, role: user.role });
+  res.json({
+    token,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      createdAt: user.createdAt.toISOString(),
+    },
+  });
 });
 
 export default router;

@@ -1,7 +1,14 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQueryClient } from "@tanstack/react-query";
+import { GoogleSignin } from "@react-native-google-signin/google-signin";
 import { User } from "@workspace/api-client-react";
+
+const GOOGLE_WEB_CLIENT_ID = "910455573442-ni8hs248tapqpnimin4il8grhg38f645.apps.googleusercontent.com";
+
+GoogleSignin.configure({
+  webClientId: GOOGLE_WEB_CLIENT_ID,
+});
 
 interface AuthContextType {
   user: User | null;
@@ -71,6 +78,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       queryClient.clear();
       setToken(null);
       setUser(null);
+      try {
+        const isSignedIn = await GoogleSignin.getCurrentUser();
+        if (isSignedIn) {
+          await GoogleSignin.signOut();
+        }
+      } catch {
+        // Google sign-out failure is non-critical
+      }
     } catch (e) {
       console.error("Failed to clear auth state", e);
     }
