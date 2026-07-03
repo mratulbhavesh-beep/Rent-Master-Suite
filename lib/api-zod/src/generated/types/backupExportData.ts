@@ -5,12 +5,11 @@
  * Gemini Rent Manager API
  * OpenAPI spec version: 0.1.0
  */
+import type { BackupExportDataData } from './backupExportDataData';
 
-export interface BackupMeta {
+export interface BackupExportData {
   id: number;
   label: string;
-  sizeBytes: number;
-  createdAt: string;
-  version?: string;
-  location?: string;
+  version: string;
+  data: BackupExportDataData;
 }

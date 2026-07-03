@@ -24,6 +24,7 @@ import type {
   AgreementInput,
   AgreementUpdate,
   AuthResponse,
+  BackupExportData,
   BackupMeta,
   ChangePassword200,
   ChangePasswordInput,
@@ -35,6 +36,7 @@ import type {
   GetMonthlyReportParams,
   GetYearlyReportParams,
   HealthStatus,
+  ImportBackupInput,
   ListExpensesParams,
   ListMaintenanceRequestsParams,
   ListPaymentsParams,
@@ -884,6 +886,153 @@ export const useDeleteBackup = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getDeleteBackupMutationOptions(options));
+    }
+
+export const getGetBackupDataUrl = (id: number,) => {
+
+
+
+
+  return `/api/backup/${id}/data`
+}
+
+/**
+ * @summary Get raw backup data for file export
+ */
+export const getBackupData = async (id: number, options?: RequestInit): Promise<BackupExportData> => {
+
+  return customFetch<BackupExportData>(getGetBackupDataUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBackupDataQueryKey = (id: number,) => {
+    return [
+    `/api/backup/${id}/data`
+    ] as const;
+    }
+
+
+export const getGetBackupDataQueryOptions = <TData = Awaited<ReturnType<typeof getBackupData>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBackupData>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBackupDataQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBackupData>>> = ({ signal }) => getBackupData(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBackupData>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBackupDataQueryResult = NonNullable<Awaited<ReturnType<typeof getBackupData>>>
+export type GetBackupDataQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get raw backup data for file export
+ */
+
+export function useGetBackupData<TData = Awaited<ReturnType<typeof getBackupData>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBackupData>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBackupDataQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getImportBackupUrl = () => {
+
+
+
+
+  return `/api/backup/import`
+}
+
+/**
+ * @summary Import a backup from an exported .grm file
+ */
+export const importBackup = async (importBackupInput: ImportBackupInput, options?: RequestInit): Promise<BackupMeta> => {
+
+  return customFetch<BackupMeta>(getImportBackupUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(importBackupInput)
+  }
+);}
+
+
+
+
+export const getImportBackupMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof importBackup>>, TError,{data: BodyType<ImportBackupInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof importBackup>>, TError,{data: BodyType<ImportBackupInput>}, TContext> => {
+
+const mutationKey = ['importBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof importBackup>>, {data: BodyType<ImportBackupInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  importBackup(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ImportBackupMutationResult = NonNullable<Awaited<ReturnType<typeof importBackup>>>
+    export type ImportBackupMutationBody = BodyType<ImportBackupInput>
+    export type ImportBackupMutationError = ErrorType<void>
+
+    /**
+ * @summary Import a backup from an exported .grm file
+ */
+export const useImportBackup = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof importBackup>>, TError,{data: BodyType<ImportBackupInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof importBackup>>,
+        TError,
+        {data: BodyType<ImportBackupInput>},
+        TContext
+      > => {
+      return useMutation(getImportBackupMutationOptions(options));
     }
 
 export const getGetDashboardSummaryUrl = () => {

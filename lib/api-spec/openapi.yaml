@@ -260,6 +260,52 @@ paths:
         "404":
           description: Backup not found
 
+  /backup/{id}/data:
+    get:
+      operationId: getBackupData
+      tags: [backup]
+      summary: Get raw backup data for file export
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Backup export data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupExportData"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Backup not found
+
+  /backup/import:
+    post:
+      operationId: importBackup
+      tags: [backup]
+      summary: Import a backup from an exported .grm file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportBackupInput"
+      responses:
+        "201":
+          description: Backup imported successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupMeta"
+        "400":
+          description: Invalid backup data
+        "401":
+          description: Unauthorized
+
   /dashboard/summary:
     get:
       operationId: getDashboardSummary
@@ -1015,12 +1061,38 @@ components:
           type: integer
         createdAt:
           type: string
+        version:
+          type: string
+        location:
+          type: string
 
     CreateBackupInput:
       type: object
       properties:
         label:
           type: string
+
+    BackupExportData:
+      type: object
+      required: [id, label, version, data]
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+        version:
+          type: string
+        data:
+          type: object
+
+    ImportBackupInput:
+      type: object
+      required: [label, data]
+      properties:
+        label:
+          type: string
+        data:
+          type: object
 
     RestoreResult:
       type: object

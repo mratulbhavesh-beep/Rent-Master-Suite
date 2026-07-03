@@ -10,10 +10,28 @@ export interface BackupMeta {
   label: string;
   sizeBytes: number;
   createdAt: string;
+  version?: string;
+  location?: string;
 }
 
 export interface CreateBackupInput {
   label?: string;
+}
+
+export type BackupExportDataData = { [key: string]: unknown };
+
+export interface BackupExportData {
+  id: number;
+  label: string;
+  version: string;
+  data: BackupExportDataData;
+}
+
+export type ImportBackupInputData = { [key: string]: unknown };
+
+export interface ImportBackupInput {
+  label: string;
+  data: ImportBackupInputData;
 }
 
 export interface RestoreResult {

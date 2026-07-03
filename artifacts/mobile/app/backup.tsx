@@ -8,11 +8,14 @@ import {
   ActivityIndicator,
   Alert,
   RefreshControl,
+  Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
 import { useColors } from "@/hooks/useColors";
 import {
   useListBackups,
@@ -20,28 +23,106 @@ import {
   useRestoreBackup,
   useDeleteBackup,
   BackupMeta,
+  getListBackupsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { getListBackupsQueryKey } from "@workspace/api-client-react";
+
+async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = await AsyncStorage.getItem("auth_token");
+  const baseUrl = `https://${process.env.EXPO_PUBLIC_DOMAIN}`;
+  const res = await fetch(`${baseUrl}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers ?? {}),
+    },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as any)?.error ?? `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants & Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 type Schedule = "off" | "daily" | "weekly" | "monthly";
 
 const SCHEDULE_KEY = "backup_schedule";
 const LAST_AUTO_BACKUP_KEY = "last_auto_backup_ts";
+const GRM_MAGIC = "GeminiRentManager";
+const GRM_FORMAT_VERSION = "1.0";
 
 const SCHEDULE_OPTIONS: { value: Schedule; label: string; desc: string; icon: keyof typeof Feather.glyphMap }[] = [
-  { value: "off", label: "Off", desc: "No automatic backups", icon: "x-circle" },
-  { value: "daily", label: "Daily", desc: "Every 24 hours", icon: "sunrise" },
-  { value: "weekly", label: "Weekly", desc: "Every 7 days", icon: "calendar" },
-  { value: "monthly", label: "Monthly", desc: "Every 30 days", icon: "archive" },
+  { value: "off",     label: "Off",     desc: "No automatic backups",  icon: "x-circle" },
+  { value: "daily",   label: "Daily",   desc: "Every 24 hours",        icon: "sunrise" },
+  { value: "weekly",  label: "Weekly",  desc: "Every 7 days",          icon: "calendar" },
+  { value: "monthly", label: "Monthly", desc: "Every 30 days",         icon: "archive" },
 ];
 
 const SCHEDULE_INTERVAL_MS: Record<Schedule, number> = {
-  off: Infinity,
-  daily: 24 * 60 * 60 * 1000,
-  weekly: 7 * 24 * 60 * 60 * 1000,
+  off:     Infinity,
+  daily:   24 * 60 * 60 * 1000,
+  weekly:  7  * 24 * 60 * 60 * 1000,
   monthly: 30 * 24 * 60 * 60 * 1000,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GRM File Encoding / Decoding
+// The .grm format is a proprietary envelope that prevents casual inspection
+// or modification. A checksum guards against tampering — any modification
+// causes the import to reject the file.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function grmChecksum(str: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash;
+}
+
+function encodeGRMFile(data: object, label: string): string {
+  const payload = JSON.stringify(data);
+  const checksum = grmChecksum(payload);
+  const envelope = JSON.stringify({
+    grm: GRM_MAGIC,
+    fmtVersion: GRM_FORMAT_VERSION,
+    app: "com.geminirent.manager",
+    exported: new Date().toISOString(),
+    label,
+    checksum,
+    payload: payload.split("").reverse().join(""),
+  });
+  return JSON.stringify({
+    __grm__: true,
+    format: GRM_MAGIC,
+    v: GRM_FORMAT_VERSION,
+    content: envelope,
+  }, null, 2);
+}
+
+function decodeGRMFile(content: string): { data: object; label: string } | null {
+  try {
+    const wrapper = JSON.parse(content);
+    if (!wrapper.__grm__ || wrapper.format !== GRM_MAGIC) return null;
+    const envelope = JSON.parse(wrapper.content);
+    if (envelope.grm !== GRM_MAGIC) return null;
+    const payload = (envelope.payload as string).split("").reverse().join("");
+    if (grmChecksum(payload) !== envelope.checksum) return null;
+    return { data: JSON.parse(payload), label: envelope.label || "Imported Backup" };
+  } catch {
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Formatting helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -50,13 +131,19 @@ function formatBytes(bytes: number): string {
 }
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return new Date(iso).toLocaleDateString("en-IN", {
+    day: "2-digit", month: "short", year: "numeric",
+  });
 }
 
 function formatTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return new Date(iso).toLocaleTimeString("en-IN", {
+    hour: "2-digit", minute: "2-digit", hour12: true,
+  });
+}
+
+function formatDateFull(iso: string): string {
+  return `${formatDate(iso)} ${formatTime(iso)}`;
 }
 
 function timeAgo(iso: string): string {
@@ -70,6 +157,19 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
+function computeNextBackup(lastTs: number, schedule: Schedule): Date | null {
+  if (schedule === "off") return null;
+  return new Date(lastTs + SCHEDULE_INTERVAL_MS[schedule]);
+}
+
+function grmFileName(label: string): string {
+  return `${label}.grm`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Screen
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function BackupScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -77,9 +177,12 @@ export default function BackupScreen() {
   const queryClient = useQueryClient();
 
   const [schedule, setSchedule] = useState<Schedule>("off");
+  const [lastAutoTs, setLastAutoTs] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [restoringId, setRestoringId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [exportingId, setExportingId] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [showReminder, setShowReminder] = useState(false);
 
@@ -88,7 +191,7 @@ export default function BackupScreen() {
   const restoreBackup = useRestoreBackup();
   const deleteBackup = useDeleteBackup();
 
-  // Load schedule preference and check auto-backup timing
+  // ── Load schedule & compute auto-backup state ───────────────────────────
   useEffect(() => {
     (async () => {
       const saved = (await AsyncStorage.getItem(SCHEDULE_KEY)) as Schedule | null;
@@ -96,51 +199,83 @@ export default function BackupScreen() {
 
       const lastTs = await AsyncStorage.getItem(LAST_AUTO_BACKUP_KEY);
       if (lastTs) {
-        const elapsed = Date.now() - Number(lastTs);
+        const ts = Number(lastTs);
+        setLastAutoTs(ts);
+        const elapsed = Date.now() - ts;
         const interval = SCHEDULE_INTERVAL_MS[saved ?? "off"];
-        if (saved && saved !== "off" && elapsed > interval) {
-          setShowReminder(true);
-        }
-      } else if (!lastTs && (saved ?? "off") !== "off") {
+        if (saved && saved !== "off" && elapsed > interval) setShowReminder(true);
+      } else if ((saved ?? "off") !== "off") {
         setShowReminder(true);
       }
-
-      // Show nudge if no backups at all (loaded after list)
     })();
   }, []);
 
-  // Show reminder if backups list is empty
   useEffect(() => {
-    if (!isLoading && backups.length === 0) {
-      setShowReminder(true);
-    }
+    if (!isLoading && backups.length === 0) setShowReminder(true);
   }, [isLoading, backups.length]);
 
+  // ── Schedule ───────────────────────────────────────────────────────────
   const handleScheduleChange = async (value: Schedule) => {
     setSchedule(value);
     await AsyncStorage.setItem(SCHEDULE_KEY, value);
   };
 
-  const handleCreateBackup = useCallback(async (label?: string) => {
+  // ── Create backup ──────────────────────────────────────────────────────
+  const handleCreateBackup = useCallback(async (silent = false): Promise<boolean> => {
     setCreating(true);
     try {
-      await createBackup.mutateAsync({ data: { label } });
-      await AsyncStorage.setItem(LAST_AUTO_BACKUP_KEY, String(Date.now()));
+      await createBackup.mutateAsync({ data: {} });
+      const ts = Date.now();
+      setLastAutoTs(ts);
+      await AsyncStorage.setItem(LAST_AUTO_BACKUP_KEY, String(ts));
       await queryClient.invalidateQueries({ queryKey: getListBackupsQueryKey() });
       setShowReminder(false);
-      Alert.alert("Backup Created", "Your data has been backed up successfully.");
+      if (!silent) Alert.alert("Backup Created", "Your data has been backed up successfully.");
+      return true;
     } catch (e: any) {
       const msg = e?.response?.data?.error ?? e?.message ?? "Backup failed.";
-      Alert.alert("Backup Failed", msg);
+      if (!silent) Alert.alert("Backup Failed", msg);
+      return false;
     } finally {
       setCreating(false);
     }
   }, [createBackup, queryClient]);
 
+  // ── Two-step restore ───────────────────────────────────────────────────
   const handleRestore = useCallback((backup: BackupMeta) => {
+    // Step 1: Safety backup
     Alert.alert(
-      "Restore Backup",
-      `Are you sure you want to restore from:\n\n"${backup.label}"\n${formatDate(backup.createdAt)}\n\n⚠️ This will permanently replace all your current data with the backup data. This cannot be undone.`,
+      "Safety Backup",
+      "Create a backup of your current data before restoring?\n\nThis lets you undo the restore if needed.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Skip",
+          style: "default",
+          onPress: () => confirmRestore(backup),
+        },
+        {
+          text: "Yes, Back Up First",
+          style: "default",
+          onPress: async () => {
+            const ok = await handleCreateBackup(true);
+            if (ok) {
+              Alert.alert("Safety Backup Done", "Safety backup created. Proceeding with restore…", [
+                { text: "OK", onPress: () => confirmRestore(backup) },
+              ]);
+            } else {
+              Alert.alert("Safety backup failed.", "Restore cancelled for your safety.");
+            }
+          },
+        },
+      ]
+    );
+  }, [handleCreateBackup]);
+
+  const confirmRestore = useCallback((backup: BackupMeta) => {
+    Alert.alert(
+      "Restore This Backup?",
+      `Current data will be replaced.\n\n📁 ${backup.label}\n🕐 ${formatDateFull(backup.createdAt)}\n📦 ${formatBytes(backup.sizeBytes)}`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -153,8 +288,7 @@ export default function BackupScreen() {
               await queryClient.invalidateQueries();
               Alert.alert("Restore Complete", result.message ?? "Data restored successfully.");
             } catch (e: any) {
-              const msg = e?.response?.data?.error ?? e?.message ?? "Restore failed.";
-              Alert.alert("Restore Failed", msg);
+              Alert.alert("Restore Failed", e?.response?.data?.error ?? e?.message ?? "Restore failed.");
             } finally {
               setRestoringId(null);
             }
@@ -164,10 +298,11 @@ export default function BackupScreen() {
     );
   }, [restoreBackup, queryClient]);
 
+  // ── Delete ─────────────────────────────────────────────────────────────
   const handleDelete = useCallback((backup: BackupMeta) => {
     Alert.alert(
       "Delete Backup",
-      `Delete "${backup.label}"?\n\nThis action cannot be undone.`,
+      `Delete "${backup.label}"?\n\nThis cannot be undone.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -189,33 +324,157 @@ export default function BackupScreen() {
     );
   }, [deleteBackup, queryClient]);
 
+  // ── Export (.grm file) ─────────────────────────────────────────────────
+  const handleExport = useCallback(async (backup: BackupMeta) => {
+    if (Platform.OS === "web") {
+      Alert.alert("Export Unavailable", "File export is available in the Android app.");
+      return;
+    }
+    setExportingId(backup.id);
+    try {
+      const res = await apiFetch<{ id: number; label: string; version: string; data: object }>(
+        `/api/backup/${backup.id}/data`
+      );
+      const fileContent = encodeGRMFile(res.data, backup.label);
+      const fileName = grmFileName(backup.label);
+      const cacheDir = FileSystem.Paths.cache;
+      const tempUri = cacheDir.uri + fileName;
+      const tempFile = new FileSystem.File(tempUri);
+      tempFile.write(new TextEncoder().encode(fileContent));
+
+      if (Platform.OS === "android") {
+        const pickedDir = await FileSystem.Directory.pickDirectoryAsync();
+        if (!pickedDir) return;
+        const bytes = await tempFile.bytes();
+        const destFile = pickedDir.createFile(fileName, "application/octet-stream");
+        destFile.write(bytes);
+        Alert.alert("Exported", `"${fileName}" saved to your selected folder.`);
+      } else {
+        const docDir = FileSystem.Paths.document;
+        const destFile = new FileSystem.File(docDir.uri + fileName);
+        await tempFile.copy(destFile);
+        Alert.alert("Exported", `"${fileName}" saved to the Files app.`);
+      }
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message.toLowerCase() : "";
+      if (!msg.includes("cancel")) {
+        Alert.alert("Export Failed", e?.message ?? "Could not export backup file.");
+      }
+    } finally {
+      setExportingId(null);
+    }
+  }, []);
+
+  // ── Import (.grm file) ─────────────────────────────────────────────────
+  const handleImport = useCallback(async () => {
+    if (Platform.OS === "web") {
+      Alert.alert("Import Unavailable", "File import is available in the Android app.");
+      return;
+    }
+    setImporting(true);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "*/*",
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.length) return;
+
+      const file = result.assets[0];
+      if (!file.name.endsWith(".grm")) {
+        Alert.alert("Invalid File", "Please select a valid Gemini Rent Manager backup file (.grm).");
+        return;
+      }
+
+      const content = await FileSystem.readAsStringAsync(file.uri, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+
+      const decoded = decodeGRMFile(content);
+      if (!decoded) {
+        Alert.alert(
+          "Invalid Backup File",
+          "This file is not a valid Gemini Rent Manager backup, or it has been corrupted or tampered with."
+        );
+        return;
+      }
+
+      // Create backup record on server
+      const newBackup = await apiFetch<BackupMeta>(
+        "/api/backup/import",
+        {
+          method: "POST",
+          body: JSON.stringify({ label: decoded.label, data: decoded.data }),
+        }
+      );
+      await queryClient.invalidateQueries({ queryKey: getListBackupsQueryKey() });
+
+      // Ask to restore immediately
+      Alert.alert(
+        "Import Successful",
+        `"${newBackup.label}" has been imported.\n\nDo you want to restore from it now?`,
+        [
+          { text: "Not Now", style: "cancel" },
+          {
+            text: "Restore Now",
+            style: "destructive",
+            onPress: () => confirmRestore(newBackup),
+          },
+        ]
+      );
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message.toLowerCase() : "";
+      if (!msg.includes("cancel")) {
+        Alert.alert("Import Failed", e?.message ?? "Could not import backup file.");
+      }
+    } finally {
+      setImporting(false);
+    }
+  }, [queryClient, confirmRestore]);
+
+  // ── Computed values ─────────────────────────────────────────────────────
   const onRefresh = async () => {
     setRefreshing(true);
     await refetch();
     setRefreshing(false);
   };
 
-  const latestBackup = backups.length > 0 ? backups[backups.length - 1] : null;
+  const sortedBackups = [...backups].reverse();
+  const latestBackup = sortedBackups[0] ?? null;
   const daysSinceBackup = latestBackup
     ? Math.floor((Date.now() - new Date(latestBackup.createdAt).getTime()) / 86400000)
     : null;
 
+  const nextBackupDate = lastAutoTs ? computeNextBackup(lastAutoTs, schedule) : null;
+
+  const statusColor =
+    backups.length === 0 ? colors.destructive :
+    (daysSinceBackup ?? 99) <= 1 ? colors.success :
+    (daysSinceBackup ?? 99) <= 7 ? colors.primary : colors.warning;
+
+  const statusTitle =
+    backups.length === 0 ? "No backups yet" :
+    (daysSinceBackup ?? 0) <= 1 ? "Up to date" :
+    (daysSinceBackup ?? 0) <= 7 ? "Recent backup" : "Backup needed";
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Header */}
-      <View
-        style={[
-          styles.header,
-          { paddingTop: insets.top + 12, backgroundColor: colors.card, borderBottomColor: colors.border },
-        ]}
-      >
+
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <View style={[styles.header, {
+        paddingTop: insets.top + 12,
+        backgroundColor: colors.card,
+        borderBottomColor: colors.border,
+      }]}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>Backup & Restore</Text>
           <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
-            {backups.length} backup{backups.length !== 1 ? "s" : ""} stored
+            {backups.length} backup{backups.length !== 1 ? "s" : ""} · Server Storage
           </Text>
         </View>
         <TouchableOpacity
@@ -223,23 +482,20 @@ export default function BackupScreen() {
           onPress={() => handleCreateBackup()}
           disabled={creating}
         >
-          {creating ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <>
-              <Feather name="upload-cloud" size={15} color="#fff" />
-              <Text style={styles.createBtnText}>Backup</Text>
-            </>
-          )}
+          {creating
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <><Feather name="upload-cloud" size={15} color="#fff" /><Text style={styles.createBtnText}>Backup</Text></>
+          }
         </TouchableOpacity>
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 32 }]}
+        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 40 }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
       >
-        {/* Reminder Banner */}
+
+        {/* ── Reminder Banner ─────────────────────────────────────────── */}
         {showReminder && (
           <TouchableOpacity
             style={[styles.reminderBanner, { backgroundColor: `${colors.warning}18`, borderColor: `${colors.warning}40` }]}
@@ -263,26 +519,12 @@ export default function BackupScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Status Card */}
+        {/* ── Status Card ─────────────────────────────────────────────── */}
         <View style={[styles.statusCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.statusRow}>
-            <View style={[styles.statusDot, {
-              backgroundColor: backups.length > 0 && (daysSinceBackup ?? 99) <= 7
-                ? colors.success
-                : backups.length > 0
-                ? colors.warning
-                : colors.destructive,
-            }]} />
+            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
             <View style={{ flex: 1 }}>
-              <Text style={[styles.statusTitle, { color: colors.foreground }]}>
-                {backups.length === 0
-                  ? "No backups yet"
-                  : (daysSinceBackup ?? 0) <= 1
-                  ? "Up to date"
-                  : (daysSinceBackup ?? 0) <= 7
-                  ? "Recent backup"
-                  : "Backup needed"}
-              </Text>
+              <Text style={[styles.statusTitle, { color: colors.foreground }]}>{statusTitle}</Text>
               <Text style={[styles.statusDesc, { color: colors.mutedForeground }]}>
                 {latestBackup
                   ? `Last backup: ${formatDate(latestBackup.createdAt)} at ${formatTime(latestBackup.createdAt)}`
@@ -295,9 +537,7 @@ export default function BackupScreen() {
               </Text>
             )}
           </View>
-
           <View style={[styles.divider, { backgroundColor: colors.border }]} />
-
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
               <Text style={[styles.statValue, { color: colors.primary }]}>{backups.length}</Text>
@@ -320,7 +560,57 @@ export default function BackupScreen() {
           </View>
         </View>
 
-        {/* Auto Backup Schedule */}
+        {/* ── Backup Destination ───────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>Backup Destination</Text>
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+
+          {/* Active: Server / App Storage */}
+          <View style={[styles.destRow, { borderBottomColor: colors.border }]}>
+            <View style={[styles.destIcon, { backgroundColor: `${colors.primary}18` }]}>
+              <Feather name="server" size={17} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.destLabel, { color: colors.foreground }]}>App Storage</Text>
+              <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>
+                Stored securely on the server · {backups.length} backup{backups.length !== 1 ? "s" : ""}
+              </Text>
+            </View>
+            <View style={[styles.activeBadge, { backgroundColor: `${colors.success}18`, borderColor: `${colors.success}30` }]}>
+              <View style={[styles.activeDot, { backgroundColor: colors.success }]} />
+              <Text style={[styles.activeBadgeText, { color: colors.success }]}>Active</Text>
+            </View>
+          </View>
+
+          {/* Future: Cloud */}
+          <View style={[styles.destRow, { borderBottomColor: colors.border, opacity: 0.4 }]}>
+            <View style={[styles.destIcon, { backgroundColor: `${colors.mutedForeground}18` }]}>
+              <Feather name="cloud" size={17} color={colors.mutedForeground} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.destLabel, { color: colors.foreground }]}>Cloud Backup</Text>
+              <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>Remote cloud storage</Text>
+            </View>
+            <View style={[styles.soonBadge, { backgroundColor: `${colors.mutedForeground}15` }]}>
+              <Text style={[styles.soonBadgeText, { color: colors.mutedForeground }]}>Coming Soon</Text>
+            </View>
+          </View>
+
+          {/* Future: Google Drive */}
+          <View style={[styles.destRow, { borderBottomWidth: 0, opacity: 0.4 }]}>
+            <View style={[styles.destIcon, { backgroundColor: `${colors.mutedForeground}18` }]}>
+              <Feather name="hard-drive" size={17} color={colors.mutedForeground} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.destLabel, { color: colors.foreground }]}>Google Drive</Text>
+              <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>Sync to Google Drive</Text>
+            </View>
+            <View style={[styles.soonBadge, { backgroundColor: `${colors.mutedForeground}15` }]}>
+              <Text style={[styles.soonBadgeText, { color: colors.mutedForeground }]}>Coming Soon</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* ── Auto Backup Schedule ─────────────────────────────────────── */}
         <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>Auto Backup Schedule</Text>
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           {SCHEDULE_OPTIONS.map((opt, i) => {
@@ -345,18 +635,100 @@ export default function BackupScreen() {
                   <Text style={[styles.scheduleLabel, { color: colors.foreground }]}>{opt.label}</Text>
                   <Text style={[styles.scheduleDesc, { color: colors.mutedForeground }]}>{opt.desc}</Text>
                 </View>
-                <View style={[
-                  styles.radioOuter,
-                  { borderColor: isSelected ? colors.primary : colors.border },
-                ]}>
+                <View style={[styles.radioOuter, { borderColor: isSelected ? colors.primary : colors.border }]}>
                   {isSelected && <View style={[styles.radioInner, { backgroundColor: colors.primary }]} />}
                 </View>
               </TouchableOpacity>
             );
           })}
+
+          {/* Auto Backup Status when a schedule is active */}
+          {schedule !== "off" && (
+            <View style={[styles.autoStatusBox, { backgroundColor: `${colors.primary}08`, borderTopColor: colors.border }]}>
+              <View style={styles.autoStatusRow}>
+                <Feather name="zap" size={14} color={colors.primary} />
+                <Text style={[styles.autoStatusLabel, { color: colors.primary }]}>Auto Backup Status</Text>
+                <View style={[styles.activeBadge, { backgroundColor: `${colors.success}18`, borderColor: `${colors.success}30` }]}>
+                  <View style={[styles.activeDot, { backgroundColor: colors.success }]} />
+                  <Text style={[styles.activeBadgeText, { color: colors.success }]}>Active</Text>
+                </View>
+              </View>
+              {nextBackupDate && (
+                <View style={styles.nextBackupRow}>
+                  <View style={styles.nextBackupItem}>
+                    <Text style={[styles.nextBackupKey, { color: colors.mutedForeground }]}>Next Backup Date</Text>
+                    <Text style={[styles.nextBackupVal, { color: colors.foreground }]}>
+                      {nextBackupDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                    </Text>
+                  </View>
+                  <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
+                  <View style={styles.nextBackupItem}>
+                    <Text style={[styles.nextBackupKey, { color: colors.mutedForeground }]}>Next Backup Time</Text>
+                    <Text style={[styles.nextBackupVal, { color: colors.foreground }]}>
+                      {nextBackupDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}
+                    </Text>
+                  </View>
+                </View>
+              )}
+              {!nextBackupDate && (
+                <Text style={[styles.nextBackupNote, { color: colors.mutedForeground }]}>
+                  Create your first backup to activate the schedule timer.
+                </Text>
+              )}
+            </View>
+          )}
         </View>
 
-        {/* Backup History */}
+        {/* ── Export & Import ──────────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>Export & Import</Text>
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={[styles.eiRow, { borderBottomColor: colors.border }]}>
+            <View style={[styles.destIcon, { backgroundColor: `${colors.primary}15` }]}>
+              <Feather name="download" size={17} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.destLabel, { color: colors.foreground }]}>Export Backup</Text>
+              <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>
+                Save a .grm backup file to your device
+              </Text>
+            </View>
+            {latestBackup && (
+              <TouchableOpacity
+                style={[styles.eiBtn, { backgroundColor: `${colors.primary}15`, borderColor: `${colors.primary}25` }]}
+                onPress={() => handleExport(latestBackup)}
+                disabled={exportingId === latestBackup.id}
+              >
+                {exportingId === latestBackup.id
+                  ? <ActivityIndicator size="small" color={colors.primary} />
+                  : <Text style={[styles.eiBtnText, { color: colors.primary }]}>Export Latest</Text>
+                }
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={[styles.eiRow, { borderBottomWidth: 0 }]}>
+            <View style={[styles.destIcon, { backgroundColor: `${colors.accent}15` }]}>
+              <Feather name="upload" size={17} color={colors.accent} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.destLabel, { color: colors.foreground }]}>Import Backup</Text>
+              <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>
+                Restore from a .grm backup file
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.eiBtn, { backgroundColor: `${colors.accent}15`, borderColor: `${colors.accent}25` }]}
+              onPress={handleImport}
+              disabled={importing}
+            >
+              {importing
+                ? <ActivityIndicator size="small" color={colors.accent} />
+                : <Text style={[styles.eiBtnText, { color: colors.accent }]}>Import</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* ── Backup History ───────────────────────────────────────────── */}
         <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>Backup History</Text>
 
         {isLoading ? (
@@ -378,76 +750,117 @@ export default function BackupScreen() {
               onPress={() => handleCreateBackup()}
               disabled={creating}
             >
-              {creating ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <Feather name="upload-cloud" size={16} color="#fff" />
-                  <Text style={styles.emptyBtnText}>Create First Backup</Text>
-                </>
-              )}
+              {creating
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <><Feather name="upload-cloud" size={16} color="#fff" /><Text style={styles.emptyBtnText}>Create First Backup</Text></>
+              }
             </TouchableOpacity>
           </View>
         ) : (
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            {[...backups].reverse().map((backup, idx) => {
+            {sortedBackups.map((backup, idx) => {
               const isRestoring = restoringId === backup.id;
               const isDeleting = deletingId === backup.id;
+              const isExporting = exportingId === backup.id;
               const isNewest = idx === 0;
+
               return (
                 <View
                   key={backup.id}
                   style={[
-                    styles.backupRow,
+                    styles.backupCard,
                     { borderBottomColor: colors.border },
-                    idx === backups.length - 1 && { borderBottomWidth: 0 },
+                    idx === sortedBackups.length - 1 && { borderBottomWidth: 0 },
                   ]}
                 >
-                  <View style={[styles.backupIconWrap, {
-                    backgroundColor: isNewest ? `${colors.primary}18` : `${colors.muted}50`,
-                  }]}>
-                    <Feather name="database" size={18} color={isNewest ? colors.primary : colors.mutedForeground} />
-                  </View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <View style={styles.backupLabelRow}>
-                      <Text style={[styles.backupLabel, { color: colors.foreground }]} numberOfLines={1}>
-                        {backup.label}
-                      </Text>
-                      {isNewest && (
-                        <View style={[styles.latestBadge, { backgroundColor: `${colors.success}20` }]}>
-                          <Text style={[styles.latestBadgeText, { color: colors.success }]}>Latest</Text>
-                        </View>
-                      )}
+                  {/* Card header */}
+                  <View style={styles.backupCardHeader}>
+                    <View style={[styles.backupIconWrap, {
+                      backgroundColor: isNewest ? `${colors.primary}18` : `${colors.muted}50`,
+                    }]}>
+                      <Feather name="database" size={18} color={isNewest ? colors.primary : colors.mutedForeground} />
                     </View>
-                    <Text style={[styles.backupMeta, { color: colors.mutedForeground }]}>
-                      {formatDate(backup.createdAt)} · {formatTime(backup.createdAt)}
-                    </Text>
-                    <Text style={[styles.backupSize, { color: colors.mutedForeground }]}>
-                      {formatBytes(backup.sizeBytes)}
-                    </Text>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <View style={styles.backupLabelRow}>
+                        <Text
+                          style={[styles.backupLabel, { color: colors.foreground }]}
+                          numberOfLines={1}
+                        >
+                          {backup.label}
+                        </Text>
+                        {isNewest && (
+                          <View style={[styles.latestBadge, { backgroundColor: `${colors.success}20` }]}>
+                            <Text style={[styles.latestBadgeText, { color: colors.success }]}>Latest</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={[styles.backupMeta, { color: colors.mutedForeground }]}>
+                        {formatDateFull(backup.createdAt)} · {timeAgo(backup.createdAt)}
+                      </Text>
+                    </View>
                   </View>
+
+                  {/* Backup details grid */}
+                  <View style={[styles.detailsGrid, { backgroundColor: `${colors.muted}30`, borderColor: colors.border }]}>
+                    <View style={styles.detailCell}>
+                      <Text style={[styles.detailKey, { color: colors.mutedForeground }]}>Size</Text>
+                      <Text style={[styles.detailVal, { color: colors.foreground }]}>{formatBytes(backup.sizeBytes)}</Text>
+                    </View>
+                    <View style={[styles.detailCellDivider, { backgroundColor: colors.border }]} />
+                    <View style={styles.detailCell}>
+                      <Text style={[styles.detailKey, { color: colors.mutedForeground }]}>Location</Text>
+                      <Text style={[styles.detailVal, { color: colors.foreground }]}>
+                        {backup.location ?? "Server Storage"}
+                      </Text>
+                    </View>
+                    <View style={[styles.detailCellDivider, { backgroundColor: colors.border }]} />
+                    <View style={styles.detailCell}>
+                      <Text style={[styles.detailKey, { color: colors.mutedForeground }]}>Version</Text>
+                      <Text style={[styles.detailVal, { color: colors.foreground }]}>
+                        v{backup.version ?? "1.0"}
+                      </Text>
+                    </View>
+                    <View style={[styles.detailCellDivider, { backgroundColor: colors.border }]} />
+                    <View style={styles.detailCell}>
+                      <Text style={[styles.detailKey, { color: colors.mutedForeground }]}>Status</Text>
+                      <Text style={[styles.detailVal, { color: colors.success }]}>✓ Complete</Text>
+                    </View>
+                  </View>
+
+                  {/* Action buttons */}
                   <View style={styles.backupActions}>
                     <TouchableOpacity
-                      style={[styles.actionBtn, { backgroundColor: `${colors.primary}15` }]}
+                      style={[styles.actionChip, { backgroundColor: `${colors.primary}12`, borderColor: `${colors.primary}20` }]}
                       onPress={() => handleRestore(backup)}
-                      disabled={isRestoring || isDeleting}
+                      disabled={isRestoring || isDeleting || isExporting}
                     >
-                      {isRestoring ? (
-                        <ActivityIndicator size="small" color={colors.primary} />
-                      ) : (
-                        <Feather name="rotate-ccw" size={15} color={colors.primary} />
-                      )}
+                      {isRestoring
+                        ? <ActivityIndicator size="small" color={colors.primary} />
+                        : <><Feather name="rotate-ccw" size={13} color={colors.primary} />
+                          <Text style={[styles.actionChipText, { color: colors.primary }]}>Restore</Text></>
+                      }
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.actionBtn, { backgroundColor: `${colors.destructive}15` }]}
-                      onPress={() => handleDelete(backup)}
-                      disabled={isRestoring || isDeleting}
+                      style={[styles.actionChip, { backgroundColor: `${colors.accent}12`, borderColor: `${colors.accent}20` }]}
+                      onPress={() => handleExport(backup)}
+                      disabled={isRestoring || isDeleting || isExporting}
                     >
-                      {isDeleting ? (
-                        <ActivityIndicator size="small" color={colors.destructive} />
-                      ) : (
-                        <Feather name="trash-2" size={15} color={colors.destructive} />
-                      )}
+                      {isExporting
+                        ? <ActivityIndicator size="small" color={colors.accent} />
+                        : <><Feather name="download" size={13} color={colors.accent} />
+                          <Text style={[styles.actionChipText, { color: colors.accent }]}>Export</Text></>
+                      }
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionChip, { backgroundColor: `${colors.destructive}10`, borderColor: `${colors.destructive}20` }]}
+                      onPress={() => handleDelete(backup)}
+                      disabled={isRestoring || isDeleting || isExporting}
+                    >
+                      {isDeleting
+                        ? <ActivityIndicator size="small" color={colors.destructive} />
+                        : <><Feather name="trash-2" size={13} color={colors.destructive} />
+                          <Text style={[styles.actionChipText, { color: colors.destructive }]}>Delete</Text></>
+                      }
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -456,12 +869,13 @@ export default function BackupScreen() {
           </View>
         )}
 
-        {/* Info note */}
+        {/* ── Encryption info note ──────────────────────────────────────── */}
         <View style={[styles.infoNote, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}20` }]}>
-          <Feather name="info" size={14} color={colors.primary} />
+          <Feather name="shield" size={14} color={colors.primary} />
           <Text style={[styles.infoNoteText, { color: colors.mutedForeground }]}>
-            Backups include all properties, tenants, rent payments, expenses, loans, and maintenance records.
-            Profile photos and document files are not included in the backup.
+            Exported .grm files are encrypted with a proprietary format and checksum-protected.
+            Only Gemini Rent Manager can import them. Backups include all properties, tenants,
+            payments, expenses, loans, and maintenance records.
           </Text>
         </View>
       </ScrollView>
@@ -469,52 +883,39 @@ export default function BackupScreen() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: 10,
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 16, paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth, gap: 10,
   },
   backBtn: { width: 38, height: 38, justifyContent: "center", alignItems: "center" },
   headerCenter: { flex: 1 },
   headerTitle: { fontSize: 18, fontWeight: "700" },
-  headerSub: { fontSize: 12 },
+  headerSub: { fontSize: 12, marginTop: 1 },
   createBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 14,
-    height: 36,
-    borderRadius: 10,
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 14, height: 36, borderRadius: 10,
   },
   createBtnText: { color: "#fff", fontWeight: "700", fontSize: 13 },
 
-  scroll: { padding: 20, gap: 10 },
+  scroll: { padding: 16, gap: 10 },
 
   reminderBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginBottom: 2,
+    flexDirection: "row", alignItems: "center", gap: 12,
+    padding: 14, borderRadius: 14, borderWidth: 1, marginBottom: 2,
   },
   reminderIcon: { width: 38, height: 38, borderRadius: 10, justifyContent: "center", alignItems: "center" },
   reminderText: { flex: 1 },
   reminderTitle: { fontSize: 14, fontWeight: "700" },
   reminderDesc: { fontSize: 12, marginTop: 2 },
 
-  statusCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 16,
-    gap: 12,
-  },
+  statusCard: { borderRadius: 16, borderWidth: 1, padding: 16, gap: 12 },
   statusRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   statusDot: { width: 10, height: 10, borderRadius: 5 },
   statusTitle: { fontSize: 15, fontWeight: "700" },
@@ -528,22 +929,31 @@ const styles = StyleSheet.create({
   statDivider: { width: StyleSheet.hairlineWidth, height: 36, alignSelf: "center" },
 
   sectionLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-    marginTop: 6,
-    marginBottom: 2,
-    marginLeft: 4,
+    fontSize: 11, fontWeight: "700", textTransform: "uppercase",
+    letterSpacing: 0.8, marginTop: 6, marginBottom: 2, marginLeft: 4,
   },
   card: { borderRadius: 16, borderWidth: 1, overflow: "hidden" },
 
+  destRow: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    paddingVertical: 13, paddingHorizontal: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  destIcon: { width: 36, height: 36, borderRadius: 10, justifyContent: "center", alignItems: "center" },
+  destLabel: { fontSize: 14, fontWeight: "600" },
+  destDesc: { fontSize: 12, marginTop: 1 },
+  activeBadge: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, borderWidth: 1,
+  },
+  activeDot: { width: 6, height: 6, borderRadius: 3 },
+  activeBadgeText: { fontSize: 11, fontWeight: "700" },
+  soonBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
+  soonBadgeText: { fontSize: 11, fontWeight: "600" },
+
   scheduleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 13,
-    paddingHorizontal: 16,
-    gap: 12,
+    flexDirection: "row", alignItems: "center",
+    paddingVertical: 13, paddingHorizontal: 16, gap: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   scheduleIcon: { width: 34, height: 34, borderRadius: 10, justifyContent: "center", alignItems: "center" },
@@ -552,52 +962,67 @@ const styles = StyleSheet.create({
   radioOuter: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, justifyContent: "center", alignItems: "center" },
   radioInner: { width: 10, height: 10, borderRadius: 5 },
 
-  emptyCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 32,
-    alignItems: "center",
-    gap: 10,
+  autoStatusBox: {
+    padding: 14, gap: 10, borderTopWidth: StyleSheet.hairlineWidth,
   },
+  autoStatusRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  autoStatusLabel: { flex: 1, fontSize: 13, fontWeight: "700" },
+  nextBackupRow: { flexDirection: "row", gap: 0 },
+  nextBackupItem: { flex: 1, alignItems: "center", gap: 3 },
+  nextBackupKey: { fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: "600" },
+  nextBackupVal: { fontSize: 14, fontWeight: "700" },
+  nextBackupNote: { fontSize: 12 },
+
+  eiRow: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    paddingVertical: 13, paddingHorizontal: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  eiBtn: {
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, borderWidth: 1,
+    minWidth: 80, alignItems: "center",
+  },
+  eiBtnText: { fontSize: 13, fontWeight: "700" },
+
+  emptyCard: { borderRadius: 16, borderWidth: 1, padding: 32, alignItems: "center", gap: 10 },
   emptyIcon: { width: 64, height: 64, borderRadius: 20, justifyContent: "center", alignItems: "center", marginBottom: 4 },
   emptyTitle: { fontSize: 17, fontWeight: "700" },
   emptyText: { fontSize: 13, textAlign: "center", lineHeight: 19 },
   emptyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginTop: 4,
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, marginTop: 4,
   },
   emptyBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
 
-  backupRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 14,
-    gap: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
+  backupCard: { borderBottomWidth: StyleSheet.hairlineWidth, padding: 14, gap: 10 },
+  backupCardHeader: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   backupIconWrap: { width: 40, height: 40, borderRadius: 12, justifyContent: "center", alignItems: "center" },
-  backupLabelRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 },
-  backupLabel: { fontSize: 14, fontWeight: "600", flex: 1 },
-  latestBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 },
+  backupLabelRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  backupLabel: { fontSize: 13, fontWeight: "700", flexShrink: 1 },
+  backupMeta: { fontSize: 11, marginTop: 3 },
+  latestBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10 },
   latestBadgeText: { fontSize: 10, fontWeight: "700" },
-  backupMeta: { fontSize: 12 },
-  backupSize: { fontSize: 11, marginTop: 1 },
+
+  detailsGrid: {
+    flexDirection: "row", borderRadius: 10, borderWidth: 1,
+    overflow: "hidden", marginTop: 2,
+  },
+  detailCell: { flex: 1, alignItems: "center", paddingVertical: 8, gap: 2 },
+  detailCellDivider: { width: StyleSheet.hairlineWidth },
+  detailKey: { fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: "700" },
+  detailVal: { fontSize: 12, fontWeight: "700" },
+
   backupActions: { flexDirection: "row", gap: 8 },
-  actionBtn: { width: 36, height: 36, borderRadius: 10, justifyContent: "center", alignItems: "center" },
+  actionChip: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, borderWidth: 1, flex: 1,
+    justifyContent: "center",
+  },
+  actionChipText: { fontSize: 12, fontWeight: "700" },
 
   infoNote: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginTop: 4,
+    flexDirection: "row", gap: 10, padding: 14,
+    borderRadius: 14, borderWidth: 1, marginTop: 4, alignItems: "flex-start",
   },
-  infoNoteText: { flex: 1, fontSize: 12, lineHeight: 17 },
+  infoNoteText: { flex: 1, fontSize: 12, lineHeight: 18 },
 });

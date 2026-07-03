@@ -17,6 +17,12 @@ import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
+function buildDefaultLabel(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `GeminiRent_Backup_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}`;
+}
+
 async function gatherUserData(userId: number) {
   const properties = await db
     .select()
@@ -83,69 +89,8 @@ async function gatherUserData(userId: number) {
   };
 }
 
-router.post("/backup", requireAuth, async (req: AuthRequest, res): Promise<void> => {
-  const userId = req.user!.id;
-  const customLabel = (req.body as { label?: string })?.label?.trim();
-  const label = customLabel || `Manual Backup – ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`;
-
-  const data = await gatherUserData(userId);
-  const json = JSON.stringify(data);
-  const sizeBytes = Buffer.byteLength(json, "utf8");
-
-  const [backup] = await db
-    .insert(backupsTable)
-    .values({ userId, label, sizeBytes, data })
-    .returning();
-
-  res.status(201).json({
-    id: backup.id,
-    label: backup.label,
-    sizeBytes: backup.sizeBytes,
-    createdAt: backup.createdAt.toISOString(),
-  });
-});
-
-router.get("/backup", requireAuth, async (req: AuthRequest, res): Promise<void> => {
-  const userId = req.user!.id;
-  const rows = await db
-    .select({
-      id: backupsTable.id,
-      label: backupsTable.label,
-      sizeBytes: backupsTable.sizeBytes,
-      createdAt: backupsTable.createdAt,
-    })
-    .from(backupsTable)
-    .where(eq(backupsTable.userId, userId))
-    .orderBy(backupsTable.createdAt);
-
-  res.json(
-    rows.map(r => ({
-      id: r.id,
-      label: r.label,
-      sizeBytes: r.sizeBytes,
-      createdAt: r.createdAt.toISOString(),
-    }))
-  );
-});
-
-router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): Promise<void> => {
-  const userId = req.user!.id;
-  const backupId = Number(req.params.id);
-
-  const [backup] = await db
-    .select()
-    .from(backupsTable)
-    .where(eq(backupsTable.id, backupId));
-
-  if (!backup || backup.userId !== userId) {
-    res.status(404).json({ error: "Backup not found" });
-    return;
-  }
-
-  const snap = backup.data as ReturnType<typeof JSON.parse>;
-
+async function restoreFromData(userId: number, snap: any) {
   await db.transaction(async tx => {
-    // Gather current IDs scoped to this user for deletion
     const currentProps = await tx
       .select({ id: propertiesTable.id })
       .from(propertiesTable)
@@ -164,7 +109,6 @@ router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): P
       .where(eq(loansTable.userId, userId));
     const currentLoanIds = currentLoans.map(l => l.id);
 
-    // Delete in reverse FK order
     if (currentTenantIds.length > 0) {
       await tx.delete(tenantDocumentsTable).where(inArray(tenantDocumentsTable.tenantId, currentTenantIds));
       await tx.delete(rentAgreementsTable).where(inArray(rentAgreementsTable.tenantId, currentTenantIds));
@@ -185,7 +129,6 @@ router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): P
       await tx.delete(propertiesTable).where(eq(propertiesTable.userId, userId));
     }
 
-    // Re-insert properties, build old→new ID map
     const propIdMap: Record<number, number> = {};
     for (const p of (snap.properties ?? [])) {
       const { id: oldId, createdAt: _ca, updatedAt: _ua, ...fields } = p;
@@ -196,7 +139,6 @@ router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): P
       propIdMap[oldId] = inserted.id;
     }
 
-    // Re-insert tenants, build old→new ID map
     const tenantIdMap: Record<number, number> = {};
     for (const t of (snap.tenants ?? [])) {
       const { id: oldId, createdAt: _ca, updatedAt: _ua, ...fields } = t;
@@ -209,7 +151,6 @@ router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): P
       tenantIdMap[oldId] = inserted.id;
     }
 
-    // Re-insert payments
     for (const p of (snap.payments ?? [])) {
       const { id: _id, createdAt: _ca, updatedAt: _ua, ...fields } = p;
       const newPropertyId = propIdMap[fields.propertyId];
@@ -218,14 +159,12 @@ router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): P
       await tx.insert(paymentsTable).values({ ...fields, propertyId: newPropertyId, tenantId: newTenantId });
     }
 
-    // Re-insert expenses
     for (const e of (snap.expenses ?? [])) {
       const { id: _id, createdAt: _ca, updatedAt: _ua, ...fields } = e;
       const newPropertyId = fields.propertyId != null ? propIdMap[fields.propertyId] : undefined;
       await tx.insert(expensesTable).values({ ...fields, userId, propertyId: newPropertyId ?? null });
     }
 
-    // Re-insert loans, build old→new ID map
     const loanIdMap: Record<number, number> = {};
     for (const l of (snap.loans ?? [])) {
       const { id: oldId, createdAt: _ca, updatedAt: _ua, ...fields } = l;
@@ -237,7 +176,6 @@ router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): P
       loanIdMap[oldId] = inserted.id;
     }
 
-    // Re-insert loan payments
     for (const lp of (snap.loanPayments ?? [])) {
       const { id: _id, createdAt: _ca, ...fields } = lp;
       const newLoanId = loanIdMap[fields.loanId];
@@ -245,7 +183,6 @@ router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): P
       await tx.insert(loanPaymentsTable).values({ ...fields, loanId: newLoanId });
     }
 
-    // Re-insert maintenance requests
     for (const m of (snap.maintenanceRequests ?? [])) {
       const { id: _id, createdAt: _ca, updatedAt: _ua, ...fields } = m;
       const newPropertyId = propIdMap[fields.propertyId];
@@ -259,7 +196,6 @@ router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): P
       });
     }
 
-    // Re-insert rent agreements
     for (const a of (snap.rentAgreements ?? [])) {
       const { id: _id, createdAt: _ca, updatedAt: _ua, ...fields } = a;
       const newTenantId = tenantIdMap[fields.tenantId];
@@ -267,12 +203,142 @@ router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): P
       await tx.insert(rentAgreementsTable).values({ ...fields, tenantId: newTenantId });
     }
   });
+}
+
+// ── CREATE ────────────────────────────────────────────────────────────────────
+
+router.post("/backup", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const customLabel = (req.body as { label?: string })?.label?.trim();
+  const label = customLabel || buildDefaultLabel();
+
+  const data = await gatherUserData(userId);
+  const json = JSON.stringify(data);
+  const sizeBytes = Buffer.byteLength(json, "utf8");
+
+  const [backup] = await db
+    .insert(backupsTable)
+    .values({ userId, label, sizeBytes, data })
+    .returning();
+
+  res.status(201).json({
+    id: backup.id,
+    label: backup.label,
+    sizeBytes: backup.sizeBytes,
+    createdAt: backup.createdAt.toISOString(),
+    version: data.version,
+    location: "Server Storage",
+  });
+});
+
+// ── LIST ──────────────────────────────────────────────────────────────────────
+
+router.get("/backup", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const rows = await db
+    .select({
+      id: backupsTable.id,
+      label: backupsTable.label,
+      sizeBytes: backupsTable.sizeBytes,
+      createdAt: backupsTable.createdAt,
+    })
+    .from(backupsTable)
+    .where(eq(backupsTable.userId, userId))
+    .orderBy(backupsTable.createdAt);
+
+  res.json(
+    rows.map(r => ({
+      id: r.id,
+      label: r.label,
+      sizeBytes: r.sizeBytes,
+      createdAt: r.createdAt.toISOString(),
+      version: "1.0",
+      location: "Server Storage",
+    }))
+  );
+});
+
+// ── GET RAW DATA (for export) ─────────────────────────────────────────────────
+
+router.get("/backup/:id/data", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const backupId = Number(req.params.id);
+
+  const [backup] = await db
+    .select()
+    .from(backupsTable)
+    .where(eq(backupsTable.id, backupId));
+
+  if (!backup || backup.userId !== userId) {
+    res.status(404).json({ error: "Backup not found" });
+    return;
+  }
+
+  const data = backup.data as any;
+  res.json({
+    id: backup.id,
+    label: backup.label,
+    version: data?.version ?? "1.0",
+    data,
+  });
+});
+
+// ── RESTORE ───────────────────────────────────────────────────────────────────
+
+router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const backupId = Number(req.params.id);
+
+  const [backup] = await db
+    .select()
+    .from(backupsTable)
+    .where(eq(backupsTable.id, backupId));
+
+  if (!backup || backup.userId !== userId) {
+    res.status(404).json({ error: "Backup not found" });
+    return;
+  }
+
+  const snap = backup.data as ReturnType<typeof JSON.parse>;
+  await restoreFromData(userId, snap);
 
   res.json({
     message: "Backup restored successfully. All data has been replaced.",
     restoredAt: new Date().toISOString(),
   });
 });
+
+// ── IMPORT (from .grm file) ────────────────────────────────────────────────────
+
+router.post("/backup/import", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { label, data } = req.body as { label: string; data: object };
+
+  if (!data || typeof data !== "object") {
+    res.status(400).json({ error: "Invalid backup data: missing or malformed data field." });
+    return;
+  }
+
+  const json = JSON.stringify(data);
+  const sizeBytes = Buffer.byteLength(json, "utf8");
+  const importLabel = (label || buildDefaultLabel()) + " (Imported)";
+
+  const [backup] = await db
+    .insert(backupsTable)
+    .values({ userId, label: importLabel, sizeBytes, data })
+    .returning();
+
+  res.status(201).json({
+    id: backup.id,
+    label: backup.label,
+    sizeBytes: backup.sizeBytes,
+    createdAt: backup.createdAt.toISOString(),
+    version: (data as any)?.version ?? "1.0",
+    location: "Server Storage",
+  });
+});
+
+// ── DELETE ────────────────────────────────────────────────────────────────────
 
 router.delete("/backup/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const userId = req.user!.id;

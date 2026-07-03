@@ -134,7 +134,9 @@ export const CreateBackupResponse = zod.object({
   "id": zod.number(),
   "label": zod.string(),
   "sizeBytes": zod.number(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "version": zod.string().optional(),
+  "location": zod.string().optional()
 })
 
 
@@ -145,7 +147,9 @@ export const ListBackupsResponseItem = zod.object({
   "id": zod.number(),
   "label": zod.string(),
   "sizeBytes": zod.number(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "version": zod.string().optional(),
+  "location": zod.string().optional()
 })
 export const ListBackupsResponse = zod.array(ListBackupsResponseItem)
 
@@ -171,6 +175,43 @@ export const DeleteBackupParams = zod.object({
 })
 
 export const DeleteBackupResponse = zod.void()
+
+
+/**
+ * @summary Get raw backup data for file export
+ */
+export const GetBackupDataParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetBackupDataResponse = zod.object({
+  "id": zod.number(),
+  "label": zod.string(),
+  "version": zod.string(),
+  "data": zod.object({
+
+}).passthrough()
+})
+
+
+/**
+ * @summary Import a backup from an exported .grm file
+ */
+export const ImportBackupBody = zod.object({
+  "label": zod.string(),
+  "data": zod.object({
+
+}).passthrough()
+})
+
+export const ImportBackupResponse = zod.object({
+  "id": zod.number(),
+  "label": zod.string(),
+  "sizeBytes": zod.number(),
+  "createdAt": zod.string(),
+  "version": zod.string().optional(),
+  "location": zod.string().optional()
+})
 
 
 /**
