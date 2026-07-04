@@ -12,6 +12,8 @@ import {
   useCreateAgreement, useUpdateAgreement, useDeleteAgreement,
   useListTenantDocuments, getListTenantDocumentsQueryKey,
   useDeleteDocument,
+  useListGeneratedRents, getListGeneratedRentsQueryKey,
+  useGetBusinessBillingSettings, getGetBusinessBillingSettingsQueryKey,
   Agreement,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -46,6 +48,18 @@ function fmtFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fmtBillingDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "—";
+  const d = new Date(dateStr.includes("T") ? dateStr : dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function addOneDayStr(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().split("T")[0];
 }
 
 export default function TenantDetailScreen() {
@@ -120,6 +134,15 @@ export default function TenantDetailScreen() {
     { query: { queryKey: getListTenantDocumentsQueryKey(tenantId), enabled: !!tenantId } }
   );
   const deleteDocMutation = useDeleteDocument();
+
+  const { data: generatedRents } = useListGeneratedRents(
+    { tenantId },
+    { query: { queryKey: getListGeneratedRentsQueryKey({ tenantId }), enabled: !!tenantId } }
+  );
+
+  const { data: businessSettings } = useGetBusinessBillingSettings({
+    query: { queryKey: getGetBusinessBillingSettingsQueryKey() },
+  });
 
   useEffect(() => {
     if (tenant) {
@@ -438,6 +461,33 @@ export default function TenantDetailScreen() {
   const billingCycleDisplay =
     billingCycleValue.charAt(0).toUpperCase() + billingCycleValue.slice(1);
 
+  // Effective settings — use business defaults when the tenant is set that way
+  const effectiveBillingCycle: string = anyTenant.useBusinessDefault && businessSettings
+    ? (businessSettings.defaultBillingCycle ?? "monthly")
+    : billingCycleValue;
+  const effectiveCollectionType: string = anyTenant.useBusinessDefault && businessSettings
+    ? (businessSettings.defaultRentCollectionType ?? "post_paid")
+    : (anyTenant.rentCollectionType ?? "post_paid");
+  const effectiveGracePeriodDays: number = anyTenant.useBusinessDefault && businessSettings
+    ? (businessSettings.defaultGracePeriodDays ?? 5)
+    : (anyTenant.gracePeriodDays ?? 5);
+  const effectiveBillingCycleDisplay =
+    effectiveBillingCycle.charAt(0).toUpperCase() + effectiveBillingCycle.slice(1);
+
+  // Latest generated rent (most recent by billing period end)
+  const latestRent = generatedRents && generatedRents.length > 0
+    ? [...generatedRents].sort((a, b) =>
+        ((b as any).billingPeriodEnd ?? "").localeCompare((a as any).billingPeriodEnd ?? "")
+      )[0] as any
+    : null;
+  const currentPeriodDisplay = latestRent
+    ? `${fmtBillingDate(latestRent.billingPeriodStart)} – ${fmtBillingDate(latestRent.billingPeriodEnd)}`
+    : "Not generated yet";
+  const dueDateDisplay = latestRent ? fmtBillingDate(latestRent.dueDate) : "—";
+  const nextGenDateDisplay = latestRent
+    ? fmtBillingDate(addOneDayStr(latestRent.billingPeriodEnd))
+    : "—";
+
   // ─── Render ──────────────────────────────────────────────────────────────
 
   return (
@@ -526,6 +576,28 @@ export default function TenantDetailScreen() {
                   { label: "Lease End", value: new Date(tenant.leaseEnd).toLocaleDateString() },
                 ].map(row => (
                   <View key={row.label} style={[styles.infoRow, { borderBottomColor: colors.border }]}>
+                    <Text style={[styles.label, { color: colors.mutedForeground }]}>{row.label}</Text>
+                    <Text style={[styles.value, { color: colors.cardForeground }]}>{row.value}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Billing Information */}
+              <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <Feather name="clock" size={16} color={colors.primary} />
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Billing Information</Text>
+                </View>
+                {([
+                  { label: "Billing Cycle", value: effectiveBillingCycleDisplay },
+                  { label: "Collection Type", value: effectiveCollectionType === "advance" ? "Advance" : "Post-paid" },
+                  { label: "Grace Period", value: effectiveGracePeriodDays === 0 ? "None" : `${effectiveGracePeriodDays} days` },
+                  { label: "Billing Source", value: anyTenant.useBusinessDefault ? "Business Default" : "Custom" },
+                  { label: "Current Period", value: currentPeriodDisplay },
+                  { label: "Due Date", value: dueDateDisplay },
+                  { label: "Next Generation", value: nextGenDateDisplay },
+                ] as { label: string; value: string }[]).map((row, idx, arr) => (
+                  <View key={row.label} style={[styles.infoRow, { borderBottomColor: colors.border }, idx === arr.length - 1 && { borderBottomWidth: 0 }]}>
                     <Text style={[styles.label, { color: colors.mutedForeground }]}>{row.label}</Text>
                     <Text style={[styles.value, { color: colors.cardForeground }]}>{row.value}</Text>
                   </View>
