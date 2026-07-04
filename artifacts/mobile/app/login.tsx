@@ -10,11 +10,11 @@ import {
   SafeAreaView,
 } from "react-native";
 import { useRouter, Link } from "expo-router";
-import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import { useLogin, useGoogleSignIn } from "@workspace/api-client-react";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
+import { GoogleSignin, isSuccessResponse, isGoogleSignInAvailable } from "@/utils/googleSignin";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -49,6 +49,13 @@ export default function LoginScreen() {
   };
 
   const handleGoogleSignIn = async () => {
+    if (!isGoogleSignInAvailable) {
+      Alert.alert(
+        "Not Available in Expo Go",
+        "Google Sign-In requires a development build. Use your email and password to sign in here.",
+      );
+      return;
+    }
     try {
       setGoogleLoading(true);
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
@@ -144,7 +151,14 @@ export default function LoginScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.googleButton, { backgroundColor: colors.card, borderColor: colors.border }]}
+            style={[
+              styles.googleButton,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                opacity: isGoogleSignInAvailable ? 1 : 0.5,
+              },
+            ]}
             onPress={handleGoogleSignIn}
             disabled={isLoading}
           >
@@ -154,7 +168,7 @@ export default function LoginScreen() {
               <>
                 <Text style={styles.googleIcon}>G</Text>
                 <Text style={[styles.googleButtonText, { color: colors.foreground }]}>
-                  Continue with Google
+                  {isGoogleSignInAvailable ? "Continue with Google" : "Google Sign-In (Dev Build Only)"}
                 </Text>
               </>
             )}
