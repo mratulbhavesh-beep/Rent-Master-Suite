@@ -34,6 +34,8 @@ type TenantWithBalance = {
   totalPaid: number;
   balanceDue: number;
   currentMonthDue: number;
+  billingCycle?: string;
+  rentCollectionType?: string;
 };
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -162,6 +164,13 @@ export default function RentLedgerTab() {
       paidThisFilter = getMonthPaid(item.id, payments, filterMonth, filterYear);
     }
 
+    const billingCycleLabel =
+      item.billingCycle === "weekly" ? "Weekly" :
+      item.billingCycle === "quarterly" ? "Quarterly" :
+      item.billingCycle === "yearly" ? "Yearly" : "Monthly";
+    const collectionTypeLabel =
+      item.rentCollectionType === "advance" ? "Advance" : "Post-paid";
+
     return (
       <TouchableOpacity
         style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
@@ -189,7 +198,7 @@ export default function RentLedgerTab() {
 
         <View style={[styles.metricsRow, { borderTopColor: colors.border, borderBottomColor: colors.border }]}>
           <View style={styles.metric}>
-            <Text style={[styles.metricLbl, { color: colors.mutedForeground }]}>Monthly</Text>
+            <Text style={[styles.metricLbl, { color: colors.mutedForeground }]}>{billingCycleLabel}</Text>
             <Text style={[styles.metricVal, { color: colors.foreground }]}>
               ₹{Math.round(item.rentAmount).toLocaleString("en-IN")}
             </Text>
@@ -213,6 +222,18 @@ export default function RentLedgerTab() {
                   ? `-₹${Math.round(dueBalance).toLocaleString("en-IN")}`
                   : "Nil"}
             </Text>
+          </View>
+        </View>
+
+        {/* Billing chips */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingBottom: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: `${colors.primary}14`, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
+            <Feather name="repeat" size={10} color={colors.primary} />
+            <Text style={{ fontSize: 11, color: colors.primary, fontWeight: "600" }}>{billingCycleLabel}</Text>
+          </View>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: `${colors.mutedForeground}14`, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
+            <Feather name="clock" size={10} color={colors.mutedForeground} />
+            <Text style={{ fontSize: 11, color: colors.mutedForeground, fontWeight: "600" }}>{collectionTypeLabel}</Text>
           </View>
         </View>
 

@@ -238,6 +238,22 @@ export default function RentLedgerDetailScreen() {
   const anyTenant = tenant as any;
   const fmt = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
 
+  const billingCycleValue: string = anyTenant?.billingCycle ?? "monthly";
+  const billingCycleLabel =
+    billingCycleValue === "weekly" ? "Weekly" :
+    billingCycleValue === "quarterly" ? "Quarterly" :
+    billingCycleValue === "yearly" ? "Yearly" : "Monthly";
+  const rentCycleLabel =
+    billingCycleValue === "weekly" ? "Weekly Rent" :
+    billingCycleValue === "quarterly" ? "Quarterly Rent" :
+    billingCycleValue === "yearly" ? "Yearly Rent" : "Monthly Rent";
+  const periodsLabel =
+    billingCycleValue === "weekly" ? "Weeks" :
+    billingCycleValue === "quarterly" ? "Quarters" :
+    billingCycleValue === "yearly" ? "Years" : "Months";
+  const collectionTypeLabel: string =
+    (anyTenant?.rentCollectionType ?? "post_paid") === "advance" ? "Advance" : "Post-paid";
+
   const monthHistory = useMemo(() => {
     if (!tenant || !payments) return [];
     return buildMonthHistory(tenant.leaseStart, tenant.rentAmount, payments as Payment[]);
@@ -362,7 +378,7 @@ export default function RentLedgerDetailScreen() {
       `👤 Tenant: ${tenant.name}`,
       `🏠 Property: ${anyTenant?.propertyName ?? "—"} | Unit ${tenant.unitNumber}`,
       ``,
-      `💰 Monthly Rent: ${fmt(tenant.rentAmount)}`,
+      `💰 ${rentCycleLabel}: ${fmt(tenant.rentAmount)}`,
       `📊 Total Expected: ${fmt(totalExpected)}`,
       `✅ Total Paid: ${fmt(totalPaid)}`,
       advanceBalance > 0 ? `🟢 Advance Balance: ${fmt(advanceBalance)}` : `⚠️ Balance Due: ${fmt(balanceDue)}`,
@@ -445,6 +461,7 @@ export default function RentLedgerDetailScreen() {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {/* Tenant Info */}
         <View style={[styles.infoCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+
           <View style={styles.infoCardRow}>
             <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
               <Text style={{ color: colors.primaryForeground, fontSize: 22, fontWeight: "bold" }}>
@@ -469,15 +486,27 @@ export default function RentLedgerDetailScreen() {
           </View>
         </View>
 
+        {/* Billing info chips */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, marginBottom: 4 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: `${colors.primary}14`, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 }}>
+            <Feather name="repeat" size={11} color={colors.primary} />
+            <Text style={{ fontSize: 12, color: colors.primary, fontWeight: "600" }}>{billingCycleLabel}</Text>
+          </View>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: `${colors.mutedForeground}14`, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 }}>
+            <Feather name="clock" size={11} color={colors.mutedForeground} />
+            <Text style={{ fontSize: 12, color: colors.mutedForeground, fontWeight: "600" }}>{collectionTypeLabel}</Text>
+          </View>
+        </View>
+
         {/* Financial Summary */}
         <View style={styles.summaryGrid}>
           {[
-            { label: "Monthly Rent", value: fmt(tenant.rentAmount), color: colors.primary, icon: "home" as const },
+            { label: rentCycleLabel, value: fmt(tenant.rentAmount), color: colors.primary, icon: "home" as const },
             { label: "Total Expected", value: fmt(totalExpected), color: colors.foreground, icon: "trending-up" as const },
             { label: "Total Paid", value: fmt(totalPaid), color: colors.success, icon: "check-circle" as const },
             { label: "Advance", value: fmt(advanceBalance), color: colors.success, icon: "arrow-up-circle" as const },
             { label: "Balance Due", value: fmt(balanceDue), color: balanceDue > 0 ? colors.destructive : colors.success, icon: "alert-circle" as const },
-            { label: "Months", value: `${paidMonths}P / ${partialMonths}~ / ${dueMonths}D`, color: colors.foreground, icon: "calendar" as const },
+            { label: periodsLabel, value: `${paidMonths}P / ${partialMonths}~ / ${dueMonths}D`, color: colors.foreground, icon: "calendar" as const },
           ].map(box => (
             <View key={box.label} style={[styles.summaryBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 }}>
