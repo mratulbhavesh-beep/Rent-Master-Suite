@@ -10,6 +10,7 @@ export type TenantBillingCycle = typeof TenantBillingCycle[keyof typeof TenantBi
 
 
 export const TenantBillingCycle = {
+  weekly: 'weekly',
   monthly: 'monthly',
   quarterly: 'quarterly',
   yearly: 'yearly',

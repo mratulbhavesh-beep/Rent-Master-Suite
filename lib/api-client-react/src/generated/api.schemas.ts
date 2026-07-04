@@ -235,6 +235,7 @@ export type TenantBillingCycle = typeof TenantBillingCycle[keyof typeof TenantBi
 
 
 export const TenantBillingCycle = {
+  weekly: 'weekly',
   monthly: 'monthly',
   quarterly: 'quarterly',
   yearly: 'yearly',
@@ -319,6 +320,7 @@ export type TenantInputBillingCycle = typeof TenantInputBillingCycle[keyof typeo
 
 
 export const TenantInputBillingCycle = {
+  weekly: 'weekly',
   monthly: 'monthly',
   quarterly: 'quarterly',
   yearly: 'yearly',
@@ -374,6 +376,7 @@ export type TenantUpdateBillingCycle = typeof TenantUpdateBillingCycle[keyof typ
 
 
 export const TenantUpdateBillingCycle = {
+  weekly: 'weekly',
   monthly: 'monthly',
   quarterly: 'quarterly',
   yearly: 'yearly',
@@ -797,6 +800,7 @@ export type BusinessSettingsDefaultBillingCycle = typeof BusinessSettingsDefault
 
 
 export const BusinessSettingsDefaultBillingCycle = {
+  weekly: 'weekly',
   monthly: 'monthly',
   quarterly: 'quarterly',
   yearly: 'yearly',
@@ -824,6 +828,7 @@ export type BusinessSettingsInputDefaultBillingCycle = typeof BusinessSettingsIn
 
 
 export const BusinessSettingsInputDefaultBillingCycle = {
+  weekly: 'weekly',
   monthly: 'monthly',
   quarterly: 'quarterly',
   yearly: 'yearly',

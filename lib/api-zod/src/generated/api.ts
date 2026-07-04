@@ -221,7 +221,7 @@ export const GetBackupDataResponse = zod.object({
 export const GetBusinessBillingSettingsResponse = zod.object({
   "id": zod.number(),
   "userId": zod.number(),
-  "defaultBillingCycle": zod.enum(['monthly', 'quarterly', 'yearly']),
+  "defaultBillingCycle": zod.enum(['weekly', 'monthly', 'quarterly', 'yearly']),
   "defaultRentCollectionType": zod.enum(['advance', 'post_paid']),
   "defaultGracePeriodDays": zod.number(),
   "createdAt": zod.string(),
@@ -233,7 +233,7 @@ export const GetBusinessBillingSettingsResponse = zod.object({
  * @summary Create or update billing settings for the current user
  */
 export const UpsertBusinessBillingSettingsBody = zod.object({
-  "defaultBillingCycle": zod.enum(['monthly', 'quarterly', 'yearly']),
+  "defaultBillingCycle": zod.enum(['weekly', 'monthly', 'quarterly', 'yearly']),
   "defaultRentCollectionType": zod.enum(['advance', 'post_paid']),
   "defaultGracePeriodDays": zod.number()
 })
@@ -241,7 +241,7 @@ export const UpsertBusinessBillingSettingsBody = zod.object({
 export const UpsertBusinessBillingSettingsResponse = zod.object({
   "id": zod.number(),
   "userId": zod.number(),
-  "defaultBillingCycle": zod.enum(['monthly', 'quarterly', 'yearly']),
+  "defaultBillingCycle": zod.enum(['weekly', 'monthly', 'quarterly', 'yearly']),
   "defaultRentCollectionType": zod.enum(['advance', 'post_paid']),
   "defaultGracePeriodDays": zod.number(),
   "createdAt": zod.string(),
@@ -459,7 +459,7 @@ export const ListTenantsResponseItem = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
-  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "billingCycle": zod.enum(['weekly', 'monthly', 'quarterly', 'yearly']).optional(),
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
   "useBusinessDefault": zod.boolean().optional(),
@@ -493,7 +493,7 @@ export const CreateTenantBody = zod.object({
   "securityDeposit": zod.number().optional(),
   "depositDate": zod.string().optional(),
   "depositStatus": zod.enum(['held', 'refunded']).optional(),
-  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "billingCycle": zod.enum(['weekly', 'monthly', 'quarterly', 'yearly']).optional(),
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
   "useBusinessDefault": zod.boolean().optional()
@@ -516,7 +516,7 @@ export const CreateTenantResponse = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
-  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "billingCycle": zod.enum(['weekly', 'monthly', 'quarterly', 'yearly']).optional(),
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
   "useBusinessDefault": zod.boolean().optional(),
@@ -555,7 +555,7 @@ export const GetTenantResponse = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
-  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "billingCycle": zod.enum(['weekly', 'monthly', 'quarterly', 'yearly']).optional(),
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
   "useBusinessDefault": zod.boolean().optional(),
@@ -592,7 +592,7 @@ export const UpdateTenantBody = zod.object({
   "securityDeposit": zod.number().optional(),
   "depositDate": zod.string().optional(),
   "depositStatus": zod.enum(['held', 'refunded']).optional(),
-  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "billingCycle": zod.enum(['weekly', 'monthly', 'quarterly', 'yearly']).optional(),
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
   "useBusinessDefault": zod.boolean().optional()
@@ -615,7 +615,7 @@ export const UpdateTenantResponse = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
-  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "billingCycle": zod.enum(['weekly', 'monthly', 'quarterly', 'yearly']).optional(),
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
   "useBusinessDefault": zod.boolean().optional(),

@@ -75,7 +75,7 @@ export default function TenantDetailScreen() {
   const [depositAmount, setDepositAmount] = useState("");
   const [depositDate, setDepositDate] = useState("");
   const [depositStatus, setDepositStatus] = useState<"held" | "refunded">("held");
-  const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly" | "yearly">("monthly");
+  const [billingCycle, setBillingCycle] = useState<"weekly" | "monthly" | "quarterly" | "yearly">("monthly");
   const [rentCollectionType, setRentCollectionType] = useState<"advance" | "post_paid">("post_paid");
   const [gracePeriodDays, setGracePeriodDays] = useState(5);
   const [useBusinessDefault, setUseBusinessDefault] = useState(true);
@@ -426,6 +426,17 @@ export default function TenantDetailScreen() {
   const totalPaid: number = anyTenant.totalPaid ?? 0;
   const balanceDue: number = anyTenant.balanceDue ?? 0;
   const fmt = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
+  const billingCycleValue: string = anyTenant.billingCycle ?? "monthly";
+  const periodLabel =
+    billingCycleValue === "weekly" ? "Weeks" :
+    billingCycleValue === "quarterly" ? "Quarters" :
+    billingCycleValue === "yearly" ? "Years" : "Months";
+  const rentSuffix =
+    billingCycleValue === "weekly" ? "/wk" :
+    billingCycleValue === "quarterly" ? "/qtr" :
+    billingCycleValue === "yearly" ? "/yr" : "/mo";
+  const billingCycleDisplay =
+    billingCycleValue.charAt(0).toUpperCase() + billingCycleValue.slice(1);
 
   // ─── Render ──────────────────────────────────────────────────────────────
 
@@ -509,7 +520,8 @@ export default function TenantDetailScreen() {
                 {[
                   { label: "Email", value: tenant.email },
                   { label: "Phone", value: tenant.phone },
-                  { label: "Rent Amount", value: `₹${tenant.rentAmount.toLocaleString("en-IN")}/mo` },
+                  { label: "Rent Amount", value: `₹${tenant.rentAmount.toLocaleString("en-IN")}${rentSuffix}` },
+                  { label: "Billing", value: billingCycleDisplay },
                   { label: "Lease Start", value: new Date(tenant.leaseStart).toLocaleDateString() },
                   { label: "Lease End", value: new Date(tenant.leaseEnd).toLocaleDateString() },
                 ].map(row => (
@@ -534,8 +546,8 @@ export default function TenantDetailScreen() {
                   </Text>
                 </View>
                 {[
-                  { label: "Monthly Rent", value: fmt(tenant.rentAmount), color: colors.foreground },
-                  { label: "Months Active", value: `${monthsElapsed} months`, color: colors.foreground },
+                  { label: "Rent Per Period", value: fmt(tenant.rentAmount), color: colors.foreground },
+                  { label: `${periodLabel} Active`, value: `${monthsElapsed} ${periodLabel.toLowerCase()}`, color: colors.foreground },
                   { label: "Total Expected", value: fmt(totalExpected), color: colors.primary },
                   { label: "Total Paid", value: fmt(totalPaid), color: colors.success },
                   { label: "Balance Due", value: fmt(balanceDue), color: balanceDue > 0 ? colors.destructive : colors.success },
@@ -795,7 +807,7 @@ export default function TenantDetailScreen() {
                   <View>
                     <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Billing Cycle</Text>
                     <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
-                      {(["monthly", "quarterly", "yearly"] as const).map(opt => (
+                      {(["weekly", "monthly", "quarterly", "yearly"] as const).map(opt => (
                         <TouchableOpacity
                           key={opt}
                           style={[{ flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5, alignItems: "center" },

@@ -17,7 +17,14 @@ function addDays(dateStr: string, days: number): string {
 function getCycleMonths(billingCycle: string): number {
   if (billingCycle === "quarterly") return 3;
   if (billingCycle === "yearly") return 12;
-  return 1;
+  return 1; // monthly
+}
+
+function computePeriodEnd(periodStart: string, billingCycle: string): string {
+  if (billingCycle === "weekly") {
+    return addDays(periodStart, 6); // 7-day period: day 0 to day 6
+  }
+  return addDays(addMonths(periodStart, getCycleMonths(billingCycle)), -1);
 }
 
 function computePeriods(
@@ -27,16 +34,15 @@ function computePeriods(
   rentCollectionType: string,
   today: string
 ): Array<{ start: string; end: string }> {
-  const cycleMonths = getCycleMonths(billingCycle);
   const periods: Array<{ start: string; end: string }> = [];
-
   let periodStart: string = lastPeriodEnd ? addDays(lastPeriodEnd, 1) : leaseStart;
 
-  const MAX_PERIODS = 48;
+  // Weekly billing can generate up to ~3 years of weekly entries as catch-up
+  const MAX_PERIODS = billingCycle === "weekly" ? 156 : 48;
   let count = 0;
 
   while (count < MAX_PERIODS) {
-    const periodEnd = addDays(addMonths(periodStart, cycleMonths), -1);
+    const periodEnd = computePeriodEnd(periodStart, billingCycle);
     const triggerDate = rentCollectionType === "advance" ? periodStart : periodEnd;
 
     if (triggerDate > today) break;
@@ -65,7 +71,7 @@ export async function runRentGeneration(): Promise<number> {
       let rentCollectionType = tenant.rentCollectionType;
       let gracePeriodDays = tenant.gracePeriodDays;
 
-      if (tenant.useBusinessDefault) {
+      if (tenant.useBusinessDefault && propertyUserId != null) {
         const [settings] = await db
           .select()
           .from(businessSettingsTable)

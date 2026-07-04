@@ -74,7 +74,7 @@ export default function TenantAddScreen() {
   const [leaseEnd, setLeaseEnd] = useState(nextYear);
   const [depositAmount, setDepositAmount] = useState("");
   const [depositDate, setDepositDate] = useState(today);
-  const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly" | "yearly">("monthly");
+  const [billingCycle, setBillingCycle] = useState<"weekly" | "monthly" | "quarterly" | "yearly">("monthly");
   const [rentCollectionType, setRentCollectionType] = useState<"advance" | "post_paid">("post_paid");
   const [gracePeriodDays, setGracePeriodDays] = useState(5);
   const [useBusinessDefault, setUseBusinessDefault] = useState(true);
@@ -491,7 +491,7 @@ export default function TenantAddScreen() {
                 <View>
                   <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Billing Cycle</Text>
                   <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
-                    {(["monthly", "quarterly", "yearly"] as const).map(opt => (
+                    {(["weekly", "monthly", "quarterly", "yearly"] as const).map(opt => (
                       <TouchableOpacity
                         key={opt}
                         style={[{ flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5, alignItems: "center" },

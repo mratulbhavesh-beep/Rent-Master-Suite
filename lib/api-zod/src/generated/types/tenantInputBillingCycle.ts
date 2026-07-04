@@ -10,6 +10,7 @@ export type TenantInputBillingCycle = typeof TenantInputBillingCycle[keyof typeo
 
 
 export const TenantInputBillingCycle = {
+  weekly: 'weekly',
   monthly: 'monthly',
   quarterly: 'quarterly',
   yearly: 'yearly',

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, ScrollView, Switch,
+  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, ScrollView,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -14,10 +14,11 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 
-type BillingCycle = "monthly" | "quarterly" | "yearly";
+type BillingCycle = "weekly" | "monthly" | "quarterly" | "yearly";
 type CollectionType = "advance" | "post_paid";
 
 const BILLING_CYCLES: { key: BillingCycle; label: string; desc: string }[] = [
+  { key: "weekly", label: "Weekly", desc: "Rent due every 7 days" },
   { key: "monthly", label: "Monthly", desc: "Rent due every month" },
   { key: "quarterly", label: "Quarterly", desc: "Rent due every 3 months" },
   { key: "yearly", label: "Yearly", desc: "Rent due once a year" },
@@ -116,7 +117,6 @@ export default function BusinessSettingsBillingScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        {/* Info banner */}
         <View style={[styles.infoBanner, { backgroundColor: `${colors.primary}12`, borderColor: `${colors.primary}30` }]}>
           <Feather name="info" size={15} color={colors.primary} />
           <Text style={[styles.infoText, { color: colors.primary }]}>
@@ -241,7 +241,6 @@ export default function BusinessSettingsBillingScreen() {
         </View>
       </ScrollView>
 
-      {/* Save button */}
       <View style={[styles.footer, { backgroundColor: colors.background, borderTopColor: colors.border, paddingBottom: insets.bottom + 16 }]}>
         <TouchableOpacity
           style={[styles.saveButton, { backgroundColor: colors.primary }, saveMutation.isPending && { opacity: 0.7 }]}

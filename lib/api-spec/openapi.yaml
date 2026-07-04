@@ -1439,7 +1439,7 @@ components:
           enum: [held, refunded, null]
         billingCycle:
           type: string
-          enum: [monthly, quarterly, yearly]
+          enum: [weekly, monthly, quarterly, yearly]
         rentCollectionType:
           type: string
           enum: [advance, post_paid]
@@ -1501,7 +1501,7 @@ components:
           enum: [held, refunded]
         billingCycle:
           type: string
-          enum: [monthly, quarterly, yearly]
+          enum: [weekly, monthly, quarterly, yearly]
         rentCollectionType:
           type: string
           enum: [advance, post_paid]
@@ -1545,7 +1545,7 @@ components:
           enum: [held, refunded]
         billingCycle:
           type: string
-          enum: [monthly, quarterly, yearly]
+          enum: [weekly, monthly, quarterly, yearly]
         rentCollectionType:
           type: string
           enum: [advance, post_paid]
@@ -1978,7 +1978,7 @@ components:
           type: integer
         defaultBillingCycle:
           type: string
-          enum: [monthly, quarterly, yearly]
+          enum: [weekly, monthly, quarterly, yearly]
         defaultRentCollectionType:
           type: string
           enum: [advance, post_paid]
@@ -1995,7 +1995,7 @@ components:
       properties:
         defaultBillingCycle:
           type: string
-          enum: [monthly, quarterly, yearly]
+          enum: [weekly, monthly, quarterly, yearly]
         defaultRentCollectionType:
           type: string
           enum: [advance, post_paid]

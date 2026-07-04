@@ -10,6 +10,7 @@ export type BusinessSettingsInputDefaultBillingCycle = typeof BusinessSettingsIn
 
 
 export const BusinessSettingsInputDefaultBillingCycle = {
+  weekly: 'weekly',
   monthly: 'monthly',
   quarterly: 'quarterly',
   yearly: 'yearly',

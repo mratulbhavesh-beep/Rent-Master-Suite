@@ -5,22 +5,33 @@ import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
-function monthsElapsed(leaseStart: string): number {
+function periodsElapsed(leaseStart: string, billingCycle: string): number {
   const start = new Date(leaseStart);
   const now = new Date();
-  const months =
+
+  if (billingCycle === "weekly") {
+    const diffMs = now.getTime() - start.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    return Math.max(1, Math.floor(diffDays / 7) + 1);
+  }
+
+  const totalMonths =
     (now.getFullYear() - start.getFullYear()) * 12 +
     (now.getMonth() - start.getMonth()) + 1;
-  return Math.max(1, months);
+
+  if (billingCycle === "quarterly") return Math.max(1, Math.ceil(totalMonths / 3));
+  if (billingCycle === "yearly") return Math.max(1, Math.ceil(totalMonths / 12));
+  return Math.max(1, totalMonths); // monthly
 }
 
 function computeBalance(
   tenant: typeof tenantsTable.$inferSelect,
   payments: { amount: string | number; month?: number | null; year?: number | null }[]
 ) {
-  const months = monthsElapsed(tenant.leaseStart);
+  const billingCycle = tenant.billingCycle ?? "monthly";
+  const periods = periodsElapsed(tenant.leaseStart, billingCycle);
   const rentAmount = parseFloat(String(tenant.rentAmount));
-  const totalExpected = months * rentAmount;
+  const totalExpected = periods * rentAmount;
   const totalPaid = payments.reduce((s, p) => s + parseFloat(String(p.amount)), 0);
   const balanceDue = Math.max(0, totalExpected - totalPaid);
 
@@ -32,7 +43,7 @@ function computeBalance(
     .reduce((s, p) => s + parseFloat(String(p.amount)), 0);
   const currentMonthDue = Math.max(0, rentAmount - thisMonthPaid);
 
-  return { monthsElapsed: months, totalExpected, totalPaid, balanceDue, currentMonthDue };
+  return { monthsElapsed: periods, totalExpected, totalPaid, balanceDue, currentMonthDue };
 }
 
 function formatTenant(
