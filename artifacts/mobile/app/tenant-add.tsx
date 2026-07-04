@@ -7,9 +7,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  ScrollView,
   Platform,
 } from "react-native";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   useCreateTenant,
@@ -161,9 +161,7 @@ export default function TenantAddScreen() {
         <View style={styles.iconButton} />
       </View>
 
-      {/* FIX 1: ScrollView used directly — button is moved OUTSIDE the scroll view
-          so it is never swallowed by scroll event handling */}
-      <ScrollView
+      <KeyboardAwareScrollViewCompat
         style={styles.scroll}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -449,9 +447,9 @@ export default function TenantAddScreen() {
             </View>
           </View>
         </View>
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
 
-      {/* FIX 1: Button is OUTSIDE the ScrollView — always receives taps */}
+      {/* Button is OUTSIDE the scroll — always receives taps */}
       <View
         style={[
           styles.footer,

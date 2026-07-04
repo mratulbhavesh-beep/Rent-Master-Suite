@@ -7,9 +7,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  ScrollView,
   Platform,
 } from "react-native";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   useGetPayment,
@@ -206,7 +206,7 @@ export default function PaymentEditScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView
+      <KeyboardAwareScrollViewCompat
         style={styles.scroll}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -388,7 +388,7 @@ export default function PaymentEditScreen() {
             </Text>
           </View>
         )}
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
 
       {/* Fixed save button */}
       <View

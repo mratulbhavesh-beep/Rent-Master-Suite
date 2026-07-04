@@ -15,6 +15,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { GoogleSignin, isSuccessResponse, isGoogleSignInAvailable } from "@/utils/googleSignin";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -99,7 +100,7 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.content}>
+      <KeyboardAwareScrollViewCompat contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.headerContainer}>
           <Feather name="shield" size={48} color={colors.accent} />
           <Text style={[styles.title, { color: colors.foreground }]}>Gemini Rent</Text>
@@ -183,7 +184,7 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </Link>
         </View>
-      </View>
+      </KeyboardAwareScrollViewCompat>
     </SafeAreaView>
   );
 }
@@ -193,7 +194,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    flex: 1,
+    flexGrow: 1,
     padding: 24,
     justifyContent: "center",
   },

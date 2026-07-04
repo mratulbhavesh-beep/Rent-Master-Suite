@@ -5,6 +5,7 @@ import { useRegister, RegisterInputRole } from "@workspace/api-client-react";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 
 export default function RegisterScreen() {
   const [name, setName] = useState("");
@@ -49,7 +50,7 @@ export default function RegisterScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.content}>
+      <KeyboardAwareScrollViewCompat contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.headerContainer}>
           <Feather name="user-plus" size={48} color={colors.accent} />
           <Text style={[styles.title, { color: colors.foreground }]}>Create Account</Text>
@@ -118,14 +119,14 @@ export default function RegisterScreen() {
             </TouchableOpacity>
           </Link>
         </View>
-      </View>
+      </KeyboardAwareScrollViewCompat>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { flex: 1, padding: 24, justifyContent: "center" },
+  content: { flexGrow: 1, padding: 24, justifyContent: "center" },
   headerContainer: { alignItems: "center", marginBottom: 48 },
   title: { fontSize: 32, fontWeight: "bold", marginTop: 16 },
   formContainer: { gap: 16 },

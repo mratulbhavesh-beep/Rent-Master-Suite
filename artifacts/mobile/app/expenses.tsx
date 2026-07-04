@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal, ScrollView } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal } from "react-native";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import {
   useListExpenses, getListExpensesQueryKey, Expense, useCreateExpense, ExpenseInputCategory,
   useListProperties, getListPropertiesQueryKey,
@@ -213,7 +214,7 @@ export default function ExpensesScreen() {
             </TouchableOpacity>
           </View>
 
-          <ScrollView contentContainerStyle={styles.modalContent}>
+          <KeyboardAwareScrollViewCompat contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled">
             <Text style={[styles.inputLabel, { color: colors.foreground }]}>Title*</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
@@ -282,7 +283,7 @@ export default function ExpensesScreen() {
                 </TouchableOpacity>
               ))}
             </View>
-          </ScrollView>
+          </KeyboardAwareScrollViewCompat>
         </View>
       </Modal>
     </View>

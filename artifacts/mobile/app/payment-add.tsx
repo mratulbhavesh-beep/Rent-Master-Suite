@@ -7,8 +7,8 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  ScrollView,
 } from "react-native";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   useCreatePayment,
@@ -153,7 +153,7 @@ export default function PaymentAddScreen() {
       </View>
 
       {/* Scroll content — button is OUTSIDE scroll */}
-      <ScrollView
+      <KeyboardAwareScrollViewCompat
         style={styles.scroll}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -414,9 +414,9 @@ export default function PaymentAddScreen() {
           placeholder="Cheque no., transaction ID, etc."
           placeholderTextColor={colors.mutedForeground}
         />
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
 
-      {/* Fixed footer button — OUTSIDE ScrollView */}
+      {/* Fixed footer button — OUTSIDE scroll */}
       <View
         style={[
           styles.footer,

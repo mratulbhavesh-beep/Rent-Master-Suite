@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal, ScrollView } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal } from "react-native";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { useListMaintenanceRequests, getListMaintenanceRequestsQueryKey, MaintenanceRequest, useCreateMaintenanceRequest, MaintenanceRequestInputPriority, useListProperties, getListPropertiesQueryKey, useListTenants, getListTenantsQueryKey } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { Feather, MaterialIcons } from "@expo/vector-icons";
@@ -151,7 +152,7 @@ export default function MaintenanceScreen() {
             </TouchableOpacity>
           </View>
           
-          <ScrollView contentContainerStyle={styles.modalContent}>
+          <KeyboardAwareScrollViewCompat contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled">
             <Text style={[styles.inputLabel, { color: colors.foreground }]}>Title*</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
@@ -200,7 +201,7 @@ export default function MaintenanceScreen() {
                 </TouchableOpacity>
               ))}
             </View>
-          </ScrollView>
+          </KeyboardAwareScrollViewCompat>
         </View>
       </Modal>
     </View>
