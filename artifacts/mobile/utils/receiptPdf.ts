@@ -2,6 +2,7 @@ import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system";
 import { Platform, Alert } from "react-native";
+import { fmtDate } from "./dateFormat";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GENERIC PDF OPERATIONS
@@ -138,9 +139,7 @@ export function buildReceiptHTML(
   const statusBg =
     payment.status === "paid" ? "#f0fdf4" : payment.status === "partial" ? "#fffbeb" : "#fef2f2";
 
-  const dateStr = new Date(payment.paymentDate).toLocaleDateString("en-IN", {
-    day: "2-digit", month: "long", year: "numeric",
-  });
+  const dateStr = fmtDate(payment.paymentDate);
   const monthLabel = new Date(payment.year, payment.month - 1).toLocaleString("default", {
     month: "long", year: "numeric",
   });

@@ -35,6 +35,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { fmtDate } from "@/utils/dateFormat";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -711,7 +712,7 @@ export default function PropertyDetailScreen() {
                         <View style={[s.agrInfoRow, { borderTopColor: colors.border, backgroundColor: `${agrColor}07` }]}>
                           <Feather name="file-text" size={11} color={agrColor} />
                           <Text style={[s.agrInfoText, { color: agrColor }]}>
-                            {isExpired ? "Agreement Expired" : isExpiringSoon ? `Agreement expiring in ${daysLeft}d` : `Agreement until ${new Date(end).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`}
+                            {isExpired ? "Agreement Expired" : isExpiringSoon ? `Agreement expiring in ${daysLeft}d` : `Agreement until ${fmtDate(end)}`}
                           </Text>
                         </View>
                       );

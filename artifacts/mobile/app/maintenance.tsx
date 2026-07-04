@@ -7,6 +7,7 @@ import { Feather, MaterialIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
+import { fmtDate } from "@/utils/dateFormat";
 
 export default function MaintenanceScreen() {
   const colors = useColors();
@@ -99,7 +100,7 @@ export default function MaintenanceScreen() {
           </Text>
         </View>
         <Text style={[styles.dateText, { color: colors.mutedForeground }]}>
-          {new Date(item.createdAt).toLocaleDateString("en-IN", { day: 'numeric', month: 'short' })}
+          {fmtDate(item.createdAt)}
         </Text>
       </View>
     </View>

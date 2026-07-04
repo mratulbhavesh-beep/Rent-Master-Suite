@@ -11,6 +11,7 @@ import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { downloadPDF } from "@/utils/receiptPdf";
+import { fmtDate } from "@/utils/dateFormat";
 
 type ReportTab = "yearly" | "monthly" | "property" | "due";
 
@@ -96,7 +97,7 @@ export default function ReportsScreen() {
       .scard-value { font-size: 18px; font-weight: bold; }
     </style></head><body>
     <h1>${title}</h1>
-    <p>Generated on ${now.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}</p>
+    <p>Generated on ${fmtDate(now)}</p>
     ${body}
     </body></html>`;
 
@@ -122,7 +123,7 @@ export default function ReportsScreen() {
       } else if (activeTab === "monthly" && monthlyReport) {
         const rows = (monthlyReport.payments || [])
           .filter(p => p.status === "paid" || p.status === "partial")
-          .map(p => `<tr><td>${(p as any).tenantName || "—"}</td><td>${(p as any).propertyName || "—"}</td><td class="green">${fmt(parseFloat(String(p.amount)))}</td><td>${new Date((p as any).paymentDate || p.createdAt).toLocaleDateString("en-IN")}</td></tr>`)
+          .map(p => `<tr><td>${(p as any).tenantName || "—"}</td><td>${(p as any).propertyName || "—"}</td><td class="green">${fmt(parseFloat(String(p.amount)))}</td><td>${fmtDate((p as any).paymentDate || p.createdAt)}</td></tr>`)
           .join("");
         html = htmlBase(`Monthly Report — ${MONTH_FULL[selectedMonth - 1]} ${year}`,
           `<div class="summary">

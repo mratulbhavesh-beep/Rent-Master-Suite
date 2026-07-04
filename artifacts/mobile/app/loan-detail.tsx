@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { fmtDate } from "@/utils/dateFormat";
 
 export default function LoanDetailScreen() {
   const { id } = useLocalSearchParams();
@@ -145,7 +146,7 @@ export default function LoanDetailScreen() {
             <View key={payment.id || index} style={[styles.paymentItem, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View>
                 <Text style={[styles.paymentDate, { color: colors.foreground }]}>
-                  {new Date(payment.paymentDate).toLocaleDateString("en-IN", { year: 'numeric', month: 'long', day: 'numeric' })}
+                  {fmtDate(payment.paymentDate)}
                 </Text>
               </View>
               <Text style={[styles.paymentAmount, { color: colors.success }]}>₹{payment.amount.toLocaleString("en-IN")}</Text>

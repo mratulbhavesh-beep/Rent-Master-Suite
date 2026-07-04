@@ -4,6 +4,7 @@ import {
   TextInput, ScrollView, ActivityIndicator, RefreshControl,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
+import { fmtDate } from "@/utils/dateFormat";
 import {
   useListTenants, getListTenantsQueryKey,
   useListPayments, getListPaymentsQueryKey,
@@ -220,7 +221,7 @@ export default function RentLedgerTab() {
             <Feather name="calendar" size={12} color={colors.mutedForeground} />
             <Text style={[styles.footerText, { color: colors.mutedForeground }]}>
               {lastPayDate
-                ? `Last paid ${new Date(lastPayDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`
+                ? `Last paid ${fmtDate(lastPayDate)}`
                 : "No payments yet"}
             </Text>
           </View>

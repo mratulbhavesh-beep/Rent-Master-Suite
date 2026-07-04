@@ -10,6 +10,7 @@ import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
+import { fmtDate } from "@/utils/dateFormat";
 import { useQueryClient } from "@tanstack/react-query";
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -130,7 +131,7 @@ export default function ExpensesScreen() {
       <View style={styles.cardFooter}>
         <Text style={[styles.category, { color: colors.primary }]}>{CATEGORY_LABELS[item.category] || item.category.toUpperCase()}</Text>
         <Text style={[styles.dateText, { color: colors.mutedForeground }]}>
-          {new Date(item.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+          {fmtDate(item.date)}
         </Text>
       </View>
     </View>

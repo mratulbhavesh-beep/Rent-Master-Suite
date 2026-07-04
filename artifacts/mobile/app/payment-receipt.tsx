@@ -24,6 +24,7 @@ import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { fmtDate } from "@/utils/dateFormat";
 import {
   buildReceiptHTML,
   getReceiptNo,
@@ -168,9 +169,7 @@ export default function PaymentReceiptScreen() {
   }
 
   // ── Derived display values ────────────────────────────────────────────────
-  const dateStr = new Date(payment.paymentDate).toLocaleDateString("en-IN", {
-    day: "2-digit", month: "long", year: "numeric",
-  });
+  const dateStr = fmtDate(payment.paymentDate);
   const monthLabel = new Date(payment.year, payment.month - 1).toLocaleString("default", {
     month: "long", year: "numeric",
   });

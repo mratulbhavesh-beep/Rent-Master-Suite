@@ -24,6 +24,7 @@ import { useAuth } from "@/context/AuthContext";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { Image as ExpoImage } from "expo-image";
+import { fmtDate } from "@/utils/dateFormat";
 
 type ActiveTab = "overview" | "agreement" | "documents";
 
@@ -51,9 +52,7 @@ function fmtFileSize(bytes: number): string {
 }
 
 function fmtBillingDate(dateStr: string | null | undefined): string {
-  if (!dateStr) return "—";
-  const d = new Date(dateStr.includes("T") ? dateStr : dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return fmtDate(dateStr);
 }
 
 function addOneDayStr(dateStr: string): string {
@@ -460,6 +459,10 @@ export default function TenantDetailScreen() {
     billingCycleValue === "yearly" ? "/yr" : "/mo";
   const billingCycleDisplay =
     billingCycleValue.charAt(0).toUpperCase() + billingCycleValue.slice(1);
+  const rentPeriodLabel =
+    billingCycleValue === "weekly" ? "Rent Per Week" :
+    billingCycleValue === "quarterly" ? "Rent Per Quarter" :
+    billingCycleValue === "yearly" ? "Rent Per Year" : "Rent Per Month";
 
   // Effective settings — use business defaults when the tenant is set that way
   const effectiveBillingCycle: string = anyTenant.useBusinessDefault && businessSettings
@@ -572,8 +575,8 @@ export default function TenantDetailScreen() {
                   { label: "Phone", value: tenant.phone },
                   { label: "Rent Amount", value: `₹${tenant.rentAmount.toLocaleString("en-IN")}${rentSuffix}` },
                   { label: "Billing", value: billingCycleDisplay },
-                  { label: "Lease Start", value: new Date(tenant.leaseStart).toLocaleDateString() },
-                  { label: "Lease End", value: new Date(tenant.leaseEnd).toLocaleDateString() },
+                  { label: "Lease Start", value: fmtDate(tenant.leaseStart) },
+                  { label: "Lease End", value: fmtDate(tenant.leaseEnd) },
                 ].map(row => (
                   <View key={row.label} style={[styles.infoRow, { borderBottomColor: colors.border }]}>
                     <Text style={[styles.label, { color: colors.mutedForeground }]}>{row.label}</Text>
@@ -618,7 +621,7 @@ export default function TenantDetailScreen() {
                   </Text>
                 </View>
                 {[
-                  { label: "Rent Per Period", value: fmt(tenant.rentAmount), color: colors.foreground },
+                  { label: rentPeriodLabel, value: fmt(tenant.rentAmount), color: colors.foreground },
                   { label: `${periodLabel} Active`, value: `${monthsElapsed} ${periodLabel.toLowerCase()}`, color: colors.foreground },
                   { label: "Total Expected", value: fmt(totalExpected), color: colors.primary },
                   { label: "Total Paid", value: fmt(totalPaid), color: colors.success },
@@ -648,7 +651,7 @@ export default function TenantDetailScreen() {
                     let digits = tenant.phone.replace(/\D/g, "");
                     if (digits.length === 10) digits = "91" + digits;
                     else if (digits.startsWith("0")) digits = "91" + digits.slice(1);
-                    const leaseEndStr = new Date(tenant.leaseEnd).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
+                    const leaseEndStr = fmtDate(tenant.leaseEnd);
                     const message = [
                       `Hello ${tenant.name},`, ``,
                       `This is a friendly reminder for your rent payment.`, ``,
@@ -707,7 +710,7 @@ export default function TenantDetailScreen() {
                         {t.depositDate ? (
                           <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
                             <Text style={[styles.label, { color: colors.mutedForeground }]}>Deposit Date</Text>
-                            <Text style={[styles.value, { color: colors.foreground }]}>{new Date(t.depositDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</Text>
+                            <Text style={[styles.value, { color: colors.foreground }]}>{fmtDate(t.depositDate)}</Text>
                           </View>
                         ) : null}
                         {!isRefunded && (
@@ -764,7 +767,7 @@ export default function TenantDetailScreen() {
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground }}>{monthLabel}</Text>
                           <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>
-                            {p.method.replace(/_/g, " ")} • {new Date(p.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                            {p.method.replace(/_/g, " ")} • {fmtDate(p.paymentDate)}
                           </Text>
                         </View>
                         <Text style={{ fontSize: 14, fontWeight: "700", color: colors.foreground, marginRight: 8 }}>
@@ -1034,7 +1037,7 @@ export default function TenantDetailScreen() {
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>{agr.agreementNumber}</Text>
                       <Text style={{ fontSize: 12, color: colors.mutedForeground, marginTop: 2 }}>
-                        Created {new Date(agr.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                        Created {fmtDate(agr.createdAt)}
                       </Text>
                     </View>
                     <View style={[styles.badge, { backgroundColor: `${statusColor}18` }]}>
@@ -1044,8 +1047,8 @@ export default function TenantDetailScreen() {
                     </View>
                   </View>
                   {[
-                    { label: "Start Date", value: new Date(agr.startDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) },
-                    { label: "End Date", value: new Date(agr.endDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) },
+                    { label: "Start Date", value: fmtDate(agr.startDate) },
+                    { label: "End Date", value: fmtDate(agr.endDate) },
                     { label: "Monthly Rent", value: `₹${agr.monthlyRent.toLocaleString("en-IN")}` },
                     ...(agr.securityDeposit != null ? [{ label: "Security Deposit", value: `₹${agr.securityDeposit.toLocaleString("en-IN")}` }] : []),
                   ].map(row => (
@@ -1158,7 +1161,7 @@ export default function TenantDetailScreen() {
                         <Text style={{ fontSize: 11, color: colors.mutedForeground }}>{fmtFileSize(doc.fileSize)}</Text>
                       </View>
                       <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>
-                        {new Date(doc.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                        {fmtDate(doc.createdAt)}
                       </Text>
                     </View>
                   </View>

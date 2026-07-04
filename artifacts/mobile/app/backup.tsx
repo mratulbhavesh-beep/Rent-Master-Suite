@@ -22,6 +22,7 @@ import {
   readAsStringAsync as fsReadAsStringAsync,
 } from "expo-file-system/legacy";
 import { useColors } from "@/hooks/useColors";
+import { fmtDate } from "@/utils/dateFormat";
 import {
   useListBackups,
   useCreateBackup,
@@ -137,9 +138,7 @@ function formatBytes(bytes: number): string {
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-IN", {
-    day: "2-digit", month: "short", year: "numeric",
-  });
+  return fmtDate(iso);
 }
 
 function formatTime(iso: string): string {
@@ -734,7 +733,7 @@ export default function BackupScreen() {
                   <View style={styles.nextBackupItem}>
                     <Text style={[styles.nextBackupKey, { color: colors.mutedForeground }]}>Next Backup Date</Text>
                     <Text style={[styles.nextBackupVal, { color: colors.foreground }]}>
-                      {nextBackupDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                      {fmtDate(nextBackupDate)}
                     </Text>
                   </View>
                   <View style={[styles.statDivider, { backgroundColor: colors.border }]} />

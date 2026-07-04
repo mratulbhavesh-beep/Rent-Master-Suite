@@ -9,6 +9,7 @@ import {
   Alert,
 } from "react-native";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
+import { fmtDate } from "@/utils/dateFormat";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   useCreatePayment,
@@ -262,7 +263,7 @@ export default function PaymentAddScreen() {
             {pendingRents.map((rent: any) => {
               const isSelected = selectedGeneratedRentId === rent.id;
               const dueLabel = rent.dueDate
-                ? new Date(rent.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+                ? fmtDate(rent.dueDate)
                 : "—";
               const period = rent.periodStart
                 ? `${new Date(rent.periodStart).toLocaleString("default", { month: "short", year: "numeric" })} – ${new Date(rent.periodEnd).toLocaleString("default", { month: "short", year: "numeric" })}`

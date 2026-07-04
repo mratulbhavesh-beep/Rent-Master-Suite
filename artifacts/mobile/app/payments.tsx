@@ -22,6 +22,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
+import { fmtDate } from "@/utils/dateFormat";
 import {
   buildReceiptHTML,
   getReceiptNo,
@@ -166,9 +167,7 @@ export default function PaymentsScreen() {
   // ── Card render ──────────────────────────────────────────────────────────
   const renderPayment = ({ item }: { item: Payment }) => {
     const sc = getStatusColor(item.status);
-    const dateLabel = new Date(item.paymentDate).toLocaleDateString("en-IN", {
-      day: "numeric", month: "short",
-    });
+    const dateLabel = fmtDate(item.paymentDate);
     const methodIcon = (METHOD_ICONS[item.method] || "dollar-sign") as any;
     const isItemBusy = (suffix: string) =>
       busyKey === `${item.id}-${suffix}`;
