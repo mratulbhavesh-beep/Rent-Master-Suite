@@ -6,7 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { TenantActiveAgreementStatus } from './tenantActiveAgreementStatus';
+import type { TenantBillingCycle } from './tenantBillingCycle';
 import type { TenantDepositStatus } from './tenantDepositStatus';
+import type { TenantRentCollectionType } from './tenantRentCollectionType';
 import type { TenantStatus } from './tenantStatus';
 
 export interface Tenant {
@@ -32,6 +34,10 @@ export interface Tenant {
   depositDate?: string | null;
   /** @nullable */
   depositStatus?: TenantDepositStatus;
+  billingCycle?: TenantBillingCycle;
+  rentCollectionType?: TenantRentCollectionType;
+  gracePeriodDays?: number;
+  useBusinessDefault?: boolean;
   createdAt: string;
   monthsElapsed?: number;
   totalExpected?: number;

@@ -74,6 +74,10 @@ export default function TenantAddScreen() {
   const [leaseEnd, setLeaseEnd] = useState(nextYear);
   const [depositAmount, setDepositAmount] = useState("");
   const [depositDate, setDepositDate] = useState(today);
+  const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly" | "yearly">("monthly");
+  const [rentCollectionType, setRentCollectionType] = useState<"advance" | "post_paid">("post_paid");
+  const [gracePeriodDays, setGracePeriodDays] = useState(5);
+  const [useBusinessDefault, setUseBusinessDefault] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const { data: properties } = useListProperties(
@@ -120,6 +124,10 @@ export default function TenantAddScreen() {
           securityDeposit: depositAmount ? parseFloat(depositAmount) : undefined,
           depositDate: depositAmount ? depositDate : undefined,
           depositStatus: depositAmount ? "held" : undefined,
+          billingCycle: useBusinessDefault ? undefined : billingCycle,
+          rentCollectionType: useBusinessDefault ? undefined : rentCollectionType,
+          gracePeriodDays: useBusinessDefault ? undefined : gracePeriodDays,
+          useBusinessDefault,
         },
       },
       {
@@ -445,6 +453,103 @@ export default function TenantAddScreen() {
                 />
               </View>
             </View>
+          </View>
+          {/* Billing Settings */}
+          <View style={[styles.fieldWrapper, { marginTop: 8 }]}>
+            <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: "rgba(0,0,0,0.1)", marginVertical: 16 }} />
+            <Text style={[styles.inputLabel, { color: colors.foreground, marginTop: 0, marginBottom: 4 }]}>
+              Billing Settings
+            </Text>
+            <Text style={{ fontSize: 12, color: colors.mutedForeground, marginBottom: 12 }}>
+              Controls how rent entries are automatically generated
+            </Text>
+
+            {/* Use Business Default toggle */}
+            <TouchableOpacity
+              style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 8 }}
+              onPress={() => setUseBusinessDefault(v => !v)}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground }}>Use Business Default</Text>
+                <Text style={{ fontSize: 12, color: colors.mutedForeground, marginTop: 2 }}>Apply global billing settings</Text>
+              </View>
+              <View style={[{
+                width: 46, height: 26, borderRadius: 13, padding: 2,
+                backgroundColor: useBusinessDefault ? colors.primary : colors.border,
+                justifyContent: "center",
+              }]}>
+                <View style={[{
+                  width: 22, height: 22, borderRadius: 11, backgroundColor: "#fff",
+                  alignSelf: useBusinessDefault ? "flex-end" : "flex-start",
+                }]} />
+              </View>
+            </TouchableOpacity>
+
+            {!useBusinessDefault && (
+              <View style={{ marginTop: 12, gap: 12 }}>
+                <View>
+                  <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Billing Cycle</Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                    {(["monthly", "quarterly", "yearly"] as const).map(opt => (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[{ flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5, alignItems: "center" },
+                          billingCycle === opt
+                            ? { backgroundColor: `${colors.primary}15`, borderColor: colors.primary }
+                            : { backgroundColor: colors.input, borderColor: colors.border }]}
+                        onPress={() => setBillingCycle(opt)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: "600", color: billingCycle === opt ? colors.primary : colors.foreground, textTransform: "capitalize" }}>{opt}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                <View>
+                  <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Collection Timing</Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                    {(["post_paid", "advance"] as const).map(opt => (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[{ flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5, alignItems: "center" },
+                          rentCollectionType === opt
+                            ? { backgroundColor: `${colors.primary}15`, borderColor: colors.primary }
+                            : { backgroundColor: colors.input, borderColor: colors.border }]}
+                        onPress={() => setRentCollectionType(opt)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: "600", color: rentCollectionType === opt ? colors.primary : colors.foreground }}>
+                          {opt === "post_paid" ? "Post-paid" : "Advance"}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                <View>
+                  <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Grace Period (days)</Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                    {[0, 3, 5, 7, 10].map(d => (
+                      <TouchableOpacity
+                        key={d}
+                        style={[{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5 },
+                          gracePeriodDays === d
+                            ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                            : { backgroundColor: colors.input, borderColor: colors.border }]}
+                        onPress={() => setGracePeriodDays(d)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: "600", color: gracePeriodDays === d ? colors.primaryForeground : colors.foreground }}>
+                          {d === 0 ? "None" : `${d}d`}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              </View>
+            )}
           </View>
         </View>
       </KeyboardAwareScrollViewCompat>

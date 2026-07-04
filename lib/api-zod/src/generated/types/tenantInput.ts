@@ -5,7 +5,9 @@
  * Gemini Rent Manager API
  * OpenAPI spec version: 0.1.0
  */
+import type { TenantInputBillingCycle } from './tenantInputBillingCycle';
 import type { TenantInputDepositStatus } from './tenantInputDepositStatus';
+import type { TenantInputRentCollectionType } from './tenantInputRentCollectionType';
 import type { TenantInputStatus } from './tenantInputStatus';
 
 export interface TenantInput {
@@ -23,4 +25,8 @@ export interface TenantInput {
   securityDeposit?: number;
   depositDate?: string;
   depositStatus?: TenantInputDepositStatus;
+  billingCycle?: TenantInputBillingCycle;
+  rentCollectionType?: TenantInputRentCollectionType;
+  gracePeriodDays?: number;
+  useBusinessDefault?: boolean;
 }

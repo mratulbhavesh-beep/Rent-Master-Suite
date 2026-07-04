@@ -12,6 +12,8 @@ import reportsRouter from "./reports";
 import agreementsRouter from "./agreements";
 import documentsRouter from "./documents";
 import backupRouter from "./backup";
+import businessSettingsRouter from "./business-settings";
+import generatedRentsRouter from "./generated-rents";
 
 const router: IRouter = Router();
 
@@ -28,5 +30,7 @@ router.use(reportsRouter);
 router.use(agreementsRouter);
 router.use(documentsRouter);
 router.use(backupRouter);
+router.use(businessSettingsRouter);
+router.use(generatedRentsRouter);
 
 export default router;

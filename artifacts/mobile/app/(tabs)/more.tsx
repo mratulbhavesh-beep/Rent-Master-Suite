@@ -234,6 +234,11 @@ export default function MoreScreen() {
         <View style={[styles.menuSection, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Business Settings</Text>
           <MenuItem
+            title="Billing Settings"
+            icon="calendar"
+            onPress={() => router.push("/business-settings-billing" as any)}
+          />
+          <MenuItem
             title="Backup & Restore"
             icon="database"
             onPress={() => router.push("/backup")}

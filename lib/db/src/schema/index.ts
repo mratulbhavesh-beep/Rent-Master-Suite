@@ -8,3 +8,5 @@ export * from "./maintenance";
 export * from "./rent-agreements";
 export * from "./tenant-documents";
 export * from "./backups";
+export * from "./business-settings";
+export * from "./generated-rents";

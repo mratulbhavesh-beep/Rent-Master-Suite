@@ -13,10 +13,12 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   useCreatePayment,
   useListTenants,
+  useListGeneratedRents,
   getListTenantsQueryKey,
   getListPaymentsQueryKey,
   getGetDashboardSummaryQueryKey,
   getGetTenantQueryKey,
+  getListGeneratedRentsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
@@ -50,12 +52,19 @@ export default function PaymentAddScreen() {
   const [paymentDate, setPaymentDate] = useState(today);
   const [method, setMethod] = useState<Method>("cash");
   const [notes, setNotes] = useState("");
+  const [selectedGeneratedRentId, setSelectedGeneratedRentId] = useState<number | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const { data: tenants } = useListTenants(
     {},
     { query: { queryKey: getListTenantsQueryKey({}) } }
   );
+
+  const { data: pendingRents } = useListGeneratedRents(
+    { tenantId: tenantId ?? undefined, status: "pending" },
+    { query: { queryKey: getListGeneratedRentsQueryKey({ tenantId: tenantId ?? undefined, status: "pending" }), enabled: !!tenantId } }
+  );
+
   const createMutation = useCreatePayment();
 
   useEffect(() => {
@@ -78,7 +87,17 @@ export default function PaymentAddScreen() {
   const handleSelectTenant = (id: number, rentAmount: number) => {
     setTenantId(id);
     setAmount(rentAmount.toString());
+    setSelectedGeneratedRentId(null);
     setErrors((e) => ({ ...e, tenantId: "" }));
+  };
+
+  const handleSelectGeneratedRent = (rentId: number, rentAmount: number) => {
+    if (selectedGeneratedRentId === rentId) {
+      setSelectedGeneratedRentId(null);
+    } else {
+      setSelectedGeneratedRentId(rentId);
+      setAmount(rentAmount.toString());
+    }
   };
 
   const validate = (): boolean => {
@@ -109,6 +128,7 @@ export default function PaymentAddScreen() {
           method,
           status,
           notes: notes || undefined,
+          generatedRentId: selectedGeneratedRentId ?? undefined,
         },
       },
       {
@@ -226,6 +246,63 @@ export default function PaymentAddScreen() {
             {errors.tenantId}
           </Text>
         ) : null}
+
+        {/* Pending Generated Rents */}
+        {tenantId && pendingRents && pendingRents.length > 0 && (
+          <View style={{ marginTop: 20 }}>
+            <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
+              Pending Rent Entries
+            </Text>
+            <View style={[styles.infoBox, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}30`, marginBottom: 10 }]}>
+              <Feather name="calendar" size={14} color={colors.primary} />
+              <Text style={[styles.infoText, { color: colors.primary }]}>
+                Select a pending rent to link this payment to it
+              </Text>
+            </View>
+            {pendingRents.map((rent: any) => {
+              const isSelected = selectedGeneratedRentId === rent.id;
+              const dueLabel = rent.dueDate
+                ? new Date(rent.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+                : "—";
+              const period = rent.periodStart
+                ? `${new Date(rent.periodStart).toLocaleString("default", { month: "short", year: "numeric" })} – ${new Date(rent.periodEnd).toLocaleString("default", { month: "short", year: "numeric" })}`
+                : "";
+              return (
+                <TouchableOpacity
+                  key={rent.id}
+                  style={[
+                    styles.rentEntry,
+                    {
+                      borderColor: isSelected ? colors.primary : colors.border,
+                      backgroundColor: isSelected ? `${colors.primary}10` : colors.card,
+                    },
+                  ]}
+                  onPress={() => handleSelectGeneratedRent(rent.id, parseFloat(String(rent.rentAmount)))}
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, fontWeight: "700", color: isSelected ? colors.primary : colors.foreground }}>
+                      ₹{parseFloat(String(rent.rentAmount)).toLocaleString("en-IN")}
+                    </Text>
+                    {period ? (
+                      <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>{period}</Text>
+                    ) : null}
+                    <Text style={{ fontSize: 11, color: colors.mutedForeground }}>Due: {dueLabel}</Text>
+                  </View>
+                  <View style={[styles.rentStatus, {
+                    backgroundColor: `${colors.warning}20`,
+                    borderColor: `${colors.warning}40`,
+                  }]}>
+                    <Text style={{ fontSize: 10, fontWeight: "800", color: colors.warning }}>PENDING</Text>
+                  </View>
+                  {isSelected && (
+                    <Feather name="check-circle" size={18} color={colors.primary} style={{ marginLeft: 8 }} />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
 
         {/* Payment Type */}
         <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 20 }]}>
@@ -553,4 +630,18 @@ const styles = StyleSheet.create({
   },
   loadingRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   saveBtnText: { fontSize: 16, fontWeight: "bold" },
+  rentEntry: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    marginBottom: 8,
+  },
+  rentStatus: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
 });

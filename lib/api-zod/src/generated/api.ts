@@ -216,6 +216,75 @@ export const GetBackupDataResponse = zod.object({
 
 
 /**
+ * @summary Get billing settings for the current user
+ */
+export const GetBusinessBillingSettingsResponse = zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "defaultBillingCycle": zod.enum(['monthly', 'quarterly', 'yearly']),
+  "defaultRentCollectionType": zod.enum(['advance', 'post_paid']),
+  "defaultGracePeriodDays": zod.number(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Create or update billing settings for the current user
+ */
+export const UpsertBusinessBillingSettingsBody = zod.object({
+  "defaultBillingCycle": zod.enum(['monthly', 'quarterly', 'yearly']),
+  "defaultRentCollectionType": zod.enum(['advance', 'post_paid']),
+  "defaultGracePeriodDays": zod.number()
+})
+
+export const UpsertBusinessBillingSettingsResponse = zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "defaultBillingCycle": zod.enum(['monthly', 'quarterly', 'yearly']),
+  "defaultRentCollectionType": zod.enum(['advance', 'post_paid']),
+  "defaultGracePeriodDays": zod.number(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary List generated rent entries
+ */
+export const ListGeneratedRentsQueryParams = zod.object({
+  "tenantId": zod.coerce.number().optional(),
+  "status": zod.coerce.string().optional()
+})
+
+export const ListGeneratedRentsResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "tenantName": zod.string().nullish(),
+  "propertyId": zod.number(),
+  "propertyName": zod.string().nullish(),
+  "unitNumber": zod.string().nullish(),
+  "amount": zod.number(),
+  "billingPeriodStart": zod.string(),
+  "billingPeriodEnd": zod.string(),
+  "dueDate": zod.string(),
+  "status": zod.enum(['pending', 'paid', 'overdue']),
+  "paymentId": zod.number().nullish(),
+  "generatedAt": zod.string(),
+  "createdAt": zod.string()
+})
+export const ListGeneratedRentsResponse = zod.array(ListGeneratedRentsResponseItem)
+
+
+/**
+ * @summary Manually trigger rent generation for all active tenants
+ */
+export const TriggerRentGenerationResponse = zod.object({
+  "generated": zod.number()
+})
+
+
+/**
  * @summary Import a backup from an exported .grm file
  */
 export const ImportBackupBody = zod.object({
@@ -390,6 +459,10 @@ export const ListTenantsResponseItem = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
+  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
+  "gracePeriodDays": zod.number().optional(),
+  "useBusinessDefault": zod.boolean().optional(),
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
@@ -419,7 +492,11 @@ export const CreateTenantBody = zod.object({
   "notes": zod.string().optional(),
   "securityDeposit": zod.number().optional(),
   "depositDate": zod.string().optional(),
-  "depositStatus": zod.enum(['held', 'refunded']).optional()
+  "depositStatus": zod.enum(['held', 'refunded']).optional(),
+  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
+  "gracePeriodDays": zod.number().optional(),
+  "useBusinessDefault": zod.boolean().optional()
 })
 
 export const CreateTenantResponse = zod.object({
@@ -439,6 +516,10 @@ export const CreateTenantResponse = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
+  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
+  "gracePeriodDays": zod.number().optional(),
+  "useBusinessDefault": zod.boolean().optional(),
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
@@ -474,6 +555,10 @@ export const GetTenantResponse = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
+  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
+  "gracePeriodDays": zod.number().optional(),
+  "useBusinessDefault": zod.boolean().optional(),
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
@@ -506,7 +591,11 @@ export const UpdateTenantBody = zod.object({
   "notes": zod.string().optional(),
   "securityDeposit": zod.number().optional(),
   "depositDate": zod.string().optional(),
-  "depositStatus": zod.enum(['held', 'refunded']).optional()
+  "depositStatus": zod.enum(['held', 'refunded']).optional(),
+  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
+  "gracePeriodDays": zod.number().optional(),
+  "useBusinessDefault": zod.boolean().optional()
 })
 
 export const UpdateTenantResponse = zod.object({
@@ -526,6 +615,10 @@ export const UpdateTenantResponse = zod.object({
   "securityDeposit": zod.number().nullish(),
   "depositDate": zod.string().nullish(),
   "depositStatus": zod.union([zod.literal('held'),zod.literal('refunded'),zod.literal(null)]).nullish(),
+  "billingCycle": zod.enum(['monthly', 'quarterly', 'yearly']).optional(),
+  "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
+  "gracePeriodDays": zod.number().optional(),
+  "useBusinessDefault": zod.boolean().optional(),
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
@@ -572,6 +665,7 @@ export const ListPaymentsResponseItem = zod.object({
   "status": zod.enum(['paid', 'pending', 'partial', 'overdue']),
   "notes": zod.string().nullish(),
   "receiptNumber": zod.string().nullish(),
+  "generatedRentId": zod.number().nullish(),
   "createdAt": zod.string()
 })
 export const ListPaymentsResponse = zod.array(ListPaymentsResponseItem)
@@ -589,7 +683,8 @@ export const CreatePaymentBody = zod.object({
   "year": zod.number(),
   "method": zod.enum(['cash', 'bank_transfer', 'upi', 'cheque', 'online']),
   "status": zod.enum(['paid', 'pending', 'partial', 'overdue']).optional(),
-  "notes": zod.string().optional()
+  "notes": zod.string().optional(),
+  "generatedRentId": zod.number().optional()
 })
 
 export const CreatePaymentResponse = zod.object({
@@ -607,6 +702,7 @@ export const CreatePaymentResponse = zod.object({
   "status": zod.enum(['paid', 'pending', 'partial', 'overdue']),
   "notes": zod.string().nullish(),
   "receiptNumber": zod.string().nullish(),
+  "generatedRentId": zod.number().nullish(),
   "createdAt": zod.string()
 })
 
@@ -633,6 +729,7 @@ export const GetPaymentResponse = zod.object({
   "status": zod.enum(['paid', 'pending', 'partial', 'overdue']),
   "notes": zod.string().nullish(),
   "receiptNumber": zod.string().nullish(),
+  "generatedRentId": zod.number().nullish(),
   "createdAt": zod.string()
 })
 
@@ -653,7 +750,8 @@ export const UpdatePaymentBody = zod.object({
   "year": zod.number(),
   "method": zod.enum(['cash', 'bank_transfer', 'upi', 'cheque', 'online']),
   "status": zod.enum(['paid', 'pending', 'partial', 'overdue']).optional(),
-  "notes": zod.string().optional()
+  "notes": zod.string().optional(),
+  "generatedRentId": zod.number().optional()
 })
 
 export const UpdatePaymentResponse = zod.object({
@@ -671,6 +769,7 @@ export const UpdatePaymentResponse = zod.object({
   "status": zod.enum(['paid', 'pending', 'partial', 'overdue']),
   "notes": zod.string().nullish(),
   "receiptNumber": zod.string().nullish(),
+  "generatedRentId": zod.number().nullish(),
   "createdAt": zod.string()
 })
 
@@ -1147,6 +1246,7 @@ export const GetMonthlyReportResponse = zod.object({
   "status": zod.enum(['paid', 'pending', 'partial', 'overdue']),
   "notes": zod.string().nullish(),
   "receiptNumber": zod.string().nullish(),
+  "generatedRentId": zod.number().nullish(),
   "createdAt": zod.string()
 })),
   "expenses": zod.array(zod.object({

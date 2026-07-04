@@ -231,6 +231,23 @@ export const TenantDepositStatus = {
   refunded: 'refunded',
 } as const;
 
+export type TenantBillingCycle = typeof TenantBillingCycle[keyof typeof TenantBillingCycle];
+
+
+export const TenantBillingCycle = {
+  monthly: 'monthly',
+  quarterly: 'quarterly',
+  yearly: 'yearly',
+} as const;
+
+export type TenantRentCollectionType = typeof TenantRentCollectionType[keyof typeof TenantRentCollectionType];
+
+
+export const TenantRentCollectionType = {
+  advance: 'advance',
+  post_paid: 'post_paid',
+} as const;
+
 /**
  * @nullable
  */
@@ -265,6 +282,10 @@ export interface Tenant {
   depositDate?: string | null;
   /** @nullable */
   depositStatus?: TenantDepositStatus;
+  billingCycle?: TenantBillingCycle;
+  rentCollectionType?: TenantRentCollectionType;
+  gracePeriodDays?: number;
+  useBusinessDefault?: boolean;
   createdAt: string;
   monthsElapsed?: number;
   totalExpected?: number;
@@ -294,6 +315,23 @@ export const TenantInputDepositStatus = {
   refunded: 'refunded',
 } as const;
 
+export type TenantInputBillingCycle = typeof TenantInputBillingCycle[keyof typeof TenantInputBillingCycle];
+
+
+export const TenantInputBillingCycle = {
+  monthly: 'monthly',
+  quarterly: 'quarterly',
+  yearly: 'yearly',
+} as const;
+
+export type TenantInputRentCollectionType = typeof TenantInputRentCollectionType[keyof typeof TenantInputRentCollectionType];
+
+
+export const TenantInputRentCollectionType = {
+  advance: 'advance',
+  post_paid: 'post_paid',
+} as const;
+
 export interface TenantInput {
   name: string;
   email: string;
@@ -309,6 +347,10 @@ export interface TenantInput {
   securityDeposit?: number;
   depositDate?: string;
   depositStatus?: TenantInputDepositStatus;
+  billingCycle?: TenantInputBillingCycle;
+  rentCollectionType?: TenantInputRentCollectionType;
+  gracePeriodDays?: number;
+  useBusinessDefault?: boolean;
 }
 
 export type TenantUpdateStatus = typeof TenantUpdateStatus[keyof typeof TenantUpdateStatus];
@@ -328,6 +370,23 @@ export const TenantUpdateDepositStatus = {
   refunded: 'refunded',
 } as const;
 
+export type TenantUpdateBillingCycle = typeof TenantUpdateBillingCycle[keyof typeof TenantUpdateBillingCycle];
+
+
+export const TenantUpdateBillingCycle = {
+  monthly: 'monthly',
+  quarterly: 'quarterly',
+  yearly: 'yearly',
+} as const;
+
+export type TenantUpdateRentCollectionType = typeof TenantUpdateRentCollectionType[keyof typeof TenantUpdateRentCollectionType];
+
+
+export const TenantUpdateRentCollectionType = {
+  advance: 'advance',
+  post_paid: 'post_paid',
+} as const;
+
 export interface TenantUpdate {
   name?: string;
   email?: string;
@@ -343,6 +402,10 @@ export interface TenantUpdate {
   securityDeposit?: number;
   depositDate?: string;
   depositStatus?: TenantUpdateDepositStatus;
+  billingCycle?: TenantUpdateBillingCycle;
+  rentCollectionType?: TenantUpdateRentCollectionType;
+  gracePeriodDays?: number;
+  useBusinessDefault?: boolean;
 }
 
 export type PaymentMethod = typeof PaymentMethod[keyof typeof PaymentMethod];
@@ -386,6 +449,8 @@ export interface Payment {
   notes?: string | null;
   /** @nullable */
   receiptNumber?: string | null;
+  /** @nullable */
+  generatedRentId?: number | null;
   createdAt: string;
 }
 
@@ -420,6 +485,7 @@ export interface PaymentInput {
   method: PaymentInputMethod;
   status?: PaymentInputStatus;
   notes?: string;
+  generatedRentId?: number;
 }
 
 export type ExpenseCategory = typeof ExpenseCategory[keyof typeof ExpenseCategory];
@@ -727,6 +793,86 @@ export interface AgreementUpdate {
   notes?: string;
 }
 
+export type BusinessSettingsDefaultBillingCycle = typeof BusinessSettingsDefaultBillingCycle[keyof typeof BusinessSettingsDefaultBillingCycle];
+
+
+export const BusinessSettingsDefaultBillingCycle = {
+  monthly: 'monthly',
+  quarterly: 'quarterly',
+  yearly: 'yearly',
+} as const;
+
+export type BusinessSettingsDefaultRentCollectionType = typeof BusinessSettingsDefaultRentCollectionType[keyof typeof BusinessSettingsDefaultRentCollectionType];
+
+
+export const BusinessSettingsDefaultRentCollectionType = {
+  advance: 'advance',
+  post_paid: 'post_paid',
+} as const;
+
+export interface BusinessSettings {
+  id: number;
+  userId: number;
+  defaultBillingCycle: BusinessSettingsDefaultBillingCycle;
+  defaultRentCollectionType: BusinessSettingsDefaultRentCollectionType;
+  defaultGracePeriodDays: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BusinessSettingsInputDefaultBillingCycle = typeof BusinessSettingsInputDefaultBillingCycle[keyof typeof BusinessSettingsInputDefaultBillingCycle];
+
+
+export const BusinessSettingsInputDefaultBillingCycle = {
+  monthly: 'monthly',
+  quarterly: 'quarterly',
+  yearly: 'yearly',
+} as const;
+
+export type BusinessSettingsInputDefaultRentCollectionType = typeof BusinessSettingsInputDefaultRentCollectionType[keyof typeof BusinessSettingsInputDefaultRentCollectionType];
+
+
+export const BusinessSettingsInputDefaultRentCollectionType = {
+  advance: 'advance',
+  post_paid: 'post_paid',
+} as const;
+
+export interface BusinessSettingsInput {
+  defaultBillingCycle: BusinessSettingsInputDefaultBillingCycle;
+  defaultRentCollectionType: BusinessSettingsInputDefaultRentCollectionType;
+  defaultGracePeriodDays: number;
+}
+
+export type GeneratedRentStatus = typeof GeneratedRentStatus[keyof typeof GeneratedRentStatus];
+
+
+export const GeneratedRentStatus = {
+  pending: 'pending',
+  paid: 'paid',
+  overdue: 'overdue',
+} as const;
+
+export interface GeneratedRent {
+  id: number;
+  tenantId: number;
+  /** @nullable */
+  tenantName?: string | null;
+  propertyId: number;
+  /** @nullable */
+  propertyName?: string | null;
+  /** @nullable */
+  unitNumber?: string | null;
+  amount: number;
+  billingPeriodStart: string;
+  billingPeriodEnd: string;
+  dueDate: string;
+  status: GeneratedRentStatus;
+  /** @nullable */
+  paymentId?: number | null;
+  generatedAt: string;
+  createdAt: string;
+}
+
 export type TenantDocumentDocumentType = typeof TenantDocumentDocumentType[keyof typeof TenantDocumentDocumentType];
 
 
@@ -756,6 +902,15 @@ export type ResetPassword200 = {
 
 export type ChangePassword200 = {
   message: string;
+};
+
+export type ListGeneratedRentsParams = {
+tenantId?: number;
+status?: string;
+};
+
+export type TriggerRentGeneration200 = {
+  generated: number;
 };
 
 export type ListPropertiesParams = {

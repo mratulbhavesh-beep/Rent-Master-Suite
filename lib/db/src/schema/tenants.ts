@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer, numeric, date } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, numeric, date, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { propertiesTable } from "./properties";
@@ -19,6 +19,10 @@ export const tenantsTable = pgTable("tenants", {
   securityDeposit: numeric("security_deposit", { precision: 12, scale: 2 }),
   depositDate: date("deposit_date", { mode: "string" }),
   depositStatus: text("deposit_status").default("held"),
+  billingCycle: text("billing_cycle").notNull().default("monthly"),
+  rentCollectionType: text("rent_collection_type").notNull().default("post_paid"),
+  gracePeriodDays: integer("grace_period_days").notNull().default(5),
+  useBusinessDefault: boolean("use_business_default").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

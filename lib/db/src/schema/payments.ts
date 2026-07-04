@@ -16,6 +16,7 @@ export const paymentsTable = pgTable("payments", {
   status: text("status").notNull().default("paid"),
   notes: text("notes"),
   receiptNumber: text("receipt_number"),
+  generatedRentId: integer("generated_rent_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

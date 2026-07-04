@@ -28,5 +28,7 @@ export interface Payment {
   notes?: string | null;
   /** @nullable */
   receiptNumber?: string | null;
+  /** @nullable */
+  generatedRentId?: number | null;
   createdAt: string;
 }

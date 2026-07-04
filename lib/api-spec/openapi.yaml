@@ -34,6 +34,10 @@ tags:
     description: Tenant document management
   - name: backup
     description: Backup and restore user data
+  - name: business-settings
+    description: Business billing settings
+  - name: generated-rents
+    description: Auto-generated rent entries
 paths:
   /healthz:
     get:
@@ -305,6 +309,85 @@ paths:
           description: Unauthorized
         "404":
           description: Backup not found
+
+  /business-settings/billing:
+    get:
+      operationId: getBusinessBillingSettings
+      tags: [business-settings]
+      summary: Get billing settings for the current user
+      responses:
+        "200":
+          description: Billing settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BusinessSettings"
+        "401":
+          description: Unauthorized
+    put:
+      operationId: upsertBusinessBillingSettings
+      tags: [business-settings]
+      summary: Create or update billing settings for the current user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BusinessSettingsInput"
+      responses:
+        "200":
+          description: Settings saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BusinessSettings"
+        "401":
+          description: Unauthorized
+
+  /generated-rents:
+    get:
+      operationId: listGeneratedRents
+      tags: [generated-rents]
+      summary: List generated rent entries
+      parameters:
+        - name: tenantId
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of generated rents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GeneratedRent"
+        "401":
+          description: Unauthorized
+
+  /generated-rents/trigger:
+    post:
+      operationId: triggerRentGeneration
+      tags: [generated-rents]
+      summary: Manually trigger rent generation for all active tenants
+      responses:
+        "200":
+          description: Generation complete
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [generated]
+                properties:
+                  generated:
+                    type: integer
+        "401":
+          description: Unauthorized
 
   /backup/import:
     post:
@@ -1354,6 +1437,16 @@ components:
         depositStatus:
           type: ["string", "null"]
           enum: [held, refunded, null]
+        billingCycle:
+          type: string
+          enum: [monthly, quarterly, yearly]
+        rentCollectionType:
+          type: string
+          enum: [advance, post_paid]
+        gracePeriodDays:
+          type: integer
+        useBusinessDefault:
+          type: boolean
         createdAt:
           type: string
         monthsElapsed:
@@ -1406,6 +1499,16 @@ components:
         depositStatus:
           type: string
           enum: [held, refunded]
+        billingCycle:
+          type: string
+          enum: [monthly, quarterly, yearly]
+        rentCollectionType:
+          type: string
+          enum: [advance, post_paid]
+        gracePeriodDays:
+          type: integer
+        useBusinessDefault:
+          type: boolean
 
     TenantUpdate:
       type: object
@@ -1440,6 +1543,16 @@ components:
         depositStatus:
           type: string
           enum: [held, refunded]
+        billingCycle:
+          type: string
+          enum: [monthly, quarterly, yearly]
+        rentCollectionType:
+          type: string
+          enum: [advance, post_paid]
+        gracePeriodDays:
+          type: integer
+        useBusinessDefault:
+          type: boolean
 
     Payment:
       type: object
@@ -1475,6 +1588,8 @@ components:
           type: ["string", "null"]
         receiptNumber:
           type: ["string", "null"]
+        generatedRentId:
+          type: ["integer", "null"]
         createdAt:
           type: string
 
@@ -1502,6 +1617,8 @@ components:
           enum: [paid, pending, partial, overdue]
         notes:
           type: string
+        generatedRentId:
+          type: integer
 
     Expense:
       type: object
@@ -1849,6 +1966,74 @@ components:
         securityDeposit:
           type: number
         notes:
+          type: string
+
+    BusinessSettings:
+      type: object
+      required: [id, userId, defaultBillingCycle, defaultRentCollectionType, defaultGracePeriodDays, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        defaultBillingCycle:
+          type: string
+          enum: [monthly, quarterly, yearly]
+        defaultRentCollectionType:
+          type: string
+          enum: [advance, post_paid]
+        defaultGracePeriodDays:
+          type: integer
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    BusinessSettingsInput:
+      type: object
+      required: [defaultBillingCycle, defaultRentCollectionType, defaultGracePeriodDays]
+      properties:
+        defaultBillingCycle:
+          type: string
+          enum: [monthly, quarterly, yearly]
+        defaultRentCollectionType:
+          type: string
+          enum: [advance, post_paid]
+        defaultGracePeriodDays:
+          type: integer
+
+    GeneratedRent:
+      type: object
+      required: [id, tenantId, propertyId, amount, billingPeriodStart, billingPeriodEnd, dueDate, status, generatedAt, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        tenantName:
+          type: ["string", "null"]
+        propertyId:
+          type: integer
+        propertyName:
+          type: ["string", "null"]
+        unitNumber:
+          type: ["string", "null"]
+        amount:
+          type: number
+        billingPeriodStart:
+          type: string
+        billingPeriodEnd:
+          type: string
+        dueDate:
+          type: string
+        status:
+          type: string
+          enum: [pending, paid, overdue]
+        paymentId:
+          type: ["integer", "null"]
+        generatedAt:
+          type: string
+        createdAt:
           type: string
 
     TenantDocument:

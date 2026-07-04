@@ -18,4 +18,5 @@ export interface PaymentInput {
   method: PaymentInputMethod;
   status?: PaymentInputStatus;
   notes?: string;
+  generatedRentId?: number;
 }

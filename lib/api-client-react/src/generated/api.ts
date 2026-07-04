@@ -26,6 +26,8 @@ import type {
   AuthResponse,
   BackupExportData,
   BackupMeta,
+  BusinessSettings,
+  BusinessSettingsInput,
   ChangePassword200,
   ChangePasswordInput,
   CreateBackupInput,
@@ -33,12 +35,14 @@ import type {
   Expense,
   ExpenseInput,
   ExpenseUpdate,
+  GeneratedRent,
   GetMonthlyReportParams,
   GetYearlyReportParams,
   GoogleSignInInput,
   HealthStatus,
   ImportBackupInput,
   ListExpensesParams,
+  ListGeneratedRentsParams,
   ListMaintenanceRequestsParams,
   ListPaymentsParams,
   ListPropertiesParams,
@@ -66,6 +70,7 @@ import type {
   TenantDocument,
   TenantInput,
   TenantUpdate,
+  TriggerRentGeneration200,
   UpdateProfileInput,
   User,
   YearlyReport
@@ -1035,6 +1040,307 @@ export function useGetBackupData<TData = Awaited<ReturnType<typeof getBackupData
 
 
 
+
+export const getGetBusinessBillingSettingsUrl = () => {
+
+
+
+
+  return `/api/business-settings/billing`
+}
+
+/**
+ * @summary Get billing settings for the current user
+ */
+export const getBusinessBillingSettings = async ( options?: RequestInit): Promise<BusinessSettings> => {
+
+  return customFetch<BusinessSettings>(getGetBusinessBillingSettingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBusinessBillingSettingsQueryKey = () => {
+    return [
+    `/api/business-settings/billing`
+    ] as const;
+    }
+
+
+export const getGetBusinessBillingSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getBusinessBillingSettings>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBusinessBillingSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBusinessBillingSettingsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBusinessBillingSettings>>> = ({ signal }) => getBusinessBillingSettings({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBusinessBillingSettings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBusinessBillingSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getBusinessBillingSettings>>>
+export type GetBusinessBillingSettingsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get billing settings for the current user
+ */
+
+export function useGetBusinessBillingSettings<TData = Awaited<ReturnType<typeof getBusinessBillingSettings>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBusinessBillingSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBusinessBillingSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpsertBusinessBillingSettingsUrl = () => {
+
+
+
+
+  return `/api/business-settings/billing`
+}
+
+/**
+ * @summary Create or update billing settings for the current user
+ */
+export const upsertBusinessBillingSettings = async (businessSettingsInput: BusinessSettingsInput, options?: RequestInit): Promise<BusinessSettings> => {
+
+  return customFetch<BusinessSettings>(getUpsertBusinessBillingSettingsUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(businessSettingsInput)
+  }
+);}
+
+
+
+
+export const getUpsertBusinessBillingSettingsMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof upsertBusinessBillingSettings>>, TError,{data: BodyType<BusinessSettingsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof upsertBusinessBillingSettings>>, TError,{data: BodyType<BusinessSettingsInput>}, TContext> => {
+
+const mutationKey = ['upsertBusinessBillingSettings'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof upsertBusinessBillingSettings>>, {data: BodyType<BusinessSettingsInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  upsertBusinessBillingSettings(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpsertBusinessBillingSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof upsertBusinessBillingSettings>>>
+    export type UpsertBusinessBillingSettingsMutationBody = BodyType<BusinessSettingsInput>
+    export type UpsertBusinessBillingSettingsMutationError = ErrorType<void>
+
+    /**
+ * @summary Create or update billing settings for the current user
+ */
+export const useUpsertBusinessBillingSettings = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof upsertBusinessBillingSettings>>, TError,{data: BodyType<BusinessSettingsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof upsertBusinessBillingSettings>>,
+        TError,
+        {data: BodyType<BusinessSettingsInput>},
+        TContext
+      > => {
+      return useMutation(getUpsertBusinessBillingSettingsMutationOptions(options));
+    }
+
+export const getListGeneratedRentsUrl = (params?: ListGeneratedRentsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/generated-rents?${stringifiedParams}` : `/api/generated-rents`
+}
+
+/**
+ * @summary List generated rent entries
+ */
+export const listGeneratedRents = async (params?: ListGeneratedRentsParams, options?: RequestInit): Promise<GeneratedRent[]> => {
+
+  return customFetch<GeneratedRent[]>(getListGeneratedRentsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListGeneratedRentsQueryKey = (params?: ListGeneratedRentsParams,) => {
+    return [
+    `/api/generated-rents`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListGeneratedRentsQueryOptions = <TData = Awaited<ReturnType<typeof listGeneratedRents>>, TError = ErrorType<void>>(params?: ListGeneratedRentsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listGeneratedRents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListGeneratedRentsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listGeneratedRents>>> = ({ signal }) => listGeneratedRents(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listGeneratedRents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListGeneratedRentsQueryResult = NonNullable<Awaited<ReturnType<typeof listGeneratedRents>>>
+export type ListGeneratedRentsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List generated rent entries
+ */
+
+export function useListGeneratedRents<TData = Awaited<ReturnType<typeof listGeneratedRents>>, TError = ErrorType<void>>(
+ params?: ListGeneratedRentsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listGeneratedRents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListGeneratedRentsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getTriggerRentGenerationUrl = () => {
+
+
+
+
+  return `/api/generated-rents/trigger`
+}
+
+/**
+ * @summary Manually trigger rent generation for all active tenants
+ */
+export const triggerRentGeneration = async ( options?: RequestInit): Promise<TriggerRentGeneration200> => {
+
+  return customFetch<TriggerRentGeneration200>(getTriggerRentGenerationUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getTriggerRentGenerationMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof triggerRentGeneration>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof triggerRentGeneration>>, TError,void, TContext> => {
+
+const mutationKey = ['triggerRentGeneration'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof triggerRentGeneration>>, void> = () => {
+
+
+          return  triggerRentGeneration(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TriggerRentGenerationMutationResult = NonNullable<Awaited<ReturnType<typeof triggerRentGeneration>>>
+
+    export type TriggerRentGenerationMutationError = ErrorType<void>
+
+    /**
+ * @summary Manually trigger rent generation for all active tenants
+ */
+export const useTriggerRentGeneration = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof triggerRentGeneration>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof triggerRentGeneration>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getTriggerRentGenerationMutationOptions(options));
+    }
 
 export const getImportBackupUrl = () => {
 
