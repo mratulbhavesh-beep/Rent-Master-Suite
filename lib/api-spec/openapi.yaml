@@ -1495,9 +1495,16 @@ components:
           type: boolean
         renewalDuration:
           type: string
-          enum: [weekly, monthly, yearly]
+          enum: [same, custom]
+        customRenewalValue:
+          type: ["integer", "null"]
+        customRenewalUnit:
+          type: string
+          enum: [months, years]
         rentEscalation:
           type: boolean
+        escalationFrequencyYears:
+          type: integer
         escalationType:
           type: string
           enum: [percentage, fixed]
@@ -1574,9 +1581,16 @@ components:
           type: boolean
         renewalDuration:
           type: string
-          enum: [weekly, monthly, yearly]
+          enum: [same, custom]
+        customRenewalValue:
+          type: integer
+        customRenewalUnit:
+          type: string
+          enum: [months, years]
         rentEscalation:
           type: boolean
+        escalationFrequencyYears:
+          type: integer
         escalationType:
           type: string
           enum: [percentage, fixed]
@@ -1635,9 +1649,16 @@ components:
           type: boolean
         renewalDuration:
           type: string
-          enum: [weekly, monthly, yearly]
+          enum: [same, custom]
+        customRenewalValue:
+          type: integer
+        customRenewalUnit:
+          type: string
+          enum: [months, years]
         rentEscalation:
           type: boolean
+        escalationFrequencyYears:
+          type: integer
         escalationType:
           type: string
           enum: [percentage, fixed]

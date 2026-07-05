@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { TenantInputBillingCycle } from './tenantInputBillingCycle';
+import type { TenantInputCustomRenewalUnit } from './tenantInputCustomRenewalUnit';
 import type { TenantInputDepositStatus } from './tenantInputDepositStatus';
 import type { TenantInputEscalationApply } from './tenantInputEscalationApply';
 import type { TenantInputEscalationType } from './tenantInputEscalationType';
@@ -34,7 +35,10 @@ export interface TenantInput {
   useBusinessDefault?: boolean;
   autoRenewal?: boolean;
   renewalDuration?: TenantInputRenewalDuration;
+  customRenewalValue?: number;
+  customRenewalUnit?: TenantInputCustomRenewalUnit;
   rentEscalation?: boolean;
+  escalationFrequencyYears?: number;
   escalationType?: TenantInputEscalationType;
   escalationValue?: number;
   escalationApply?: TenantInputEscalationApply;

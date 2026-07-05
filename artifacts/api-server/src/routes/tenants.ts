@@ -204,12 +204,14 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
   const updates: Record<string, unknown> = {};
   for (const key of ["name", "email", "phone", "propertyId", "unitNumber", "leaseStart", "leaseEnd", "status", "emergencyContact", "notes", "depositDate", "depositStatus",
     "billingCycle", "rentCollectionType", "gracePeriodDays", "useBusinessDefault",
-    "autoRenewal", "renewalDuration", "rentEscalation", "escalationType", "escalationApply", "renewalNotice"]) {
+    "autoRenewal", "renewalDuration", "customRenewalUnit", "rentEscalation",
+    "escalationFrequencyYears", "escalationType", "escalationApply", "renewalNotice"]) {
     if (body[key] !== undefined) updates[key] = body[key];
   }
   if (body.rentAmount !== undefined) updates.rentAmount = String(body.rentAmount);
   if (body.securityDeposit !== undefined) updates.securityDeposit = body.securityDeposit != null ? String(body.securityDeposit) : null;
   if (body.escalationValue !== undefined) updates.escalationValue = String(body.escalationValue);
+  if (body.customRenewalValue !== undefined) updates.customRenewalValue = body.customRenewalValue != null ? parseInt(String(body.customRenewalValue), 10) : null;
   const [tenant] = await db.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
   const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId));
@@ -267,13 +269,42 @@ router.post("/tenants/:id/renew", requireAuth, async (req: AuthRequest, res): Pr
   const newStart = new Date(endDate);
   newStart.setDate(newStart.getDate() + 1);
   const newEnd = new Date(newStart);
-  const duration = t.renewalDuration ?? "yearly";
-  if (duration === "weekly") newEnd.setDate(newEnd.getDate() + 7);
-  else if (duration === "monthly") newEnd.setMonth(newEnd.getMonth() + 1);
-  else newEnd.setFullYear(newEnd.getFullYear() + 1);
+
+  const renewalMethod = t.renewalDuration ?? "same";
+  if (renewalMethod === "custom" && t.customRenewalValue && t.customRenewalValue > 0) {
+    const unit = t.customRenewalUnit ?? "months";
+    if (unit === "years") newEnd.setFullYear(newEnd.getFullYear() + t.customRenewalValue);
+    else newEnd.setMonth(newEnd.getMonth() + t.customRenewalValue);
+  } else {
+    // Same lease duration: compute original length in days and apply
+    const origStart = new Date(previousLeaseStart + "T00:00:00");
+    const origEnd = new Date(previousLeaseEnd + "T00:00:00");
+    const origDays = Math.round((origEnd.getTime() - origStart.getTime()) / (1000 * 60 * 60 * 24));
+    newEnd.setDate(newEnd.getDate() + origDays);
+  }
 
   const newLeaseStart = newStart.toISOString().split("T")[0];
   const newLeaseEnd = newEnd.toISOString().split("T")[0];
+
+  // Determine if rent escalation is due based on frequency
+  const freqYears = t.escalationFrequencyYears ?? 1;
+  const allRenewals = await db.select().from(leaseRenewalsTable)
+    .where(eq(leaseRenewalsTable.tenantId, id))
+    .orderBy(desc(leaseRenewalsTable.createdAt));
+
+  // Find most recent escalation date; fall back to tenant's original leaseStart
+  let lastEscalationDate: string | null = null;
+  for (const r of allRenewals) {
+    if (parseFloat(String(r.increaseAmount)) > 0) { lastEscalationDate = r.renewalDate; break; }
+  }
+  const originalLeaseStart = allRenewals.length > 0
+    ? allRenewals[allRenewals.length - 1].previousLeaseStart
+    : t.leaseStart;
+  const referenceDate = lastEscalationDate ?? originalLeaseStart;
+  const refMs = new Date(referenceDate + "T00:00:00").getTime();
+  const todayMs = Date.now();
+  const yearsSinceLastEscalation = (todayMs - refMs) / (1000 * 60 * 60 * 24 * 365.25);
+  const escalationDue = yearsSinceLastEscalation >= freqYears;
 
   let newRent = previousRent;
   let increaseAmount = 0;
@@ -283,7 +314,7 @@ router.post("/tenants/:id/renew", requireAuth, async (req: AuthRequest, res): Pr
     newRent = body.newRentAmount;
     increaseAmount = newRent - previousRent;
     increasePercent = previousRent > 0 ? (increaseAmount / previousRent) * 100 : 0;
-  } else if (t.rentEscalation && t.escalationApply === "automatic") {
+  } else if (t.rentEscalation && t.escalationApply === "automatic" && escalationDue) {
     const escalationType = t.escalationType ?? "percentage";
     const escalationValue = parseFloat(String(t.escalationValue ?? 0));
     if (escalationType === "percentage") {

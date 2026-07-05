@@ -253,9 +253,16 @@ export type TenantRenewalDuration = typeof TenantRenewalDuration[keyof typeof Te
 
 
 export const TenantRenewalDuration = {
-  weekly: 'weekly',
-  monthly: 'monthly',
-  yearly: 'yearly',
+  same: 'same',
+  custom: 'custom',
+} as const;
+
+export type TenantCustomRenewalUnit = typeof TenantCustomRenewalUnit[keyof typeof TenantCustomRenewalUnit];
+
+
+export const TenantCustomRenewalUnit = {
+  months: 'months',
+  years: 'years',
 } as const;
 
 export type TenantEscalationType = typeof TenantEscalationType[keyof typeof TenantEscalationType];
@@ -314,7 +321,11 @@ export interface Tenant {
   useBusinessDefault?: boolean;
   autoRenewal?: boolean;
   renewalDuration?: TenantRenewalDuration;
+  /** @nullable */
+  customRenewalValue?: number | null;
+  customRenewalUnit?: TenantCustomRenewalUnit;
   rentEscalation?: boolean;
+  escalationFrequencyYears?: number;
   escalationType?: TenantEscalationType;
   escalationValue?: number;
   escalationApply?: TenantEscalationApply;
@@ -370,9 +381,16 @@ export type TenantInputRenewalDuration = typeof TenantInputRenewalDuration[keyof
 
 
 export const TenantInputRenewalDuration = {
-  weekly: 'weekly',
-  monthly: 'monthly',
-  yearly: 'yearly',
+  same: 'same',
+  custom: 'custom',
+} as const;
+
+export type TenantInputCustomRenewalUnit = typeof TenantInputCustomRenewalUnit[keyof typeof TenantInputCustomRenewalUnit];
+
+
+export const TenantInputCustomRenewalUnit = {
+  months: 'months',
+  years: 'years',
 } as const;
 
 export type TenantInputEscalationType = typeof TenantInputEscalationType[keyof typeof TenantInputEscalationType];
@@ -412,7 +430,10 @@ export interface TenantInput {
   useBusinessDefault?: boolean;
   autoRenewal?: boolean;
   renewalDuration?: TenantInputRenewalDuration;
+  customRenewalValue?: number;
+  customRenewalUnit?: TenantInputCustomRenewalUnit;
   rentEscalation?: boolean;
+  escalationFrequencyYears?: number;
   escalationType?: TenantInputEscalationType;
   escalationValue?: number;
   escalationApply?: TenantInputEscalationApply;
@@ -458,9 +479,16 @@ export type TenantUpdateRenewalDuration = typeof TenantUpdateRenewalDuration[key
 
 
 export const TenantUpdateRenewalDuration = {
-  weekly: 'weekly',
-  monthly: 'monthly',
-  yearly: 'yearly',
+  same: 'same',
+  custom: 'custom',
+} as const;
+
+export type TenantUpdateCustomRenewalUnit = typeof TenantUpdateCustomRenewalUnit[keyof typeof TenantUpdateCustomRenewalUnit];
+
+
+export const TenantUpdateCustomRenewalUnit = {
+  months: 'months',
+  years: 'years',
 } as const;
 
 export type TenantUpdateEscalationType = typeof TenantUpdateEscalationType[keyof typeof TenantUpdateEscalationType];
@@ -500,7 +528,10 @@ export interface TenantUpdate {
   useBusinessDefault?: boolean;
   autoRenewal?: boolean;
   renewalDuration?: TenantUpdateRenewalDuration;
+  customRenewalValue?: number;
+  customRenewalUnit?: TenantUpdateCustomRenewalUnit;
   rentEscalation?: boolean;
+  escalationFrequencyYears?: number;
   escalationType?: TenantUpdateEscalationType;
   escalationValue?: number;
   escalationApply?: TenantUpdateEscalationApply;

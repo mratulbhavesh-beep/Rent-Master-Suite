@@ -7,6 +7,7 @@
  */
 import type { TenantActiveAgreementStatus } from './tenantActiveAgreementStatus';
 import type { TenantBillingCycle } from './tenantBillingCycle';
+import type { TenantCustomRenewalUnit } from './tenantCustomRenewalUnit';
 import type { TenantDepositStatus } from './tenantDepositStatus';
 import type { TenantEscalationApply } from './tenantEscalationApply';
 import type { TenantEscalationType } from './tenantEscalationType';
@@ -43,7 +44,11 @@ export interface Tenant {
   useBusinessDefault?: boolean;
   autoRenewal?: boolean;
   renewalDuration?: TenantRenewalDuration;
+  /** @nullable */
+  customRenewalValue?: number | null;
+  customRenewalUnit?: TenantCustomRenewalUnit;
   rentEscalation?: boolean;
+  escalationFrequencyYears?: number;
   escalationType?: TenantEscalationType;
   escalationValue?: number;
   escalationApply?: TenantEscalationApply;

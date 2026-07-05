@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { TenantUpdateBillingCycle } from './tenantUpdateBillingCycle';
+import type { TenantUpdateCustomRenewalUnit } from './tenantUpdateCustomRenewalUnit';
 import type { TenantUpdateDepositStatus } from './tenantUpdateDepositStatus';
 import type { TenantUpdateEscalationApply } from './tenantUpdateEscalationApply';
 import type { TenantUpdateEscalationType } from './tenantUpdateEscalationType';
@@ -34,7 +35,10 @@ export interface TenantUpdate {
   useBusinessDefault?: boolean;
   autoRenewal?: boolean;
   renewalDuration?: TenantUpdateRenewalDuration;
+  customRenewalValue?: number;
+  customRenewalUnit?: TenantUpdateCustomRenewalUnit;
   rentEscalation?: boolean;
+  escalationFrequencyYears?: number;
   escalationType?: TenantUpdateEscalationType;
   escalationValue?: number;
   escalationApply?: TenantUpdateEscalationApply;

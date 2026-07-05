@@ -10,7 +10,6 @@ export type TenantInputRenewalDuration = typeof TenantInputRenewalDuration[keyof
 
 
 export const TenantInputRenewalDuration = {
-  weekly: 'weekly',
-  monthly: 'monthly',
-  yearly: 'yearly',
+  same: 'same',
+  custom: 'custom',
 } as const;
