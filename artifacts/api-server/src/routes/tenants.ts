@@ -415,6 +415,21 @@ router.post("/tenants/:id/revise", requireAuth, async (req: AuthRequest, res): P
   if (!body.effectiveFrom) { res.status(400).json({ error: "effectiveFrom is required (YYYY-MM-DD)" }); return; }
 
   const t = row.tenant;
+
+  // Validate: effectiveFrom must not be before lease start
+  if (body.effectiveFrom < t.leaseStart) {
+    res.status(400).json({ error: `Effective date cannot be before the lease start date (${t.leaseStart})` }); return;
+  }
+
+  // Validate: no duplicate effectiveFrom for this tenant
+  const [dupCheck] = await db
+    .select({ id: rentRevisionsTable.id })
+    .from(rentRevisionsTable)
+    .where(and(eq(rentRevisionsTable.tenantId, id), eq(rentRevisionsTable.effectiveFrom, body.effectiveFrom)));
+  if (dupCheck) {
+    res.status(409).json({ error: "A revision already exists for this effective date. Use a different date." }); return;
+  }
+
   const previousRent = parseFloat(String(t.rentAmount));
 
   const [revision] = await db.insert(rentRevisionsTable).values({

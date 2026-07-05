@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
-  ActivityIndicator, Alert, Platform, Linking, Switch,
+  ActivityIndicator, Alert, Platform, Linking, Switch, Modal,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
@@ -117,6 +117,9 @@ export default function TenantDetailScreen() {
   const [newRevisionAmount, setNewRevisionAmount] = useState("");
   const [revisionDate, setRevisionDate] = useState("");
   const [revisionReason, setRevisionReason] = useState("");
+  const [revisionError, setRevisionError] = useState("");
+  const [showRevisionConfirm, setShowRevisionConfirm] = useState(false);
+  const [pendingRevision, setPendingRevision] = useState<{ newRent: number; isoDate: string; displayDate: string; reason: string } | null>(null);
 
   // Agreement form state
   const [showAgrForm, setShowAgrForm] = useState(false);
@@ -309,19 +312,49 @@ export default function TenantDetailScreen() {
   };
 
   const handleRevision = () => {
-    const parts = revisionDate.split("/");
-    const isoDate = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : "";
-    if (!newRevisionAmount || !isoDate) {
-      Alert.alert("Missing Info", "Enter new rent amount and effective date (DD/MM/YYYY)");
+    setRevisionError("");
+    // Parse DD/MM/YYYY
+    const parts = revisionDate.trim().split("/");
+    const isoDate = parts.length === 3 && parts[0].length === 2 && parts[1].length === 2 && parts[2].length === 4
+      ? `${parts[2]}-${parts[1]}-${parts[0]}`
+      : "";
+
+    if (!newRevisionAmount.trim()) {
+      setRevisionError("New rent amount is required.");
       return;
     }
     const newRent = parseFloat(newRevisionAmount);
     if (isNaN(newRent) || newRent <= 0) {
-      Alert.alert("Invalid Amount", "Please enter a valid rent amount");
+      setRevisionError("Enter a valid rent amount greater than zero.");
       return;
     }
+    if (!isoDate) {
+      setRevisionError("Enter a valid effective date in DD/MM/YYYY format.");
+      return;
+    }
+    // Client-side: effectiveFrom cannot be before lease start
+    if (tenant?.leaseStart && isoDate < tenant.leaseStart) {
+      const leaseStartDisplay = fmtDate(tenant.leaseStart);
+      setRevisionError(`Effective date cannot be before the lease start date (${leaseStartDisplay}).`);
+      return;
+    }
+    // Client-side: prevent duplicate effective date
+    const duplicate = (rentRevisions ?? []).some(r => r.effectiveFrom === isoDate);
+    if (duplicate) {
+      setRevisionError("A revision already exists for this effective date. Choose a different date.");
+      return;
+    }
+
+    // All valid — show confirmation
+    setPendingRevision({ newRent, isoDate, displayDate: revisionDate.trim(), reason: revisionReason.trim() });
+    setShowRevisionConfirm(true);
+  };
+
+  const confirmRevision = () => {
+    if (!pendingRevision) return;
+    setShowRevisionConfirm(false);
     reviseMutation.mutate(
-      { id: tenantId, data: { newRent, effectiveFrom: isoDate, reason: revisionReason.trim() || undefined } },
+      { id: tenantId, data: { newRent: pendingRevision.newRent, effectiveFrom: pendingRevision.isoDate, reason: pendingRevision.reason || undefined } },
       {
         onSuccess: (data: RentRevision) => {
           queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(tenantId) });
@@ -332,12 +365,17 @@ export default function TenantDetailScreen() {
           setNewRevisionAmount("");
           setRevisionDate("");
           setRevisionReason("");
+          setRevisionError("");
+          setPendingRevision(null);
           Alert.alert(
-            "Rent Revised ✓",
-            `New rent: ₹${Math.round(data.newRent).toLocaleString("en-IN")} from ${revisionDate}`
+            "Rent Revised",
+            `New rent ₹${Math.round(data.newRent).toLocaleString("en-IN")} effective from ${pendingRevision.displayDate}`
           );
         },
-        onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to apply revision"),
+        onError: (err: any) => {
+          setRevisionError(err?.response?.data?.error || "Failed to apply revision. Please try again.");
+          setPendingRevision(null);
+        },
       }
     );
   };
@@ -1022,7 +1060,7 @@ export default function TenantDetailScreen() {
                 );
               })()}
 
-              {/* Rent Revision History */}
+              {/* Rent Revision History — read-only audit log */}
               {rentRevisions && rentRevisions.length > 0 && (
                 <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
@@ -1032,30 +1070,46 @@ export default function TenantDetailScreen() {
                       <Text style={{ fontSize: 10, fontWeight: "800", color: colors.primary }}>{rentRevisions.length} REVISION{rentRevisions.length !== 1 ? "S" : ""}</Text>
                     </View>
                   </View>
+                  <Text style={{ fontSize: 10, color: colors.mutedForeground, marginBottom: 10, fontStyle: "italic" }}>Read-only audit log. All entries are permanent.</Text>
                   {rentRevisions.map((r, idx) => {
                     const prev = parseFloat(String(r.previousRent));
                     const next = parseFloat(String(r.newRent));
                     const isIncrease = next > prev;
+                    const changedOnDate = new Date(r.createdAt);
+                    const changedOnDisplay = `${String(changedOnDate.getDate()).padStart(2, "0")}/${String(changedOnDate.getMonth() + 1).padStart(2, "0")}/${changedOnDate.getFullYear()}`;
                     return (
-                      <View key={r.id} style={[{ paddingVertical: 10 }, idx < rentRevisions.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
-                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={{ fontSize: 13, fontWeight: "700", color: colors.foreground }}>
-                              ₹{Math.round(prev).toLocaleString("en-IN")} → ₹{Math.round(next).toLocaleString("en-IN")}
+                      <View key={r.id} style={[{ paddingVertical: 12 }, idx < rentRevisions.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
+                        {/* Amount + badge row */}
+                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                          <Text style={{ fontSize: 14, fontWeight: "700", color: colors.foreground }}>
+                            ₹{Math.round(prev).toLocaleString("en-IN")} → ₹{Math.round(next).toLocaleString("en-IN")}
+                          </Text>
+                          <View style={[styles.badge, { backgroundColor: isIncrease ? `${colors.destructive}15` : `${colors.primary}15` }]}>
+                            <Text style={{ fontSize: 10, fontWeight: "700", color: isIncrease ? colors.destructive : colors.primary }}>
+                              {isIncrease ? "↑ INCREASE" : "↓ DECREASE"}
                             </Text>
-                            <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>Effective: {fmtDate(r.effectiveFrom)}</Text>
-                            {r.reason ? <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 1 }}>Reason: {r.reason}</Text> : null}
                           </View>
-                          <View style={{ alignItems: "flex-end" }}>
-                            <Text style={{ fontSize: 10, color: colors.mutedForeground }}>
-                              {new Date(r.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
-                            </Text>
-                            <View style={[styles.badge, { marginTop: 4, backgroundColor: isIncrease ? `${colors.destructive}15` : `${colors.primary}15` }]}>
-                              <Text style={{ fontSize: 10, fontWeight: "700", color: isIncrease ? colors.destructive : colors.primary }}>
-                                {isIncrease ? "↑" : "↓"} MANUAL
-                              </Text>
+                        </View>
+                        {/* Audit fields grid */}
+                        <View style={{ gap: 3 }}>
+                          <View style={{ flexDirection: "row", gap: 4 }}>
+                            <Text style={{ fontSize: 11, color: colors.mutedForeground, width: 90 }}>Effective From</Text>
+                            <Text style={{ fontSize: 11, fontWeight: "600", color: colors.foreground }}>{fmtDate(r.effectiveFrom)}</Text>
+                          </View>
+                          <View style={{ flexDirection: "row", gap: 4 }}>
+                            <Text style={{ fontSize: 11, color: colors.mutedForeground, width: 90 }}>Changed By</Text>
+                            <Text style={{ fontSize: 11, fontWeight: "600", color: colors.foreground, textTransform: "capitalize" }}>{r.changedBy ?? "manual"}</Text>
+                          </View>
+                          <View style={{ flexDirection: "row", gap: 4 }}>
+                            <Text style={{ fontSize: 11, color: colors.mutedForeground, width: 90 }}>Changed On</Text>
+                            <Text style={{ fontSize: 11, fontWeight: "600", color: colors.foreground }}>{changedOnDisplay}</Text>
+                          </View>
+                          {r.reason ? (
+                            <View style={{ flexDirection: "row", gap: 4 }}>
+                              <Text style={{ fontSize: 11, color: colors.mutedForeground, width: 90 }}>Reason</Text>
+                              <Text style={{ fontSize: 11, fontWeight: "600", color: colors.foreground, flex: 1 }}>{r.reason}</Text>
                             </View>
-                          </View>
+                          ) : null}
                         </View>
                       </View>
                     );
@@ -1582,7 +1636,7 @@ export default function TenantDetailScreen() {
                   </View>
                   <Switch
                     value={revisionEnabled}
-                    onValueChange={setRevisionEnabled}
+                    onValueChange={(v) => { setRevisionEnabled(v); setRevisionError(""); }}
                     trackColor={{ false: colors.border, true: colors.primary }}
                     thumbColor={colors.background}
                   />
@@ -1592,9 +1646,9 @@ export default function TenantDetailScreen() {
                     <View>
                       <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>New Rent Amount (₹)</Text>
                       <TextInput
-                        style={[styles.input, { color: colors.foreground, backgroundColor: colors.input, borderColor: colors.border }]}
+                        style={[styles.input, { color: colors.foreground, backgroundColor: colors.input, borderColor: revisionError && !newRevisionAmount.trim() ? colors.destructive : colors.border }]}
                         value={newRevisionAmount}
-                        onChangeText={setNewRevisionAmount}
+                        onChangeText={(v) => { setNewRevisionAmount(v); setRevisionError(""); }}
                         placeholder={`Current: ₹${Math.round(parseFloat(String(tenant?.rentAmount ?? "0"))).toLocaleString("en-IN")}`}
                         placeholderTextColor={colors.mutedForeground}
                         keyboardType="numeric"
@@ -1602,10 +1656,15 @@ export default function TenantDetailScreen() {
                     </View>
                     <View>
                       <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Effective From (DD/MM/YYYY)</Text>
+                      {tenant?.leaseStart ? (
+                        <Text style={{ fontSize: 10, color: colors.mutedForeground, marginBottom: 4 }}>
+                          Must be on or after lease start: {fmtDate(tenant.leaseStart)}
+                        </Text>
+                      ) : null}
                       <TextInput
                         style={[styles.input, { color: colors.foreground, backgroundColor: colors.input, borderColor: colors.border }]}
                         value={revisionDate}
-                        onChangeText={setRevisionDate}
+                        onChangeText={(v) => { setRevisionDate(v); setRevisionError(""); }}
                         placeholder="e.g. 01/08/2025"
                         placeholderTextColor={colors.mutedForeground}
                         keyboardType="numeric"
@@ -1630,10 +1689,17 @@ export default function TenantDetailScreen() {
                         ))}
                       </View>
                     </View>
+                    {/* Inline validation error */}
+                    {revisionError ? (
+                      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 6, padding: 10, borderRadius: 8, backgroundColor: `${colors.destructive}12` }}>
+                        <Feather name="alert-circle" size={14} color={colors.destructive} style={{ marginTop: 1 }} />
+                        <Text style={{ fontSize: 12, color: colors.destructive, flex: 1, lineHeight: 18 }}>{revisionError}</Text>
+                      </View>
+                    ) : null}
                     <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
                       <TouchableOpacity
                         style={{ flex: 1, paddingVertical: 11, borderRadius: 10, borderWidth: 1.5, alignItems: "center", borderColor: colors.border, backgroundColor: colors.input }}
-                        onPress={() => { setRevisionEnabled(false); setNewRevisionAmount(""); setRevisionDate(""); setRevisionReason(""); }}
+                        onPress={() => { setRevisionEnabled(false); setNewRevisionAmount(""); setRevisionDate(""); setRevisionReason(""); setRevisionError(""); }}
                         activeOpacity={0.7}
                       >
                         <Text style={{ fontSize: 13, fontWeight: "600", color: colors.mutedForeground }}>Cancel</Text>
@@ -1645,13 +1711,71 @@ export default function TenantDetailScreen() {
                         activeOpacity={0.7}
                       >
                         <Text style={{ fontSize: 13, fontWeight: "700", color: colors.primaryForeground }}>
-                          {reviseMutation.isPending ? "Applying..." : "Apply Revision"}
+                          {reviseMutation.isPending ? "Applying..." : "Review & Confirm"}
                         </Text>
                       </TouchableOpacity>
                     </View>
                   </View>
                 )}
               </View>
+
+              {/* Revision Confirmation Modal */}
+              <Modal
+                visible={showRevisionConfirm}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowRevisionConfirm(false)}
+              >
+                <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: 24 }}>
+                  <View style={{ width: "100%", maxWidth: 400, backgroundColor: colors.card, borderRadius: 16, padding: 24, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+                    {/* Header */}
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                      <Feather name="edit-2" size={18} color={colors.primary} />
+                      <Text style={{ fontSize: 17, fontWeight: "700", color: colors.foreground }}>Confirm Rent Revision</Text>
+                    </View>
+                    {/* Summary rows */}
+                    <View style={{ gap: 10, marginBottom: 16 }}>
+                      {[
+                        { label: "Current Rent", value: `₹${Math.round(parseFloat(String(tenant?.rentAmount ?? "0"))).toLocaleString("en-IN")}` },
+                        { label: "New Rent", value: `₹${pendingRevision ? Math.round(pendingRevision.newRent).toLocaleString("en-IN") : "—"}` },
+                        { label: "Effective From", value: pendingRevision?.displayDate ?? "—" },
+                        { label: "Escalation Base", value: `₹${pendingRevision ? Math.round(pendingRevision.newRent).toLocaleString("en-IN") : "—"}` },
+                      ].map(({ label, value }) => (
+                        <View key={label} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+                          <Text style={{ fontSize: 13, color: colors.mutedForeground }}>{label}</Text>
+                          <Text style={{ fontSize: 13, fontWeight: "700", color: colors.foreground }}>{value}</Text>
+                        </View>
+                      ))}
+                    </View>
+                    {/* Disclaimer */}
+                    <View style={{ padding: 12, borderRadius: 10, backgroundColor: `${colors.primary}10`, marginBottom: 20 }}>
+                      <Text style={{ fontSize: 12, color: colors.foreground, lineHeight: 18 }}>
+                        Historical records, receipts, payment history, ledger and reports will remain unchanged.{"\n\n"}Only future rent generation will use the revised rent.
+                      </Text>
+                    </View>
+                    {/* Buttons */}
+                    <View style={{ flexDirection: "row", gap: 10 }}>
+                      <TouchableOpacity
+                        style={{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1.5, alignItems: "center", borderColor: colors.border, backgroundColor: colors.input }}
+                        onPress={() => { setShowRevisionConfirm(false); setPendingRevision(null); }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: "600", color: colors.mutedForeground }}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{ flex: 2, paddingVertical: 12, borderRadius: 10, alignItems: "center", backgroundColor: colors.primary, opacity: reviseMutation.isPending ? 0.6 : 1 }}
+                        onPress={confirmRevision}
+                        disabled={reviseMutation.isPending}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: "700", color: colors.primaryForeground }}>
+                          {reviseMutation.isPending ? "Applying..." : "Confirm Revision"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
 
               {/* Renewal Notice */}
               <View style={{ marginTop: 12 }}>
