@@ -823,6 +823,58 @@ paths:
               schema:
                 $ref: "#/components/schemas/RentRevision"
 
+  /tenants/{id}/revisions/{revId}:
+    put:
+      operationId: updateRentRevision
+      tags: [tenants]
+      summary: Edit a pending (future) manual rent revision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: revId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RentRevisionUpdateInput"
+      responses:
+        "200":
+          description: Revision updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RentRevision"
+    delete:
+      operationId: cancelRentRevision
+      tags: [tenants]
+      summary: Cancel a pending (future) manual rent revision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: revId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Revision cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RentRevision"
+
   /tenants/{id}/agreements:
     get:
       operationId: listTenantAgreements
@@ -1757,7 +1809,7 @@ components:
 
     RentRevision:
       type: object
-      required: [id, tenantId, previousRent, newRent, effectiveFrom, changedBy, createdAt]
+      required: [id, tenantId, previousRent, newRent, effectiveFrom, changedBy, status, createdAt]
       properties:
         id:
           type: integer
@@ -1773,12 +1825,24 @@ components:
           type: ["string", "null"]
         changedBy:
           type: string
+        status:
+          type: string
         createdAt:
           type: string
 
     RentRevisionInput:
       type: object
       required: [newRent, effectiveFrom]
+      properties:
+        newRent:
+          type: number
+        effectiveFrom:
+          type: string
+        reason:
+          type: string
+
+    RentRevisionUpdateInput:
+      type: object
       properties:
         newRent:
           type: number

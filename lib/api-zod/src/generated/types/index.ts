@@ -83,6 +83,7 @@ export * from './registerInput';
 export * from './registerInputRole';
 export * from './rentRevision';
 export * from './rentRevisionInput';
+export * from './rentRevisionUpdateInput';
 export * from './resetPassword200';
 export * from './resetPasswordInput';
 export * from './restoreResult';

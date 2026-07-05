@@ -9,5 +9,6 @@ export const rentRevisionsTable = pgTable("rent_revisions", {
   effectiveFrom: date("effective_from", { mode: "string" }).notNull(),
   reason: text("reason"),
   changedBy: text("changed_by").notNull().default("manual"),
+  status: text("status").notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

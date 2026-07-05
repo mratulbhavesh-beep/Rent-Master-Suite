@@ -915,6 +915,7 @@ export const ListRentRevisionsResponseItem = zod.object({
   "effectiveFrom": zod.string(),
   "reason": zod.string().nullish(),
   "changedBy": zod.string(),
+  "status": zod.string(),
   "createdAt": zod.string()
 })
 export const ListRentRevisionsResponse = zod.array(ListRentRevisionsResponseItem)
@@ -941,6 +942,55 @@ export const ReviseRentResponse = zod.object({
   "effectiveFrom": zod.string(),
   "reason": zod.string().nullish(),
   "changedBy": zod.string(),
+  "status": zod.string(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Edit a pending (future) manual rent revision
+ */
+export const UpdateRentRevisionParams = zod.object({
+  "id": zod.coerce.number(),
+  "revId": zod.coerce.number()
+})
+
+export const UpdateRentRevisionBody = zod.object({
+  "newRent": zod.number().optional(),
+  "effectiveFrom": zod.string().optional(),
+  "reason": zod.string().optional()
+})
+
+export const UpdateRentRevisionResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "previousRent": zod.number(),
+  "newRent": zod.number(),
+  "effectiveFrom": zod.string(),
+  "reason": zod.string().nullish(),
+  "changedBy": zod.string(),
+  "status": zod.string(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Cancel a pending (future) manual rent revision
+ */
+export const CancelRentRevisionParams = zod.object({
+  "id": zod.coerce.number(),
+  "revId": zod.coerce.number()
+})
+
+export const CancelRentRevisionResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "previousRent": zod.number(),
+  "newRent": zod.number(),
+  "effectiveFrom": zod.string(),
+  "reason": zod.string().nullish(),
+  "changedBy": zod.string(),
+  "status": zod.string(),
   "createdAt": zod.string()
 })
 

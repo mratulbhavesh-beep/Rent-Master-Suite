@@ -170,7 +170,8 @@ export async function runRentGeneration(): Promise<number> {
         .from(rentRevisionsTable)
         .where(and(
           eq(rentRevisionsTable.tenantId, tenant.id),
-          lte(rentRevisionsTable.effectiveFrom, today)
+          lte(rentRevisionsTable.effectiveFrom, today),
+          eq(rentRevisionsTable.status, "active")
         ))
         .orderBy(desc(rentRevisionsTable.effectiveFrom), desc(rentRevisionsTable.id))
         .limit(1);

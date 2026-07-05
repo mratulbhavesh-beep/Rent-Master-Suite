@@ -15,5 +15,6 @@ export interface RentRevision {
   /** @nullable */
   reason?: string | null;
   changedBy: string;
+  status: string;
   createdAt: string;
 }

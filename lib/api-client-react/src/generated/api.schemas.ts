@@ -570,12 +570,19 @@ export interface RentRevision {
   /** @nullable */
   reason?: string | null;
   changedBy: string;
+  status: string;
   createdAt: string;
 }
 
 export interface RentRevisionInput {
   newRent: number;
   effectiveFrom: string;
+  reason?: string;
+}
+
+export interface RentRevisionUpdateInput {
+  newRent?: number;
+  effectiveFrom?: string;
   reason?: string;
 }
 

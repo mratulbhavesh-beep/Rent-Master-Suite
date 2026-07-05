@@ -67,6 +67,7 @@ import type {
   RegisterInput,
   RentRevision,
   RentRevisionInput,
+  RentRevisionUpdateInput,
   ResetPassword200,
   ResetPasswordInput,
   RestoreResult,
@@ -2903,6 +2904,151 @@ export const useReviseRent = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getReviseRentMutationOptions(options));
+    }
+
+export const getUpdateRentRevisionUrl = (id: number,
+    revId: number,) => {
+
+
+
+
+  return `/api/tenants/${id}/revisions/${revId}`
+}
+
+/**
+ * @summary Edit a pending (future) manual rent revision
+ */
+export const updateRentRevision = async (id: number,
+    revId: number,
+    rentRevisionUpdateInput: RentRevisionUpdateInput, options?: RequestInit): Promise<RentRevision> => {
+
+  return customFetch<RentRevision>(getUpdateRentRevisionUrl(id,revId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(rentRevisionUpdateInput)
+  }
+);}
+
+
+
+
+export const getUpdateRentRevisionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateRentRevision>>, TError,{id: number;revId: number;data: BodyType<RentRevisionUpdateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateRentRevision>>, TError,{id: number;revId: number;data: BodyType<RentRevisionUpdateInput>}, TContext> => {
+
+const mutationKey = ['updateRentRevision'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateRentRevision>>, {id: number;revId: number;data: BodyType<RentRevisionUpdateInput>}> = (props) => {
+          const {id,revId,data} = props ?? {};
+
+          return  updateRentRevision(id,revId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateRentRevisionMutationResult = NonNullable<Awaited<ReturnType<typeof updateRentRevision>>>
+    export type UpdateRentRevisionMutationBody = BodyType<RentRevisionUpdateInput>
+    export type UpdateRentRevisionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Edit a pending (future) manual rent revision
+ */
+export const useUpdateRentRevision = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateRentRevision>>, TError,{id: number;revId: number;data: BodyType<RentRevisionUpdateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateRentRevision>>,
+        TError,
+        {id: number;revId: number;data: BodyType<RentRevisionUpdateInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateRentRevisionMutationOptions(options));
+    }
+
+export const getCancelRentRevisionUrl = (id: number,
+    revId: number,) => {
+
+
+
+
+  return `/api/tenants/${id}/revisions/${revId}`
+}
+
+/**
+ * @summary Cancel a pending (future) manual rent revision
+ */
+export const cancelRentRevision = async (id: number,
+    revId: number, options?: RequestInit): Promise<RentRevision> => {
+
+  return customFetch<RentRevision>(getCancelRentRevisionUrl(id,revId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getCancelRentRevisionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelRentRevision>>, TError,{id: number;revId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelRentRevision>>, TError,{id: number;revId: number}, TContext> => {
+
+const mutationKey = ['cancelRentRevision'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelRentRevision>>, {id: number;revId: number}> = (props) => {
+          const {id,revId} = props ?? {};
+
+          return  cancelRentRevision(id,revId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelRentRevisionMutationResult = NonNullable<Awaited<ReturnType<typeof cancelRentRevision>>>
+
+    export type CancelRentRevisionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Cancel a pending (future) manual rent revision
+ */
+export const useCancelRentRevision = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelRentRevision>>, TError,{id: number;revId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelRentRevision>>,
+        TError,
+        {id: number;revId: number},
+        TContext
+      > => {
+      return useMutation(getCancelRentRevisionMutationOptions(options));
     }
 
 export const getListTenantAgreementsUrl = (id: number,) => {

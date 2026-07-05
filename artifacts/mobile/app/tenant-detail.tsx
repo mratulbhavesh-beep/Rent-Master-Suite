@@ -17,6 +17,7 @@ import {
   useListLeaseRenewals, getListLeaseRenewalsQueryKey, useRenewLease,
   LeaseRenewal,
   useListRentRevisions, getListRentRevisionsQueryKey, useReviseRent,
+  useUpdateRentRevision, useCancelRentRevision,
   RentRevision,
   Agreement,
 } from "@workspace/api-client-react";
@@ -121,6 +122,13 @@ export default function TenantDetailScreen() {
   const [showRevisionConfirm, setShowRevisionConfirm] = useState(false);
   const [pendingRevision, setPendingRevision] = useState<{ newRent: number; isoDate: string; displayDate: string; reason: string } | null>(null);
 
+  // Edit revision state
+  const [editingRevision, setEditingRevision] = useState<RentRevision | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [editReason, setEditReason] = useState("");
+  const [editError, setEditError] = useState("");
+
   // Agreement form state
   const [showAgrForm, setShowAgrForm] = useState(false);
   const [editingAgrId, setEditingAgrId] = useState<number | null>(null);
@@ -182,6 +190,8 @@ export default function TenantDetailScreen() {
     { query: { queryKey: getListRentRevisionsQueryKey(tenantId), enabled: !!tenantId } }
   );
   const reviseMutation = useReviseRent();
+  const updateRevisionMutation = useUpdateRentRevision();
+  const cancelRevisionMutation = useCancelRentRevision();
 
   useEffect(() => {
     if (tenant) {
@@ -377,6 +387,63 @@ export default function TenantDetailScreen() {
           setPendingRevision(null);
         },
       }
+    );
+  };
+
+  const handleEditRevision = (r: RentRevision) => {
+    const prev = parseFloat(String(r.newRent));
+    setEditingRevision(r);
+    setEditAmount(String(Math.round(prev)));
+    setEditDate(fmtDate(r.effectiveFrom));
+    setEditReason(r.reason ?? "");
+    setEditError("");
+  };
+
+  const confirmEditRevision = () => {
+    if (!editingRevision) return;
+    setEditError("");
+    const parts = editDate.trim().split("/");
+    if (parts.length !== 3 || parts[2].length !== 4) { setEditError("Enter date as DD/MM/YYYY."); return; }
+    const isoDate = `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+    const amt = parseFloat(editAmount);
+    if (!editAmount.trim() || isNaN(amt) || amt <= 0) { setEditError("Enter a valid rent amount greater than zero."); return; }
+    updateRevisionMutation.mutate(
+      { id: tenantId, revId: editingRevision.id, data: { newRent: amt, effectiveFrom: isoDate, reason: editReason.trim() || undefined } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListRentRevisionsQueryKey(tenantId) });
+          queryClient.invalidateQueries({ queryKey: getListGeneratedRentsQueryKey({ tenantId }) });
+          setEditingRevision(null);
+          Alert.alert("Revision Updated", `Rent updated to ₹${Math.round(amt).toLocaleString("en-IN")} effective ${editDate}`);
+        },
+        onError: (err: any) => setEditError(err?.response?.data?.error || "Failed to update revision."),
+      }
+    );
+  };
+
+  const handleCancelRevision = (r: RentRevision) => {
+    Alert.alert(
+      "Cancel Revision",
+      `Cancel the planned revision to ₹${Math.round(parseFloat(String(r.newRent))).toLocaleString("en-IN")} effective ${fmtDate(r.effectiveFrom)}?\n\nFuture unpaid rents will revert to the previous active amount.`,
+      [
+        { text: "Keep It", style: "cancel" },
+        {
+          text: "Cancel Revision",
+          style: "destructive",
+          onPress: () =>
+            cancelRevisionMutation.mutate(
+              { id: tenantId, revId: r.id },
+              {
+                onSuccess: () => {
+                  queryClient.invalidateQueries({ queryKey: getListRentRevisionsQueryKey(tenantId) });
+                  queryClient.invalidateQueries({ queryKey: getListGeneratedRentsQueryKey({ tenantId }) });
+                  Alert.alert("Revision Cancelled", "Future unpaid rents have been reverted.");
+                },
+                onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to cancel revision."),
+              }
+            ),
+        },
+      ]
     );
   };
 
@@ -1060,7 +1127,7 @@ export default function TenantDetailScreen() {
                 );
               })()}
 
-              {/* Rent Revision History — read-only audit log */}
+              {/* Rent Revision History */}
               {rentRevisions && rentRevisions.length > 0 && (
                 <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
@@ -1070,24 +1137,39 @@ export default function TenantDetailScreen() {
                       <Text style={{ fontSize: 10, fontWeight: "800", color: colors.primary }}>{rentRevisions.length} REVISION{rentRevisions.length !== 1 ? "S" : ""}</Text>
                     </View>
                   </View>
-                  <Text style={{ fontSize: 10, color: colors.mutedForeground, marginBottom: 10, fontStyle: "italic" }}>Read-only audit log. All entries are permanent.</Text>
                   {rentRevisions.map((r, idx) => {
                     const prev = parseFloat(String(r.previousRent));
                     const next = parseFloat(String(r.newRent));
                     const isIncrease = next > prev;
                     const changedOnDate = new Date(r.createdAt);
                     const changedOnDisplay = `${String(changedOnDate.getDate()).padStart(2, "0")}/${String(changedOnDate.getMonth() + 1).padStart(2, "0")}/${changedOnDate.getFullYear()}`;
+                    const todayIso = new Date().toISOString().split("T")[0];
+                    const isFuture = r.effectiveFrom > todayIso;
+                    const isCancelled = r.status === "cancelled";
+                    const isEditable = isFuture && !isCancelled && r.changedBy === "manual";
                     return (
-                      <View key={r.id} style={[{ paddingVertical: 12 }, idx < rentRevisions.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
-                        {/* Amount + badge row */}
+                      <View key={r.id} style={[{ paddingVertical: 12, opacity: isCancelled ? 0.55 : 1 }, idx < rentRevisions.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
+                        {/* Amount + status badge row */}
                         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                          <Text style={{ fontSize: 14, fontWeight: "700", color: colors.foreground }}>
+                          <Text style={{ fontSize: 14, fontWeight: "700", color: isCancelled ? colors.mutedForeground : colors.foreground, textDecorationLine: isCancelled ? "line-through" : "none" }}>
                             ₹{Math.round(prev).toLocaleString("en-IN")} → ₹{Math.round(next).toLocaleString("en-IN")}
                           </Text>
-                          <View style={[styles.badge, { backgroundColor: isIncrease ? `${colors.destructive}15` : `${colors.primary}15` }]}>
-                            <Text style={{ fontSize: 10, fontWeight: "700", color: isIncrease ? colors.destructive : colors.primary }}>
-                              {isIncrease ? "↑ INCREASE" : "↓ DECREASE"}
-                            </Text>
+                          <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
+                            {isCancelled ? (
+                              <View style={[styles.badge, { backgroundColor: `${colors.mutedForeground}18` }]}>
+                                <Text style={{ fontSize: 10, fontWeight: "700", color: colors.mutedForeground }}>CANCELLED</Text>
+                              </View>
+                            ) : isFuture ? (
+                              <View style={[styles.badge, { backgroundColor: `${colors.primary}14` }]}>
+                                <Text style={{ fontSize: 10, fontWeight: "700", color: colors.primary }}>PENDING</Text>
+                              </View>
+                            ) : (
+                              <View style={[styles.badge, { backgroundColor: isIncrease ? `${colors.destructive}15` : `${colors.primary}15` }]}>
+                                <Text style={{ fontSize: 10, fontWeight: "700", color: isIncrease ? colors.destructive : colors.primary }}>
+                                  {isIncrease ? "↑ INCREASE" : "↓ DECREASE"}
+                                </Text>
+                              </View>
+                            )}
                           </View>
                         </View>
                         {/* Audit fields grid */}
@@ -1111,6 +1193,23 @@ export default function TenantDetailScreen() {
                             </View>
                           ) : null}
                         </View>
+                        {/* Edit / Cancel actions — only for future active manual revisions */}
+                        {isEditable && (
+                          <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                            <TouchableOpacity
+                              onPress={() => handleEditRevision(r)}
+                              style={{ flex: 1, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: colors.primary, alignItems: "center" }}
+                            >
+                              <Text style={{ fontSize: 12, fontWeight: "600", color: colors.primary }}>Edit</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => handleCancelRevision(r)}
+                              style={{ flex: 1, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: colors.destructive, alignItems: "center" }}
+                            >
+                              <Text style={{ fontSize: 12, fontWeight: "600", color: colors.destructive }}>Cancel Revision</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
                       </View>
                     );
                   })}
@@ -1770,6 +1869,72 @@ export default function TenantDetailScreen() {
                       >
                         <Text style={{ fontSize: 14, fontWeight: "700", color: colors.primaryForeground }}>
                           {reviseMutation.isPending ? "Applying..." : "Confirm Revision"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+
+              {/* Edit Revision Modal */}
+              <Modal
+                visible={!!editingRevision}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setEditingRevision(null)}
+              >
+                <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: 24 }}>
+                  <View style={{ width: "100%", maxWidth: 400, backgroundColor: colors.card, borderRadius: 16, padding: 24, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                      <Feather name="edit-2" size={18} color={colors.primary} />
+                      <Text style={{ fontSize: 17, fontWeight: "700", color: colors.foreground }}>Edit Pending Revision</Text>
+                    </View>
+                    {editError ? (
+                      <View style={{ padding: 10, borderRadius: 8, backgroundColor: `${colors.destructive}14`, marginBottom: 12 }}>
+                        <Text style={{ fontSize: 12, color: colors.destructive }}>{editError}</Text>
+                      </View>
+                    ) : null}
+                    <Text style={[styles.inputLabel, { color: colors.foreground, marginBottom: 4 }]}>New Rent Amount (₹)</Text>
+                    <TextInput
+                      style={[styles.input, { color: colors.foreground, backgroundColor: colors.input, borderColor: editError && !editAmount.trim() ? colors.destructive : colors.border, marginBottom: 12 }]}
+                      value={editAmount}
+                      onChangeText={(v) => { setEditAmount(v); setEditError(""); }}
+                      keyboardType="numeric"
+                      placeholder="Enter new rent"
+                      placeholderTextColor={colors.mutedForeground}
+                    />
+                    <Text style={[styles.inputLabel, { color: colors.foreground, marginBottom: 4 }]}>Effective From (DD/MM/YYYY)</Text>
+                    <TextInput
+                      style={[styles.input, { color: colors.foreground, backgroundColor: colors.input, borderColor: colors.border, marginBottom: 12 }]}
+                      value={editDate}
+                      onChangeText={(v) => { setEditDate(v); setEditError(""); }}
+                      placeholder="DD/MM/YYYY"
+                      placeholderTextColor={colors.mutedForeground}
+                    />
+                    <Text style={[styles.inputLabel, { color: colors.foreground, marginBottom: 4 }]}>Reason (optional)</Text>
+                    <TextInput
+                      style={[styles.input, { color: colors.foreground, backgroundColor: colors.input, borderColor: colors.border, marginBottom: 20 }]}
+                      value={editReason}
+                      onChangeText={setEditReason}
+                      placeholder="Reason for revision"
+                      placeholderTextColor={colors.mutedForeground}
+                    />
+                    <View style={{ flexDirection: "row", gap: 10 }}>
+                      <TouchableOpacity
+                        style={{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1.5, alignItems: "center", borderColor: colors.border, backgroundColor: colors.input }}
+                        onPress={() => setEditingRevision(null)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: "600", color: colors.mutedForeground }}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{ flex: 2, paddingVertical: 12, borderRadius: 10, alignItems: "center", backgroundColor: colors.primary, opacity: updateRevisionMutation.isPending ? 0.6 : 1 }}
+                        onPress={confirmEditRevision}
+                        disabled={updateRevisionMutation.isPending}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: "700", color: colors.primaryForeground }}>
+                          {updateRevisionMutation.isPending ? "Saving..." : "Save Changes"}
                         </Text>
                       </TouchableOpacity>
                     </View>
