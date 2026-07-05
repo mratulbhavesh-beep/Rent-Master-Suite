@@ -145,7 +145,13 @@ router.get("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void>
 
 router.post("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const userId = req.user!.id;
-  const { name, email, phone, propertyId, unitNumber, leaseStart, leaseEnd, rentAmount, status, emergencyContact, notes, securityDeposit, depositDate, depositStatus } = req.body;
+  const {
+    name, email, phone, propertyId, unitNumber, leaseStart, leaseEnd, rentAmount, status,
+    emergencyContact, notes, securityDeposit, depositDate, depositStatus,
+    billingCycle, rentCollectionType, gracePeriodDays, useBusinessDefault,
+    rentEscalation, escalationFrequencyYears, escalationType, escalationValue, escalationApply,
+    autoRenewal, renewalDuration, customRenewalValue, customRenewalUnit, renewalNotice,
+  } = req.body;
   if (!name || !email || !phone || !propertyId || !unitNumber || !leaseStart || !leaseEnd || !rentAmount) {
     res.status(400).json({ error: "Required fields missing" });
     return;
@@ -160,6 +166,20 @@ router.post("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void
     securityDeposit: securityDeposit != null ? String(securityDeposit) : undefined,
     depositDate: depositDate ?? undefined,
     depositStatus: depositStatus ?? "held",
+    billingCycle: billingCycle ?? "monthly",
+    rentCollectionType: rentCollectionType ?? "post_paid",
+    gracePeriodDays: gracePeriodDays ?? 5,
+    useBusinessDefault: useBusinessDefault ?? true,
+    rentEscalation: rentEscalation ?? false,
+    escalationFrequencyYears: escalationFrequencyYears ?? undefined,
+    escalationType: escalationType ?? undefined,
+    escalationValue: escalationValue != null ? String(escalationValue) : undefined,
+    escalationApply: escalationApply ?? undefined,
+    autoRenewal: autoRenewal ?? false,
+    renewalDuration: renewalDuration ?? undefined,
+    customRenewalValue: customRenewalValue ?? undefined,
+    customRenewalUnit: customRenewalUnit ?? undefined,
+    renewalNotice: renewalNotice ?? undefined,
   }).returning();
   res.status(201).json(formatTenant(tenant, property.name, []));
 });

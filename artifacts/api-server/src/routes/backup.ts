@@ -12,6 +12,8 @@ import {
   maintenanceRequestsTable,
   rentAgreementsTable,
   tenantDocumentsTable,
+  generatedRentsTable,
+  rentRevisionsTable,
 } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
@@ -75,8 +77,18 @@ async function gatherUserData(userId: number) {
       ? await db.select().from(tenantDocumentsTable).where(inArray(tenantDocumentsTable.tenantId, tenantIds))
       : [];
 
+  const generatedRents =
+    tenantIds.length > 0
+      ? await db.select().from(generatedRentsTable).where(inArray(generatedRentsTable.tenantId, tenantIds))
+      : [];
+
+  const rentRevisions =
+    tenantIds.length > 0
+      ? await db.select().from(rentRevisionsTable).where(inArray(rentRevisionsTable.tenantId, tenantIds))
+      : [];
+
   return {
-    version: "1.0",
+    version: "1.1",
     properties,
     tenants,
     payments,
@@ -86,6 +98,8 @@ async function gatherUserData(userId: number) {
     maintenanceRequests,
     rentAgreements,
     tenantDocuments,
+    generatedRents,
+    rentRevisions,
   };
 }
 
@@ -109,7 +123,10 @@ async function restoreFromData(userId: number, snap: any) {
       .where(eq(loansTable.userId, userId));
     const currentLoanIds = currentLoans.map(l => l.id);
 
+    // Delete child records before parents; generated_rents before payments (FK safety)
     if (currentTenantIds.length > 0) {
+      await tx.delete(generatedRentsTable).where(inArray(generatedRentsTable.tenantId, currentTenantIds));
+      await tx.delete(rentRevisionsTable).where(inArray(rentRevisionsTable.tenantId, currentTenantIds));
       await tx.delete(tenantDocumentsTable).where(inArray(tenantDocumentsTable.tenantId, currentTenantIds));
       await tx.delete(rentAgreementsTable).where(inArray(rentAgreementsTable.tenantId, currentTenantIds));
     }
@@ -151,12 +168,17 @@ async function restoreFromData(userId: number, snap: any) {
       tenantIdMap[oldId] = inserted.id;
     }
 
+    const paymentIdMap: Record<number, number> = {};
     for (const p of (snap.payments ?? [])) {
-      const { id: _id, createdAt: _ca, updatedAt: _ua, ...fields } = p;
+      const { id: oldId, createdAt: _ca, updatedAt: _ua, ...fields } = p;
       const newPropertyId = propIdMap[fields.propertyId];
       const newTenantId = tenantIdMap[fields.tenantId];
       if (newPropertyId == null || newTenantId == null) continue;
-      await tx.insert(paymentsTable).values({ ...fields, propertyId: newPropertyId, tenantId: newTenantId });
+      const [inserted] = await tx
+        .insert(paymentsTable)
+        .values({ ...fields, propertyId: newPropertyId, tenantId: newTenantId })
+        .returning({ id: paymentsTable.id });
+      if (inserted) paymentIdMap[oldId] = inserted.id;
     }
 
     for (const e of (snap.expenses ?? [])) {
@@ -201,6 +223,27 @@ async function restoreFromData(userId: number, snap: any) {
       const newTenantId = tenantIdMap[fields.tenantId];
       if (newTenantId == null) continue;
       await tx.insert(rentAgreementsTable).values({ ...fields, tenantId: newTenantId });
+    }
+
+    for (const r of (snap.generatedRents ?? [])) {
+      const { id: _id, createdAt: _ca, updatedAt: _ua, generatedAt: _ga, ...fields } = r;
+      const newTenantId = tenantIdMap[fields.tenantId];
+      const newPropertyId = propIdMap[fields.propertyId];
+      if (newTenantId == null || newPropertyId == null) continue;
+      const newPaymentId = fields.paymentId != null ? (paymentIdMap[fields.paymentId] ?? null) : null;
+      await tx.insert(generatedRentsTable).values({
+        ...fields,
+        tenantId: newTenantId,
+        propertyId: newPropertyId,
+        paymentId: newPaymentId,
+      }).onConflictDoNothing();
+    }
+
+    for (const rv of (snap.rentRevisions ?? [])) {
+      const { id: _id, createdAt: _ca, ...fields } = rv;
+      const newTenantId = tenantIdMap[fields.tenantId];
+      if (newTenantId == null) continue;
+      await tx.insert(rentRevisionsTable).values({ ...fields, tenantId: newTenantId });
     }
   });
 }
@@ -270,7 +313,7 @@ router.get("/backup", requireAuth, async (req: AuthRequest, res): Promise<void> 
       label: r.label,
       sizeBytes: r.sizeBytes,
       createdAt: r.createdAt.toISOString(),
-      version: "1.0",
+      version: "1.1",
       location: "Server Storage",
     }))
   );

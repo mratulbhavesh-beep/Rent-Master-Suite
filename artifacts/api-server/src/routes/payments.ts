@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { and, eq, inArray } from "drizzle-orm";
-import { db, paymentsTable, tenantsTable, propertiesTable } from "@workspace/db";
+import { db, paymentsTable, tenantsTable, propertiesTable, generatedRentsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -58,7 +58,7 @@ router.get("/payments", requireAuth, async (req: AuthRequest, res): Promise<void
 
 router.post("/payments", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const userId = req.user!.id;
-  const { tenantId, propertyId, amount, paymentDate, month, year, method, status, notes } = req.body;
+  const { tenantId, propertyId, amount, paymentDate, month, year, method, status, notes, generatedRentId } = req.body;
   if (!tenantId || !propertyId || !amount || !paymentDate || !month || !year || !method) {
     res.status(400).json({ error: "Required fields missing" });
     return;
@@ -71,7 +71,16 @@ router.post("/payments", requireAuth, async (req: AuthRequest, res): Promise<voi
   const [payment] = await db.insert(paymentsTable).values({
     tenantId, propertyId, amount: String(amount), paymentDate,
     month, year, method, status: status ?? "paid", notes, receiptNumber,
+    generatedRentId: generatedRentId ?? null,
   }).returning();
+
+  if (generatedRentId != null) {
+    const rentStatus = payment.status === "partial" ? "partial" : "paid";
+    await db.update(generatedRentsTable)
+      .set({ status: rentStatus, paymentId: payment.id })
+      .where(eq(generatedRentsTable.id, generatedRentId));
+  }
+
   const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, payment.tenantId));
   res.status(201).json(formatPayment(payment, tenant?.name, property.name, tenant?.unitNumber));
 });

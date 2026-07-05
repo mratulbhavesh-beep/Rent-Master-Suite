@@ -265,8 +265,8 @@ export default function PaymentAddScreen() {
               const dueLabel = rent.dueDate
                 ? fmtDate(rent.dueDate)
                 : "—";
-              const period = rent.periodStart
-                ? `${new Date(rent.periodStart).toLocaleString("default", { month: "short", year: "numeric" })} – ${new Date(rent.periodEnd).toLocaleString("default", { month: "short", year: "numeric" })}`
+              const period = rent.billingPeriodStart
+                ? `${new Date(rent.billingPeriodStart).toLocaleString("default", { month: "short", year: "numeric" })} – ${new Date(rent.billingPeriodEnd).toLocaleString("default", { month: "short", year: "numeric" })}`
                 : "";
               return (
                 <TouchableOpacity
@@ -278,12 +278,12 @@ export default function PaymentAddScreen() {
                       backgroundColor: isSelected ? `${colors.primary}10` : colors.card,
                     },
                   ]}
-                  onPress={() => handleSelectGeneratedRent(rent.id, parseFloat(String(rent.rentAmount)))}
+                  onPress={() => handleSelectGeneratedRent(rent.id, parseFloat(String(rent.amount)))}
                   activeOpacity={0.7}
                 >
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 14, fontWeight: "700", color: isSelected ? colors.primary : colors.foreground }}>
-                      ₹{parseFloat(String(rent.rentAmount)).toLocaleString("en-IN")}
+                      ₹{parseFloat(String(rent.amount)).toLocaleString("en-IN")}
                     </Text>
                     {period ? (
                       <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>{period}</Text>

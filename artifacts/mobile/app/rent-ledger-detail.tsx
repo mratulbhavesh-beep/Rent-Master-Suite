@@ -38,44 +38,97 @@ type MonthRow = {
 
 type ActiveSection = "history" | "timeline" | "receipts";
 
-function buildMonthHistory(
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function addDaysLocal(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
+function addMonthsLocal(dateStr: string, months: number): string {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().split("T")[0];
+}
+
+function computePeriodEndLocal(periodStart: string, billingCycle: string): string {
+  if (billingCycle === "weekly") return addDaysLocal(periodStart, 6);
+  if (billingCycle === "quarterly") return addDaysLocal(addMonthsLocal(periodStart, 3), -1);
+  if (billingCycle === "yearly") return addDaysLocal(addMonthsLocal(periodStart, 12), -1);
+  return addDaysLocal(addMonthsLocal(periodStart, 1), -1);
+}
+
+function makePeriodLabel(periodStart: string, periodEnd: string, billingCycle: string): string {
+  const dt = (s: string) => new Date(s + "T00:00:00");
+  const fmtShort = (s: string) => {
+    const d = dt(s);
+    return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`;
+  };
+  const fmtMon = (s: string) => {
+    const d = dt(s);
+    return `${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`;
+  };
+  if (billingCycle === "monthly") return fmtMon(periodStart);
+  if (billingCycle === "weekly") {
+    const endD = dt(periodEnd);
+    return `${fmtShort(periodStart)} – ${endD.getDate()} ${MONTHS_SHORT[endD.getMonth()]} ${endD.getFullYear()}`;
+  }
+  return `${fmtMon(periodStart)} – ${fmtMon(periodEnd)}`;
+}
+
+function buildPeriodHistory(
   leaseStart: string,
   rentAmount: number,
-  payments: Payment[]
+  payments: Payment[],
+  billingCycle: string
 ): MonthRow[] {
   const rows: MonthRow[] = [];
-  const start = new Date(leaseStart);
-  const now = new Date();
-  let current = new Date(start.getFullYear(), start.getMonth(), 1);
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const today = new Date().toISOString().split("T")[0];
+  let periodStart = leaseStart;
+  const MAX = billingCycle === "weekly" ? 156 : 48;
+  let count = 0;
   let runningBalance = 0;
 
-  while (current <= todayStart) {
-    const m = current.getMonth() + 1;
-    const y = current.getFullYear();
-    const monthPmts = payments.filter(p => p.month === m && p.year === y);
-    const paid = monthPmts.reduce((s, p) => s + Number(p.amount), 0);
+  while (count < MAX) {
+    if (periodStart > today) break;
+    const periodEnd = computePeriodEndLocal(periodStart, billingCycle);
+
+    let periodPayments: Payment[];
+    if (billingCycle === "monthly") {
+      const pDate = new Date(periodStart + "T00:00:00");
+      const m = pDate.getMonth() + 1;
+      const y = pDate.getFullYear();
+      periodPayments = payments.filter(p => p.month === m && p.year === y);
+    } else {
+      periodPayments = payments.filter(
+        p => p.paymentDate >= periodStart && p.paymentDate <= periodEnd
+      );
+    }
+
+    const paid = periodPayments.reduce((s, p) => s + Number(p.amount), 0);
     runningBalance += rentAmount - paid;
 
     let status: MonthRow["status"] = "pending";
     if (paid >= rentAmount) status = "paid";
     else if (paid > 0) status = "partial";
 
-    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const pDate = new Date(periodStart + "T00:00:00");
     rows.push({
-      month: m,
-      year: y,
-      label: `${MONTHS[m - 1]} ${y}`,
+      month: pDate.getMonth() + 1,
+      year: pDate.getFullYear(),
+      label: makePeriodLabel(periodStart, periodEnd, billingCycle),
       expected: rentAmount,
       paid,
       runningBalance,
       status,
-      payments: monthPmts,
+      payments: periodPayments,
     });
 
-    current.setMonth(current.getMonth() + 1);
+    periodStart = addDaysLocal(periodEnd, 1);
+    count++;
   }
-  return rows.reverse(); // Most recent first
+  return rows.reverse();
 }
 
 function generateLedgerHTML(
@@ -188,9 +241,9 @@ function generateLedgerHTML(
     <div class="summary-box"><div class="summary-lbl">Balance Due</div><div class="summary-val" style="color:${balanceDue > 0 ? '#dc2626' : '#16a34a'}">${fmt(balanceDue)}</div></div>
   </div>
 
-  <div class="section-title">Month-wise Ledger</div>
+  <div class="section-title">Period-wise Ledger</div>
   <table>
-    <thead><tr><th>Month</th><th>Expected</th><th>Paid</th><th>Method</th><th>Status</th><th>Balance</th></tr></thead>
+    <thead><tr><th>Period</th><th>Expected</th><th>Paid</th><th>Method</th><th>Status</th><th>Balance</th></tr></thead>
     <tbody>${monthRows || "<tr><td colspan='6' style='text-align:center;color:#999'>No history available</td></tr>"}</tbody>
   </table>
 
@@ -256,8 +309,8 @@ export default function RentLedgerDetailScreen() {
 
   const monthHistory = useMemo(() => {
     if (!tenant || !payments) return [];
-    return buildMonthHistory(tenant.leaseStart, tenant.rentAmount, payments as Payment[]);
-  }, [tenant, payments]);
+    return buildPeriodHistory(tenant.leaseStart, tenant.rentAmount, payments as Payment[], billingCycleValue);
+  }, [tenant, payments, billingCycleValue]);
 
   const totalPaid = anyTenant?.totalPaid ?? 0;
   const totalExpected = anyTenant?.totalExpected ?? 0;

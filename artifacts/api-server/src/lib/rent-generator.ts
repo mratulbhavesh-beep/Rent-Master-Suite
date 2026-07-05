@@ -1,5 +1,5 @@
-import { eq, desc } from "drizzle-orm";
-import { db, tenantsTable, propertiesTable, generatedRentsTable, businessSettingsTable } from "@workspace/db";
+import { and, eq, desc } from "drizzle-orm";
+import { db, tenantsTable, propertiesTable, generatedRentsTable, businessSettingsTable, rentRevisionsTable } from "@workspace/db";
 import { logger } from "./logger";
 
 function addMonths(dateStr: string, months: number): string {
@@ -25,6 +25,15 @@ function computePeriodEnd(periodStart: string, billingCycle: string): string {
     return addDays(periodStart, 6); // 7-day period: day 0 to day 6
   }
   return addDays(addMonths(periodStart, getCycleMonths(billingCycle)), -1);
+}
+
+function computeDueDate(
+  period: { start: string; end: string },
+  rentCollectionType: string,
+  gracePeriodDays: number
+): string {
+  const anchor = rentCollectionType === "advance" ? period.start : period.end;
+  return addDays(anchor, gracePeriodDays);
 }
 
 function computePeriods(
@@ -55,6 +64,62 @@ function computePeriods(
   return periods;
 }
 
+async function applyAutoEscalationIfDue(
+  tenant: typeof tenantsTable.$inferSelect,
+  today: string
+): Promise<string> {
+  if (!tenant.rentEscalation || tenant.escalationApply !== "automatic") {
+    return tenant.rentAmount;
+  }
+
+  const freqYears = tenant.escalationFrequencyYears ?? 1;
+
+  const [lastRevision] = await db
+    .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
+    .from(rentRevisionsTable)
+    .where(and(
+      eq(rentRevisionsTable.tenantId, tenant.id),
+      eq(rentRevisionsTable.changedBy, "automatic")
+    ))
+    .orderBy(desc(rentRevisionsTable.effectiveFrom))
+    .limit(1);
+
+  const referenceDate = lastRevision?.effectiveFrom ?? tenant.leaseStart;
+  const refMs = new Date(referenceDate + "T00:00:00Z").getTime();
+  const yearsSince = (Date.now() - refMs) / (1000 * 60 * 60 * 24 * 365.25);
+
+  if (yearsSince < freqYears) {
+    return tenant.rentAmount;
+  }
+
+  const previousRent = parseFloat(String(tenant.rentAmount));
+  const escalationType = tenant.escalationType ?? "percentage";
+  const escalationValue = parseFloat(String(tenant.escalationValue ?? 0));
+
+  let newRent: number;
+  if (escalationType === "percentage") {
+    newRent = previousRent * (1 + escalationValue / 100);
+  } else {
+    newRent = previousRent + escalationValue;
+  }
+
+  await db.update(tenantsTable)
+    .set({ rentAmount: String(newRent) })
+    .where(eq(tenantsTable.id, tenant.id));
+
+  await db.insert(rentRevisionsTable).values({
+    tenantId: tenant.id,
+    previousRent: String(previousRent),
+    newRent: String(newRent),
+    effectiveFrom: today,
+    reason: `Auto-escalation: ${escalationType === "percentage" ? `${escalationValue}%` : `+${escalationValue}`} applied`,
+    changedBy: "automatic",
+  });
+
+  logger.info({ tenantId: tenant.id, previousRent, newRent }, "Automatic rent escalation applied mid-lease");
+  return String(newRent);
+}
+
 export async function runRentGeneration(): Promise<number> {
   const today = new Date().toISOString().split("T")[0];
   let generated = 0;
@@ -83,6 +148,9 @@ export async function runRentGeneration(): Promise<number> {
         }
       }
 
+      // Apply automatic escalation if due before generating new periods
+      const rentAmountForGeneration = await applyAutoEscalationIfDue(tenant, today);
+
       const [lastRent] = await db
         .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
         .from(generatedRentsTable)
@@ -101,17 +169,18 @@ export async function runRentGeneration(): Promise<number> {
       );
 
       for (const period of periods) {
-        const dueDate = addDays(today, gracePeriodDays);
+        const dueDate = computeDueDate(period, rentCollectionType, gracePeriodDays);
         await db.insert(generatedRentsTable).values({
           tenantId: tenant.id,
           propertyId: tenant.propertyId,
-          amount: tenant.rentAmount,
+          amount: rentAmountForGeneration,
           billingPeriodStart: period.start,
           billingPeriodEnd: period.end,
           dueDate,
+          billingCycle,
           status: "pending",
           paymentId: null,
-        });
+        }).onConflictDoNothing();
         generated++;
       }
     } catch (err) {

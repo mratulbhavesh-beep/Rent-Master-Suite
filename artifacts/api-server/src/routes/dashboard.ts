@@ -5,13 +5,23 @@ import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
-function monthsElapsed(leaseStart: string): number {
+function periodsElapsed(leaseStart: string, billingCycle: string): number {
   const start = new Date(leaseStart);
   const now = new Date();
-  const months =
+
+  if (billingCycle === "weekly") {
+    const diffMs = now.getTime() - start.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    return Math.max(1, Math.floor(diffDays / 7) + 1);
+  }
+
+  const totalMonths =
     (now.getFullYear() - start.getFullYear()) * 12 +
     (now.getMonth() - start.getMonth()) + 1;
-  return Math.max(1, months);
+
+  if (billingCycle === "quarterly") return Math.max(1, Math.ceil(totalMonths / 3));
+  if (billingCycle === "yearly") return Math.max(1, Math.ceil(totalMonths / 12));
+  return Math.max(1, totalMonths); // monthly
 }
 
 router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Promise<void> => {
@@ -38,7 +48,12 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
 
   const activeTenants = userPropertyIds.length > 0
     ? await db
-        .select({ id: tenantsTable.id, rentAmount: tenantsTable.rentAmount, leaseStart: tenantsTable.leaseStart })
+        .select({
+          id: tenantsTable.id,
+          rentAmount: tenantsTable.rentAmount,
+          leaseStart: tenantsTable.leaseStart,
+          billingCycle: tenantsTable.billingCycle,
+        })
         .from(tenantsTable)
         .where(sql`${tenantsTable.status} = 'active' AND ${tenantsTable.propertyId} = ANY(${sql.raw(`ARRAY[${userPropertyIds.join(",")}]::int[]`)})`)
     : [];
@@ -69,8 +84,9 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
   }
   let totalDue = 0;
   for (const t of activeTenants) {
-    const months = monthsElapsed(t.leaseStart);
-    const expected = months * parseFloat(String(t.rentAmount));
+    const cycle = t.billingCycle ?? "monthly";
+    const periods = periodsElapsed(t.leaseStart, cycle);
+    const expected = periods * parseFloat(String(t.rentAmount));
     const paid = paymentsByTenant.get(t.id) ?? 0;
     totalDue += Math.max(0, expected - paid);
   }
