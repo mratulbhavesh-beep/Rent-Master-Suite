@@ -735,6 +735,50 @@ paths:
         "404":
           description: Not found
 
+  /tenants/{id}/renewals:
+    get:
+      operationId: listLeaseRenewals
+      tags: [tenants]
+      summary: List lease renewal history for a tenant
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of lease renewals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LeaseRenewal"
+    post:
+      operationId: renewLease
+      tags: [tenants]
+      summary: Trigger a manual lease renewal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeaseRenewalInput"
+      responses:
+        "200":
+          description: Lease renewed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaseRenewal"
+
   /tenants/{id}/agreements:
     get:
       operationId: listTenantAgreements
@@ -1447,6 +1491,23 @@ components:
           type: integer
         useBusinessDefault:
           type: boolean
+        autoRenewal:
+          type: boolean
+        renewalDuration:
+          type: string
+          enum: [weekly, monthly, yearly]
+        rentEscalation:
+          type: boolean
+        escalationType:
+          type: string
+          enum: [percentage, fixed]
+        escalationValue:
+          type: number
+        escalationApply:
+          type: string
+          enum: [automatic, manual]
+        renewalNotice:
+          type: integer
         createdAt:
           type: string
         monthsElapsed:
@@ -1509,6 +1570,23 @@ components:
           type: integer
         useBusinessDefault:
           type: boolean
+        autoRenewal:
+          type: boolean
+        renewalDuration:
+          type: string
+          enum: [weekly, monthly, yearly]
+        rentEscalation:
+          type: boolean
+        escalationType:
+          type: string
+          enum: [percentage, fixed]
+        escalationValue:
+          type: number
+        escalationApply:
+          type: string
+          enum: [automatic, manual]
+        renewalNotice:
+          type: integer
 
     TenantUpdate:
       type: object
@@ -1553,6 +1631,64 @@ components:
           type: integer
         useBusinessDefault:
           type: boolean
+        autoRenewal:
+          type: boolean
+        renewalDuration:
+          type: string
+          enum: [weekly, monthly, yearly]
+        rentEscalation:
+          type: boolean
+        escalationType:
+          type: string
+          enum: [percentage, fixed]
+        escalationValue:
+          type: number
+        escalationApply:
+          type: string
+          enum: [automatic, manual]
+        renewalNotice:
+          type: integer
+
+    LeaseRenewal:
+      type: object
+      required: [id, tenantId, renewalDate, previousLeaseStart, previousLeaseEnd, newLeaseStart, newLeaseEnd, previousRent, newRent, increaseAmount, increasePercent, renewedBy, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        renewalDate:
+          type: string
+        previousLeaseStart:
+          type: string
+        previousLeaseEnd:
+          type: string
+        newLeaseStart:
+          type: string
+        newLeaseEnd:
+          type: string
+        previousRent:
+          type: number
+        newRent:
+          type: number
+        increaseAmount:
+          type: number
+        increasePercent:
+          type: number
+        renewedBy:
+          type: string
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    LeaseRenewalInput:
+      type: object
+      properties:
+        newRentAmount:
+          type: number
+        notes:
+          type: string
 
     Payment:
       type: object

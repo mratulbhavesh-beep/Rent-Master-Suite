@@ -23,6 +23,13 @@ export const tenantsTable = pgTable("tenants", {
   rentCollectionType: text("rent_collection_type").notNull().default("post_paid"),
   gracePeriodDays: integer("grace_period_days").notNull().default(5),
   useBusinessDefault: boolean("use_business_default").notNull().default(true),
+  autoRenewal: boolean("auto_renewal").notNull().default(false),
+  renewalDuration: text("renewal_duration").notNull().default("yearly"),
+  rentEscalation: boolean("rent_escalation").notNull().default(false),
+  escalationType: text("escalation_type").notNull().default("percentage"),
+  escalationValue: numeric("escalation_value", { precision: 10, scale: 4 }).notNull().default("0"),
+  escalationApply: text("escalation_apply").notNull().default("manual"),
+  renewalNotice: integer("renewal_notice").notNull().default(30),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

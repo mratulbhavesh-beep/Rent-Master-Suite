@@ -249,6 +249,31 @@ export const TenantRentCollectionType = {
   post_paid: 'post_paid',
 } as const;
 
+export type TenantRenewalDuration = typeof TenantRenewalDuration[keyof typeof TenantRenewalDuration];
+
+
+export const TenantRenewalDuration = {
+  weekly: 'weekly',
+  monthly: 'monthly',
+  yearly: 'yearly',
+} as const;
+
+export type TenantEscalationType = typeof TenantEscalationType[keyof typeof TenantEscalationType];
+
+
+export const TenantEscalationType = {
+  percentage: 'percentage',
+  fixed: 'fixed',
+} as const;
+
+export type TenantEscalationApply = typeof TenantEscalationApply[keyof typeof TenantEscalationApply];
+
+
+export const TenantEscalationApply = {
+  automatic: 'automatic',
+  manual: 'manual',
+} as const;
+
 /**
  * @nullable
  */
@@ -287,6 +312,13 @@ export interface Tenant {
   rentCollectionType?: TenantRentCollectionType;
   gracePeriodDays?: number;
   useBusinessDefault?: boolean;
+  autoRenewal?: boolean;
+  renewalDuration?: TenantRenewalDuration;
+  rentEscalation?: boolean;
+  escalationType?: TenantEscalationType;
+  escalationValue?: number;
+  escalationApply?: TenantEscalationApply;
+  renewalNotice?: number;
   createdAt: string;
   monthsElapsed?: number;
   totalExpected?: number;
@@ -334,6 +366,31 @@ export const TenantInputRentCollectionType = {
   post_paid: 'post_paid',
 } as const;
 
+export type TenantInputRenewalDuration = typeof TenantInputRenewalDuration[keyof typeof TenantInputRenewalDuration];
+
+
+export const TenantInputRenewalDuration = {
+  weekly: 'weekly',
+  monthly: 'monthly',
+  yearly: 'yearly',
+} as const;
+
+export type TenantInputEscalationType = typeof TenantInputEscalationType[keyof typeof TenantInputEscalationType];
+
+
+export const TenantInputEscalationType = {
+  percentage: 'percentage',
+  fixed: 'fixed',
+} as const;
+
+export type TenantInputEscalationApply = typeof TenantInputEscalationApply[keyof typeof TenantInputEscalationApply];
+
+
+export const TenantInputEscalationApply = {
+  automatic: 'automatic',
+  manual: 'manual',
+} as const;
+
 export interface TenantInput {
   name: string;
   email: string;
@@ -353,6 +410,13 @@ export interface TenantInput {
   rentCollectionType?: TenantInputRentCollectionType;
   gracePeriodDays?: number;
   useBusinessDefault?: boolean;
+  autoRenewal?: boolean;
+  renewalDuration?: TenantInputRenewalDuration;
+  rentEscalation?: boolean;
+  escalationType?: TenantInputEscalationType;
+  escalationValue?: number;
+  escalationApply?: TenantInputEscalationApply;
+  renewalNotice?: number;
 }
 
 export type TenantUpdateStatus = typeof TenantUpdateStatus[keyof typeof TenantUpdateStatus];
@@ -390,6 +454,31 @@ export const TenantUpdateRentCollectionType = {
   post_paid: 'post_paid',
 } as const;
 
+export type TenantUpdateRenewalDuration = typeof TenantUpdateRenewalDuration[keyof typeof TenantUpdateRenewalDuration];
+
+
+export const TenantUpdateRenewalDuration = {
+  weekly: 'weekly',
+  monthly: 'monthly',
+  yearly: 'yearly',
+} as const;
+
+export type TenantUpdateEscalationType = typeof TenantUpdateEscalationType[keyof typeof TenantUpdateEscalationType];
+
+
+export const TenantUpdateEscalationType = {
+  percentage: 'percentage',
+  fixed: 'fixed',
+} as const;
+
+export type TenantUpdateEscalationApply = typeof TenantUpdateEscalationApply[keyof typeof TenantUpdateEscalationApply];
+
+
+export const TenantUpdateEscalationApply = {
+  automatic: 'automatic',
+  manual: 'manual',
+} as const;
+
 export interface TenantUpdate {
   name?: string;
   email?: string;
@@ -409,6 +498,36 @@ export interface TenantUpdate {
   rentCollectionType?: TenantUpdateRentCollectionType;
   gracePeriodDays?: number;
   useBusinessDefault?: boolean;
+  autoRenewal?: boolean;
+  renewalDuration?: TenantUpdateRenewalDuration;
+  rentEscalation?: boolean;
+  escalationType?: TenantUpdateEscalationType;
+  escalationValue?: number;
+  escalationApply?: TenantUpdateEscalationApply;
+  renewalNotice?: number;
+}
+
+export interface LeaseRenewal {
+  id: number;
+  tenantId: number;
+  renewalDate: string;
+  previousLeaseStart: string;
+  previousLeaseEnd: string;
+  newLeaseStart: string;
+  newLeaseEnd: string;
+  previousRent: number;
+  newRent: number;
+  increaseAmount: number;
+  increasePercent: number;
+  renewedBy: string;
+  /** @nullable */
+  notes?: string | null;
+  createdAt: string;
+}
+
+export interface LeaseRenewalInput {
+  newRentAmount?: number;
+  notes?: string;
 }
 
 export type PaymentMethod = typeof PaymentMethod[keyof typeof PaymentMethod];

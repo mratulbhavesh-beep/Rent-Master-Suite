@@ -14,6 +14,8 @@ import {
   useDeleteDocument,
   useListGeneratedRents, getListGeneratedRentsQueryKey,
   useGetBusinessBillingSettings, getGetBusinessBillingSettingsQueryKey,
+  useListLeaseRenewals, getListLeaseRenewalsQueryKey, useRenewLease,
+  LeaseRenewal,
   Agreement,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -93,6 +95,18 @@ export default function TenantDetailScreen() {
   const [gracePeriodDays, setGracePeriodDays] = useState(5);
   const [useBusinessDefault, setUseBusinessDefault] = useState(true);
 
+  // Lease Management state
+  const [autoRenewal, setAutoRenewal] = useState(false);
+  const [renewalDuration, setRenewalDuration] = useState<"weekly" | "monthly" | "yearly">("yearly");
+  const [rentEscalation, setRentEscalation] = useState(false);
+  const [escalationType, setEscalationType] = useState<"percentage" | "fixed">("percentage");
+  const [escalationValue, setEscalationValue] = useState("0");
+  const [escalationApply, setEscalationApply] = useState<"automatic" | "manual">("manual");
+  const [renewalNotice, setRenewalNotice] = useState(30);
+  const [showRenewalForm, setShowRenewalForm] = useState(false);
+  const [newRentForRenewal, setNewRentForRenewal] = useState("");
+  const [renewalNotes, setRenewalNotes] = useState("");
+
   // Agreement form state
   const [showAgrForm, setShowAgrForm] = useState(false);
   const [editingAgrId, setEditingAgrId] = useState<number | null>(null);
@@ -143,6 +157,12 @@ export default function TenantDetailScreen() {
     query: { queryKey: getGetBusinessBillingSettingsQueryKey() },
   });
 
+  const { data: leaseRenewals, refetch: refetchRenewals } = useListLeaseRenewals(
+    tenantId,
+    { query: { queryKey: getListLeaseRenewalsQueryKey(tenantId), enabled: !!tenantId } }
+  );
+  const renewMutation = useRenewLease();
+
   useEffect(() => {
     if (tenant) {
       setName(tenant.name);
@@ -161,6 +181,13 @@ export default function TenantDetailScreen() {
       setRentCollectionType(((t as any).rentCollectionType as "advance" | "post_paid") ?? "post_paid");
       setGracePeriodDays((t as any).gracePeriodDays ?? 5);
       setUseBusinessDefault((t as any).useBusinessDefault ?? true);
+      setAutoRenewal((t as any).autoRenewal ?? false);
+      setRenewalDuration(((t as any).renewalDuration as "weekly" | "monthly" | "yearly") ?? "yearly");
+      setRentEscalation((t as any).rentEscalation ?? false);
+      setEscalationType(((t as any).escalationType as "percentage" | "fixed") ?? "percentage");
+      setEscalationValue(String((t as any).escalationValue ?? "0"));
+      setEscalationApply(((t as any).escalationApply as "automatic" | "manual") ?? "manual");
+      setRenewalNotice((t as any).renewalNotice ?? 30);
     }
   }, [tenant]);
 
@@ -183,6 +210,13 @@ export default function TenantDetailScreen() {
           rentCollectionType: useBusinessDefault ? undefined : rentCollectionType,
           gracePeriodDays: useBusinessDefault ? undefined : gracePeriodDays,
           useBusinessDefault,
+          autoRenewal,
+          renewalDuration,
+          rentEscalation,
+          escalationType,
+          escalationValue: parseFloat(escalationValue) || 0,
+          escalationApply,
+          renewalNotice,
         }
       },
       {
@@ -223,6 +257,32 @@ export default function TenantDetailScreen() {
         { text: "Delete", style: "destructive", onPress: performDelete },
       ]);
     }
+  };
+
+  const handleRenewal = (customRentAmount?: number) => {
+    const body: { newRentAmount?: number; notes?: string } = {};
+    if (customRentAmount != null && customRentAmount > 0) body.newRentAmount = customRentAmount;
+    if (renewalNotes.trim()) body.notes = renewalNotes.trim();
+    renewMutation.mutate(
+      { id: tenantId, data: body },
+      {
+        onSuccess: (data: LeaseRenewal) => {
+          queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(tenantId) });
+          queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getListLeaseRenewalsQueryKey(tenantId) });
+          queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+          refetchRenewals();
+          setShowRenewalForm(false);
+          setNewRentForRenewal("");
+          setRenewalNotes("");
+          Alert.alert(
+            "Lease Renewed ✓",
+            `New lease: ${fmtDate(data.newLeaseStart)} → ${fmtDate(data.newLeaseEnd)}\nNew Rent: ₹${Math.round(data.newRent).toLocaleString("en-IN")}`
+          );
+        },
+        onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to renew lease"),
+      }
+    );
   };
 
   const handleDeletePayment = (paymentId: number) => {
@@ -551,6 +611,113 @@ export default function TenantDetailScreen() {
         <ScrollView contentContainerStyle={styles.content}>
           {!isEditing ? (
             <>
+              {/* Lease expiry notification banner */}
+              {(() => {
+                const t = tenant as any;
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const expiry = new Date(tenant.leaseEnd + "T00:00:00");
+                const diffMs = expiry.getTime() - today.getTime();
+                const daysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+                const notice = t.renewalNotice ?? 30;
+                if (daysLeft > notice) return null;
+                const isExpired = daysLeft < 0;
+                const isUrgent = !isExpired && daysLeft <= 7;
+                const bannerColor = isExpired ? colors.destructive : isUrgent ? colors.warning : colors.primary;
+                return (
+                  <View style={{ backgroundColor: `${bannerColor}14`, borderWidth: 1, borderColor: `${bannerColor}40`, borderRadius: 12, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+                    <Feather name={isExpired ? "alert-octagon" : "alert-triangle"} size={18} color={bannerColor} style={{ marginTop: 1 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: bannerColor }}>
+                        {isExpired ? "Lease Expired" : isUrgent ? `Lease Expiring in ${daysLeft} day${daysLeft === 1 ? "" : "s"}` : `Lease Expiring in ${daysLeft} days`}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors.mutedForeground, marginTop: 3 }}>
+                        {isExpired
+                          ? `Lease ended ${fmtDate(tenant.leaseEnd)}. ${t.autoRenewal ? "Auto-renewal will process shortly." : "Manual renewal required."}`
+                          : `Lease ends ${fmtDate(tenant.leaseEnd)}. ${t.autoRenewal ? "Auto-renewal enabled." : "Renewal action needed."}`}
+                      </Text>
+                      {!t.autoRenewal && (
+                        <TouchableOpacity
+                          onPress={() => setShowRenewalForm(v => !v)}
+                          style={{ marginTop: 8, flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: `${bannerColor}18`, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, alignSelf: "flex-start" }}
+                        >
+                          <Feather name="refresh-cw" size={13} color={bannerColor} />
+                          <Text style={{ fontSize: 12, fontWeight: "700", color: bannerColor }}>Renew Lease</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                );
+              })()}
+
+              {/* Renewal form (inline quick-action) */}
+              {showRenewalForm && (
+                <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.primary, borderWidth: 1.5, marginBottom: 12 }]}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <Feather name="refresh-cw" size={15} color={colors.primary} />
+                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.foreground }}>Renew Lease</Text>
+                    <TouchableOpacity style={{ marginLeft: "auto" as any }} onPress={() => setShowRenewalForm(false)}>
+                      <Feather name="x" size={18} color={colors.mutedForeground} />
+                    </TouchableOpacity>
+                  </View>
+                  {(() => {
+                    const t = tenant as any;
+                    const prevRent = tenant.rentAmount;
+                    const escalationVal = parseFloat(String(t.escalationValue ?? 0));
+                    let projectedRent = prevRent;
+                    if (t.rentEscalation && t.escalationApply === "automatic") {
+                      if (t.escalationType === "percentage") projectedRent = prevRent * (1 + escalationVal / 100);
+                      else projectedRent = prevRent + escalationVal;
+                    }
+                    return (
+                      <>
+                        <View style={{ flexDirection: "row", gap: 12, marginBottom: 10 }}>
+                          <View style={{ flex: 1, backgroundColor: `${colors.primary}10`, borderRadius: 10, padding: 10, alignItems: "center" }}>
+                            <Text style={{ fontSize: 11, color: colors.mutedForeground }}>Current Rent</Text>
+                            <Text style={{ fontSize: 14, fontWeight: "700", color: colors.foreground }}>₹{Math.round(prevRent).toLocaleString("en-IN")}</Text>
+                          </View>
+                          <View style={{ flex: 1, backgroundColor: `${colors.success}10`, borderRadius: 10, padding: 10, alignItems: "center" }}>
+                            <Text style={{ fontSize: 11, color: colors.mutedForeground }}>Projected Rent</Text>
+                            <Text style={{ fontSize: 14, fontWeight: "700", color: colors.success }}>₹{Math.round(projectedRent).toLocaleString("en-IN")}</Text>
+                          </View>
+                        </View>
+                        <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12 }]}>Override New Rent (optional)</Text>
+                        <TextInput
+                          style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border, marginBottom: 8 }]}
+                          value={newRentForRenewal}
+                          onChangeText={setNewRentForRenewal}
+                          keyboardType="numeric"
+                          placeholder={`Leave blank to use ₹${Math.round(projectedRent).toLocaleString("en-IN")}`}
+                          placeholderTextColor={colors.mutedForeground}
+                        />
+                        <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12 }]}>Notes (optional)</Text>
+                        <TextInput
+                          style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border, marginBottom: 12 }]}
+                          value={renewalNotes}
+                          onChangeText={setRenewalNotes}
+                          placeholder="e.g. Annual renewal, 5% increase"
+                          placeholderTextColor={colors.mutedForeground}
+                        />
+                        <TouchableOpacity
+                          style={[styles.recordBtn, { backgroundColor: colors.primary, justifyContent: "center" }]}
+                          onPress={() => {
+                            const parsed = parseFloat(newRentForRenewal);
+                            handleRenewal(isNaN(parsed) ? undefined : parsed);
+                          }}
+                          disabled={renewMutation.isPending}
+                          activeOpacity={0.85}
+                        >
+                          {renewMutation.isPending
+                            ? <ActivityIndicator size="small" color={colors.primaryForeground} />
+                            : <Feather name="check-circle" size={16} color={colors.primaryForeground} />}
+                          <Text style={{ color: colors.primaryForeground, fontWeight: "700", fontSize: 14 }}>Confirm Renewal</Text>
+                        </TouchableOpacity>
+                      </>
+                    );
+                  })()}
+                </View>
+              )}
+
               {/* Profile card */}
               <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={styles.avatarSection}>
@@ -606,6 +773,40 @@ export default function TenantDetailScreen() {
                   </View>
                 ))}
               </View>
+
+              {/* Lease Management info card */}
+              {(() => {
+                const t = tenant as any;
+                return (
+                  <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <Feather name="refresh-cw" size={16} color={colors.primary} />
+                      <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Lease Management</Text>
+                      <View style={[styles.badge, { marginLeft: "auto" as any, backgroundColor: t.autoRenewal ? `${colors.success}18` : `${colors.border}` }]}>
+                        <Text style={{ fontSize: 10, fontWeight: "800", color: t.autoRenewal ? colors.success : colors.mutedForeground }}>
+                          {t.autoRenewal ? "AUTO-RENEW ON" : "MANUAL"}
+                        </Text>
+                      </View>
+                    </View>
+                    {([
+                      { label: "Auto Renewal", value: t.autoRenewal ? "Enabled" : "Disabled" },
+                      ...(t.autoRenewal ? [{ label: "Renewal Duration", value: (t.renewalDuration as string ?? "yearly").charAt(0).toUpperCase() + (t.renewalDuration as string ?? "yearly").slice(1) }] : []),
+                      { label: "Rent Escalation", value: t.rentEscalation ? "Enabled" : "Disabled" },
+                      ...(t.rentEscalation ? [
+                        { label: "Escalation Type", value: t.escalationType === "fixed" ? "Fixed Amount" : "Percentage" },
+                        { label: "Escalation Value", value: t.escalationType === "fixed" ? `₹${parseFloat(String(t.escalationValue)).toLocaleString("en-IN")}` : `${parseFloat(String(t.escalationValue))}%` },
+                        { label: "Apply", value: t.escalationApply === "automatic" ? "Automatic" : "Manual" },
+                      ] : []),
+                      { label: "Renewal Notice", value: `${t.renewalNotice ?? 30} days before expiry` },
+                    ] as { label: string; value: string }[]).map((row, idx, arr) => (
+                      <View key={row.label} style={[styles.infoRow, { borderBottomColor: colors.border }, idx === arr.length - 1 && { borderBottomWidth: 0 }]}>
+                        <Text style={[styles.label, { color: colors.mutedForeground }]}>{row.label}</Text>
+                        <Text style={[styles.value, { color: colors.cardForeground }]}>{row.value}</Text>
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
 
               {/* Balance card */}
               <View style={[styles.balanceCard, {
@@ -744,6 +945,63 @@ export default function TenantDetailScreen() {
                   </View>
                 );
               })()}
+
+              {/* Lease Renewal History */}
+              {leaseRenewals && leaseRenewals.length > 0 && (
+                <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <Feather name="git-branch" size={16} color={colors.primary} />
+                    <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Renewal History</Text>
+                    <View style={[styles.badge, { marginLeft: "auto" as any, backgroundColor: `${colors.primary}14` }]}>
+                      <Text style={{ fontSize: 10, fontWeight: "800", color: colors.primary }}>{leaseRenewals.length} RENEWAL{leaseRenewals.length !== 1 ? "S" : ""}</Text>
+                    </View>
+                  </View>
+                  {leaseRenewals.map((r, idx) => {
+                    const increase = r.increaseAmount ?? 0;
+                    const pct = r.increasePercent ?? 0;
+                    return (
+                      <View key={r.id} style={[{ paddingVertical: 12, borderBottomWidth: idx < leaseRenewals.length - 1 ? 1 : 0, borderBottomColor: colors.border }]}>
+                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                          <Text style={{ fontSize: 13, fontWeight: "700", color: colors.foreground }}>{fmtDate(r.renewalDate)}</Text>
+                          <View style={[styles.badge, { backgroundColor: r.renewedBy === "automatic" ? `${colors.primary}18` : `${colors.success}18` }]}>
+                            <Text style={{ fontSize: 10, fontWeight: "800", color: r.renewedBy === "automatic" ? colors.primary : colors.success }}>
+                              {(r.renewedBy ?? "manual").toUpperCase()}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
+                          <View style={{ flex: 1, minWidth: 120 }}>
+                            <Text style={{ fontSize: 11, color: colors.mutedForeground }}>Prev Lease</Text>
+                            <Text style={{ fontSize: 12, color: colors.foreground, fontWeight: "500" }}>{fmtDate(r.previousLeaseStart)} → {fmtDate(r.previousLeaseEnd)}</Text>
+                          </View>
+                          <View style={{ flex: 1, minWidth: 120 }}>
+                            <Text style={{ fontSize: 11, color: colors.mutedForeground }}>New Lease</Text>
+                            <Text style={{ fontSize: 12, color: colors.foreground, fontWeight: "500" }}>{fmtDate(r.newLeaseStart)} → {fmtDate(r.newLeaseEnd)}</Text>
+                          </View>
+                        </View>
+                        <View style={{ flexDirection: "row", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+                          <View>
+                            <Text style={{ fontSize: 11, color: colors.mutedForeground }}>Old Rent</Text>
+                            <Text style={{ fontSize: 13, fontWeight: "700", color: colors.foreground }}>₹{Math.round(r.previousRent).toLocaleString("en-IN")}</Text>
+                          </View>
+                          <Feather name="arrow-right" size={14} color={colors.mutedForeground} style={{ alignSelf: "flex-end", marginBottom: 2 }} />
+                          <View>
+                            <Text style={{ fontSize: 11, color: colors.mutedForeground }}>New Rent</Text>
+                            <Text style={{ fontSize: 13, fontWeight: "700", color: colors.success }}>₹{Math.round(r.newRent).toLocaleString("en-IN")}</Text>
+                          </View>
+                          {increase !== 0 && (
+                            <View style={{ marginLeft: "auto" as any, alignItems: "flex-end" }}>
+                              <Text style={{ fontSize: 11, color: colors.mutedForeground }}>Increase</Text>
+                              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.success }}>+₹{Math.round(increase).toLocaleString("en-IN")} ({parseFloat(String(pct)).toFixed(1)}%)</Text>
+                            </View>
+                          )}
+                        </View>
+                        {r.notes && <Text style={{ fontSize: 12, color: colors.mutedForeground, marginTop: 6, fontStyle: "italic" }}>{r.notes}</Text>}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
 
               {/* Rent Ledger */}
               <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
@@ -939,6 +1197,167 @@ export default function TenantDetailScreen() {
                   </View>
                 </View>
               )}
+
+              {/* Lease Management */}
+              <View style={[styles.sectionDivider, { backgroundColor: colors.border }]} />
+              <Text style={[styles.inputLabel, { color: colors.foreground, marginBottom: 4 }]}>Lease Management</Text>
+              <Text style={{ fontSize: 12, color: colors.mutedForeground, marginBottom: 12 }}>
+                Configure automatic renewal, rent escalation, and notification preferences.
+              </Text>
+
+              {/* Auto Renewal */}
+              <TouchableOpacity
+                style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 8 }}
+                onPress={() => setAutoRenewal(v => !v)}
+                activeOpacity={0.7}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground }}>Auto Renewal</Text>
+                  <Text style={{ fontSize: 12, color: colors.mutedForeground, marginTop: 2 }}>Automatically extend lease on expiry</Text>
+                </View>
+                <View style={[{ width: 46, height: 26, borderRadius: 13, padding: 2, backgroundColor: autoRenewal ? colors.primary : colors.border, justifyContent: "center" }]}>
+                  <View style={[{ width: 22, height: 22, borderRadius: 11, backgroundColor: "#fff", alignSelf: autoRenewal ? "flex-end" : "flex-start" }]} />
+                </View>
+              </TouchableOpacity>
+
+              {autoRenewal && (
+                <View style={{ marginTop: 10, gap: 4 }}>
+                  <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Renewal Duration</Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                    {(["weekly", "monthly", "yearly"] as const).map(opt => (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[{ flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5, alignItems: "center" },
+                          renewalDuration === opt
+                            ? { backgroundColor: `${colors.primary}15`, borderColor: colors.primary }
+                            : { backgroundColor: colors.input, borderColor: colors.border }]}
+                        onPress={() => setRenewalDuration(opt)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: "600", color: renewalDuration === opt ? colors.primary : colors.foreground, textTransform: "capitalize" }}>{opt}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Rent Escalation */}
+              <TouchableOpacity
+                style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 8, marginTop: 8 }}
+                onPress={() => setRentEscalation(v => !v)}
+                activeOpacity={0.7}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground }}>Rent Escalation</Text>
+                  <Text style={{ fontSize: 12, color: colors.mutedForeground, marginTop: 2 }}>Increase rent automatically during renewal</Text>
+                </View>
+                <View style={[{ width: 46, height: 26, borderRadius: 13, padding: 2, backgroundColor: rentEscalation ? colors.primary : colors.border, justifyContent: "center" }]}>
+                  <View style={[{ width: 22, height: 22, borderRadius: 11, backgroundColor: "#fff", alignSelf: rentEscalation ? "flex-end" : "flex-start" }]} />
+                </View>
+              </TouchableOpacity>
+
+              {rentEscalation && (
+                <View style={{ marginTop: 10, gap: 12 }}>
+                  <View>
+                    <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Escalation Type</Text>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                      {([["percentage", "Percentage (%)"], ["fixed", "Fixed Amount (₹)"]] as const).map(([opt, label]) => (
+                        <TouchableOpacity
+                          key={opt}
+                          style={[{ flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5, alignItems: "center" },
+                            escalationType === opt
+                              ? { backgroundColor: `${colors.primary}15`, borderColor: colors.primary }
+                              : { backgroundColor: colors.input, borderColor: colors.border }]}
+                          onPress={() => setEscalationType(opt)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: "600", color: escalationType === opt ? colors.primary : colors.foreground }}>{label}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                  <View>
+                    <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>
+                      {escalationType === "percentage" ? "Increase By (%)" : "Increase By (₹)"}
+                    </Text>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                      {(escalationType === "percentage" ? ["5", "8", "10"] : ["500", "1000", "2000"]).map(preset => (
+                        <TouchableOpacity
+                          key={preset}
+                          style={[{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5 },
+                            escalationValue === preset
+                              ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                              : { backgroundColor: colors.input, borderColor: colors.border }]}
+                          onPress={() => setEscalationValue(preset)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: "600", color: escalationValue === preset ? colors.primaryForeground : colors.foreground }}>
+                            {escalationType === "percentage" ? `${preset}%` : `₹${preset}`}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                      <TextInput
+                        style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border, flex: 1, marginBottom: 0, height: 40 }]}
+                        value={escalationValue}
+                        onChangeText={setEscalationValue}
+                        keyboardType="numeric"
+                        placeholder={escalationType === "percentage" ? "Custom %" : "Custom ₹"}
+                        placeholderTextColor={colors.mutedForeground}
+                      />
+                    </View>
+                    {tenant && escalationValue && parseFloat(escalationValue) > 0 && (
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8, backgroundColor: `${colors.success}12`, padding: 10, borderRadius: 8 }}>
+                        <Feather name="trending-up" size={12} color={colors.success} />
+                        <Text style={{ fontSize: 12, color: colors.success, fontWeight: "600" }}>
+                          ₹{Math.round(tenant.rentAmount).toLocaleString("en-IN")} →{" "}
+                          ₹{escalationType === "percentage"
+                            ? Math.round(tenant.rentAmount * (1 + parseFloat(escalationValue) / 100)).toLocaleString("en-IN")
+                            : Math.round(tenant.rentAmount + parseFloat(escalationValue)).toLocaleString("en-IN")}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <View>
+                    <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Apply</Text>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                      {([["automatic", "Automatic"], ["manual", "Manual"]] as const).map(([opt, label]) => (
+                        <TouchableOpacity
+                          key={opt}
+                          style={[{ flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5, alignItems: "center" },
+                            escalationApply === opt
+                              ? { backgroundColor: `${colors.primary}15`, borderColor: colors.primary }
+                              : { backgroundColor: colors.input, borderColor: colors.border }]}
+                          onPress={() => setEscalationApply(opt)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: "600", color: escalationApply === opt ? colors.primary : colors.foreground }}>{label}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {/* Renewal Notice */}
+              <View style={{ marginTop: 12 }}>
+                <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Renewal Notice Period</Text>
+                <Text style={{ fontSize: 11, color: colors.mutedForeground, marginBottom: 6 }}>Show expiry reminder this many days before lease ends</Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  {([30, 60, 90] as const).map(d => (
+                    <TouchableOpacity
+                      key={d}
+                      style={[{ flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5, alignItems: "center" },
+                        renewalNotice === d
+                          ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                          : { backgroundColor: colors.input, borderColor: colors.border }]}
+                      onPress={() => setRenewalNotice(d)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: "600", color: renewalNotice === d ? colors.primaryForeground : colors.foreground }}>{d} days</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
             </View>
           )}
         </ScrollView>

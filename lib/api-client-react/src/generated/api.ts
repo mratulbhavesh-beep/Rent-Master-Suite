@@ -41,6 +41,8 @@ import type {
   GoogleSignInInput,
   HealthStatus,
   ImportBackupInput,
+  LeaseRenewal,
+  LeaseRenewalInput,
   ListExpensesParams,
   ListGeneratedRentsParams,
   ListMaintenanceRequestsParams,
@@ -2603,6 +2605,154 @@ export const useDeletePayment = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getDeletePaymentMutationOptions(options));
+    }
+
+export const getListLeaseRenewalsUrl = (id: number,) => {
+
+
+
+
+  return `/api/tenants/${id}/renewals`
+}
+
+/**
+ * @summary List lease renewal history for a tenant
+ */
+export const listLeaseRenewals = async (id: number, options?: RequestInit): Promise<LeaseRenewal[]> => {
+
+  return customFetch<LeaseRenewal[]>(getListLeaseRenewalsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListLeaseRenewalsQueryKey = (id: number,) => {
+    return [
+    `/api/tenants/${id}/renewals`
+    ] as const;
+    }
+
+
+export const getListLeaseRenewalsQueryOptions = <TData = Awaited<ReturnType<typeof listLeaseRenewals>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listLeaseRenewals>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListLeaseRenewalsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLeaseRenewals>>> = ({ signal }) => listLeaseRenewals(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLeaseRenewals>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListLeaseRenewalsQueryResult = NonNullable<Awaited<ReturnType<typeof listLeaseRenewals>>>
+export type ListLeaseRenewalsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List lease renewal history for a tenant
+ */
+
+export function useListLeaseRenewals<TData = Awaited<ReturnType<typeof listLeaseRenewals>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listLeaseRenewals>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListLeaseRenewalsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRenewLeaseUrl = (id: number,) => {
+
+
+
+
+  return `/api/tenants/${id}/renewals`
+}
+
+/**
+ * @summary Trigger a manual lease renewal
+ */
+export const renewLease = async (id: number,
+    leaseRenewalInput?: LeaseRenewalInput, options?: RequestInit): Promise<LeaseRenewal> => {
+
+  return customFetch<LeaseRenewal>(getRenewLeaseUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(leaseRenewalInput)
+  }
+);}
+
+
+
+
+export const getRenewLeaseMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renewLease>>, TError,{id: number;data?: BodyType<LeaseRenewalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof renewLease>>, TError,{id: number;data?: BodyType<LeaseRenewalInput>}, TContext> => {
+
+const mutationKey = ['renewLease'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof renewLease>>, {id: number;data?: BodyType<LeaseRenewalInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  renewLease(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RenewLeaseMutationResult = NonNullable<Awaited<ReturnType<typeof renewLease>>>
+    export type RenewLeaseMutationBody = BodyType<LeaseRenewalInput> | undefined
+    export type RenewLeaseMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Trigger a manual lease renewal
+ */
+export const useRenewLease = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renewLease>>, TError,{id: number;data?: BodyType<LeaseRenewalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof renewLease>>,
+        TError,
+        {id: number;data?: BodyType<LeaseRenewalInput>},
+        TContext
+      > => {
+      return useMutation(getRenewLeaseMutationOptions(options));
     }
 
 export const getListTenantAgreementsUrl = (id: number,) => {

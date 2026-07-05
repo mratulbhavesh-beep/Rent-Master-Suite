@@ -8,6 +8,9 @@
 import type { TenantActiveAgreementStatus } from './tenantActiveAgreementStatus';
 import type { TenantBillingCycle } from './tenantBillingCycle';
 import type { TenantDepositStatus } from './tenantDepositStatus';
+import type { TenantEscalationApply } from './tenantEscalationApply';
+import type { TenantEscalationType } from './tenantEscalationType';
+import type { TenantRenewalDuration } from './tenantRenewalDuration';
 import type { TenantRentCollectionType } from './tenantRentCollectionType';
 import type { TenantStatus } from './tenantStatus';
 
@@ -38,6 +41,13 @@ export interface Tenant {
   rentCollectionType?: TenantRentCollectionType;
   gracePeriodDays?: number;
   useBusinessDefault?: boolean;
+  autoRenewal?: boolean;
+  renewalDuration?: TenantRenewalDuration;
+  rentEscalation?: boolean;
+  escalationType?: TenantEscalationType;
+  escalationValue?: number;
+  escalationApply?: TenantEscalationApply;
+  renewalNotice?: number;
   createdAt: string;
   monthsElapsed?: number;
   totalExpected?: number;

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { and, eq, inArray } from "drizzle-orm";
-import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable, rentAgreementsTable, tenantDocumentsTable } from "@workspace/db";
+import { and, eq, inArray, desc } from "drizzle-orm";
+import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable, rentAgreementsTable, tenantDocumentsTable, leaseRenewalsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -202,11 +202,14 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
 
   const body = req.body as Record<string, unknown>;
   const updates: Record<string, unknown> = {};
-  for (const key of ["name", "email", "phone", "propertyId", "unitNumber", "leaseStart", "leaseEnd", "status", "emergencyContact", "notes", "depositDate", "depositStatus"]) {
+  for (const key of ["name", "email", "phone", "propertyId", "unitNumber", "leaseStart", "leaseEnd", "status", "emergencyContact", "notes", "depositDate", "depositStatus",
+    "billingCycle", "rentCollectionType", "gracePeriodDays", "useBusinessDefault",
+    "autoRenewal", "renewalDuration", "rentEscalation", "escalationType", "escalationApply", "renewalNotice"]) {
     if (body[key] !== undefined) updates[key] = body[key];
   }
   if (body.rentAmount !== undefined) updates.rentAmount = String(body.rentAmount);
   if (body.securityDeposit !== undefined) updates.securityDeposit = body.securityDeposit != null ? String(body.securityDeposit) : null;
+  if (body.escalationValue !== undefined) updates.escalationValue = String(body.escalationValue);
   const [tenant] = await db.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
   const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId));
@@ -218,6 +221,110 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
     ? agreements.reduce((best, a) => a.endDate > best.endDate ? a : best)
     : null;
   res.json(formatTenant(tenant, property?.name, payments, latestAgreement));
+});
+
+router.get("/tenants/:id/renewals", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  const [row] = await db
+    .select({ propertyUserId: propertiesTable.userId })
+    .from(tenantsTable)
+    .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
+    .where(eq(tenantsTable.id, id));
+  if (!row || row.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
+  const renewals = await db.select().from(leaseRenewalsTable)
+    .where(eq(leaseRenewalsTable.tenantId, id))
+    .orderBy(desc(leaseRenewalsTable.createdAt));
+  res.json(renewals.map(r => ({
+    ...r,
+    previousRent: parseFloat(String(r.previousRent)),
+    newRent: parseFloat(String(r.newRent)),
+    increaseAmount: parseFloat(String(r.increaseAmount)),
+    increasePercent: parseFloat(String(r.increasePercent)),
+    createdAt: r.createdAt.toISOString(),
+  })));
+});
+
+router.post("/tenants/:id/renew", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  const [row] = await db
+    .select({ tenant: tenantsTable, propertyName: propertiesTable.name, propertyUserId: propertiesTable.userId })
+    .from(tenantsTable)
+    .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
+    .where(eq(tenantsTable.id, id));
+  if (!row || row.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
+
+  const t = row.tenant;
+  const body = req.body as { newRentAmount?: number; notes?: string };
+  const previousLeaseStart = t.leaseStart;
+  const previousLeaseEnd = t.leaseEnd;
+  const previousRent = parseFloat(String(t.rentAmount));
+
+  const endDate = new Date(previousLeaseEnd + "T00:00:00");
+  const newStart = new Date(endDate);
+  newStart.setDate(newStart.getDate() + 1);
+  const newEnd = new Date(newStart);
+  const duration = t.renewalDuration ?? "yearly";
+  if (duration === "weekly") newEnd.setDate(newEnd.getDate() + 7);
+  else if (duration === "monthly") newEnd.setMonth(newEnd.getMonth() + 1);
+  else newEnd.setFullYear(newEnd.getFullYear() + 1);
+
+  const newLeaseStart = newStart.toISOString().split("T")[0];
+  const newLeaseEnd = newEnd.toISOString().split("T")[0];
+
+  let newRent = previousRent;
+  let increaseAmount = 0;
+  let increasePercent = 0;
+
+  if (body.newRentAmount != null && body.newRentAmount > 0) {
+    newRent = body.newRentAmount;
+    increaseAmount = newRent - previousRent;
+    increasePercent = previousRent > 0 ? (increaseAmount / previousRent) * 100 : 0;
+  } else if (t.rentEscalation && t.escalationApply === "automatic") {
+    const escalationType = t.escalationType ?? "percentage";
+    const escalationValue = parseFloat(String(t.escalationValue ?? 0));
+    if (escalationType === "percentage") {
+      increaseAmount = previousRent * (escalationValue / 100);
+      increasePercent = escalationValue;
+      newRent = previousRent + increaseAmount;
+    } else {
+      increaseAmount = escalationValue;
+      increasePercent = previousRent > 0 ? (escalationValue / previousRent) * 100 : 0;
+      newRent = previousRent + increaseAmount;
+    }
+  }
+
+  const renewalDate = new Date().toISOString().split("T")[0];
+  const [renewal] = await db.insert(leaseRenewalsTable).values({
+    tenantId: id,
+    renewalDate,
+    previousLeaseStart,
+    previousLeaseEnd,
+    newLeaseStart,
+    newLeaseEnd,
+    previousRent: String(previousRent),
+    newRent: String(newRent),
+    increaseAmount: String(increaseAmount),
+    increasePercent: String(increasePercent),
+    renewedBy: body.newRentAmount != null ? "manual" : (t.escalationApply ?? "manual"),
+    notes: body.notes ?? null,
+  }).returning();
+  await db.update(tenantsTable).set({
+    leaseStart: newLeaseStart,
+    leaseEnd: newLeaseEnd,
+    rentAmount: String(newRent),
+  }).where(eq(tenantsTable.id, id));
+  res.json({
+    ...renewal,
+    previousRent: parseFloat(String(renewal.previousRent)),
+    newRent: parseFloat(String(renewal.newRent)),
+    increaseAmount: parseFloat(String(renewal.increaseAmount)),
+    increasePercent: parseFloat(String(renewal.increasePercent)),
+    createdAt: renewal.createdAt.toISOString(),
+  });
 });
 
 router.delete("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {

@@ -1,3 +1,4 @@
 - [Auth & data isolation patterns](auth-isolation.md) — per-user isolation via userId FK on properties/expenses/loans; tenants/payments/maintenance scoped through property ownership
 - [Agreement & Document management](agreement-docs.md) — rent_agreements and tenant_documents tables added; routes in agreements.ts/documents.ts; req.params.id needs safeId() helper due to string|string[] TS error
 - [Rent Ledger module](rent-ledger.md) — standalone More→Finance screen; reads existing tenants+payments; status derived client-side; PDF via expo-print; WhatsApp via Linking
+- [Lease Management module](lease-management.md) — 7 lease columns on tenants + lease_renewals table; POST /tenants/:id/renew handles escalation math; DB push via raw SQL (no TTY)

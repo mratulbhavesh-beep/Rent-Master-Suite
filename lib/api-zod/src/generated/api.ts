@@ -463,6 +463,13 @@ export const ListTenantsResponseItem = zod.object({
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
   "useBusinessDefault": zod.boolean().optional(),
+  "autoRenewal": zod.boolean().optional(),
+  "renewalDuration": zod.enum(['weekly', 'monthly', 'yearly']).optional(),
+  "rentEscalation": zod.boolean().optional(),
+  "escalationType": zod.enum(['percentage', 'fixed']).optional(),
+  "escalationValue": zod.number().optional(),
+  "escalationApply": zod.enum(['automatic', 'manual']).optional(),
+  "renewalNotice": zod.number().optional(),
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
@@ -496,7 +503,14 @@ export const CreateTenantBody = zod.object({
   "billingCycle": zod.enum(['weekly', 'monthly', 'quarterly', 'yearly']).optional(),
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
-  "useBusinessDefault": zod.boolean().optional()
+  "useBusinessDefault": zod.boolean().optional(),
+  "autoRenewal": zod.boolean().optional(),
+  "renewalDuration": zod.enum(['weekly', 'monthly', 'yearly']).optional(),
+  "rentEscalation": zod.boolean().optional(),
+  "escalationType": zod.enum(['percentage', 'fixed']).optional(),
+  "escalationValue": zod.number().optional(),
+  "escalationApply": zod.enum(['automatic', 'manual']).optional(),
+  "renewalNotice": zod.number().optional()
 })
 
 export const CreateTenantResponse = zod.object({
@@ -520,6 +534,13 @@ export const CreateTenantResponse = zod.object({
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
   "useBusinessDefault": zod.boolean().optional(),
+  "autoRenewal": zod.boolean().optional(),
+  "renewalDuration": zod.enum(['weekly', 'monthly', 'yearly']).optional(),
+  "rentEscalation": zod.boolean().optional(),
+  "escalationType": zod.enum(['percentage', 'fixed']).optional(),
+  "escalationValue": zod.number().optional(),
+  "escalationApply": zod.enum(['automatic', 'manual']).optional(),
+  "renewalNotice": zod.number().optional(),
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
@@ -559,6 +580,13 @@ export const GetTenantResponse = zod.object({
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
   "useBusinessDefault": zod.boolean().optional(),
+  "autoRenewal": zod.boolean().optional(),
+  "renewalDuration": zod.enum(['weekly', 'monthly', 'yearly']).optional(),
+  "rentEscalation": zod.boolean().optional(),
+  "escalationType": zod.enum(['percentage', 'fixed']).optional(),
+  "escalationValue": zod.number().optional(),
+  "escalationApply": zod.enum(['automatic', 'manual']).optional(),
+  "renewalNotice": zod.number().optional(),
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
@@ -595,7 +623,14 @@ export const UpdateTenantBody = zod.object({
   "billingCycle": zod.enum(['weekly', 'monthly', 'quarterly', 'yearly']).optional(),
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
-  "useBusinessDefault": zod.boolean().optional()
+  "useBusinessDefault": zod.boolean().optional(),
+  "autoRenewal": zod.boolean().optional(),
+  "renewalDuration": zod.enum(['weekly', 'monthly', 'yearly']).optional(),
+  "rentEscalation": zod.boolean().optional(),
+  "escalationType": zod.enum(['percentage', 'fixed']).optional(),
+  "escalationValue": zod.number().optional(),
+  "escalationApply": zod.enum(['automatic', 'manual']).optional(),
+  "renewalNotice": zod.number().optional()
 })
 
 export const UpdateTenantResponse = zod.object({
@@ -619,6 +654,13 @@ export const UpdateTenantResponse = zod.object({
   "rentCollectionType": zod.enum(['advance', 'post_paid']).optional(),
   "gracePeriodDays": zod.number().optional(),
   "useBusinessDefault": zod.boolean().optional(),
+  "autoRenewal": zod.boolean().optional(),
+  "renewalDuration": zod.enum(['weekly', 'monthly', 'yearly']).optional(),
+  "rentEscalation": zod.boolean().optional(),
+  "escalationType": zod.enum(['percentage', 'fixed']).optional(),
+  "escalationValue": zod.number().optional(),
+  "escalationApply": zod.enum(['automatic', 'manual']).optional(),
+  "renewalNotice": zod.number().optional(),
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
@@ -782,6 +824,62 @@ export const DeletePaymentParams = zod.object({
 })
 
 export const DeletePaymentResponse = zod.void()
+
+
+/**
+ * @summary List lease renewal history for a tenant
+ */
+export const ListLeaseRenewalsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ListLeaseRenewalsResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "renewalDate": zod.string(),
+  "previousLeaseStart": zod.string(),
+  "previousLeaseEnd": zod.string(),
+  "newLeaseStart": zod.string(),
+  "newLeaseEnd": zod.string(),
+  "previousRent": zod.number(),
+  "newRent": zod.number(),
+  "increaseAmount": zod.number(),
+  "increasePercent": zod.number(),
+  "renewedBy": zod.string(),
+  "notes": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+export const ListLeaseRenewalsResponse = zod.array(ListLeaseRenewalsResponseItem)
+
+
+/**
+ * @summary Trigger a manual lease renewal
+ */
+export const RenewLeaseParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const RenewLeaseBody = zod.object({
+  "newRentAmount": zod.number().optional(),
+  "notes": zod.string().optional()
+})
+
+export const RenewLeaseResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "renewalDate": zod.string(),
+  "previousLeaseStart": zod.string(),
+  "previousLeaseEnd": zod.string(),
+  "newLeaseStart": zod.string(),
+  "newLeaseEnd": zod.string(),
+  "previousRent": zod.number(),
+  "newRent": zod.number(),
+  "increaseAmount": zod.number(),
+  "increasePercent": zod.number(),
+  "renewedBy": zod.string(),
+  "notes": zod.string().nullish(),
+  "createdAt": zod.string()
+})
 
 
 /**
