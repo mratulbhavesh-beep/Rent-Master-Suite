@@ -931,7 +931,8 @@ export const ReviseRentParams = zod.object({
 export const ReviseRentBody = zod.object({
   "newRent": zod.number(),
   "effectiveFrom": zod.string(),
-  "reason": zod.string().optional()
+  "reason": zod.string().optional(),
+  "currentRent": zod.number().optional().describe('The rent amount the client currently sees. Used for optimistic concurrency detection.')
 })
 
 export const ReviseRentResponse = zod.object({

@@ -10,4 +10,6 @@ export interface RentRevisionInput {
   newRent: number;
   effectiveFrom: string;
   reason?: string;
+  /** The rent amount the client currently sees. Used for optimistic concurrency detection. */
+  currentRent?: number;
 }

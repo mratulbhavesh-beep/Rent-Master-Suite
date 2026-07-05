@@ -356,25 +356,45 @@ router.post("/tenants/:id/renew", requireAuth, async (req: AuthRequest, res): Pr
   }
 
   const renewalDate = new Date().toISOString().split("T")[0];
-  const [renewal] = await db.insert(leaseRenewalsTable).values({
-    tenantId: id,
-    renewalDate,
-    previousLeaseStart,
-    previousLeaseEnd,
-    newLeaseStart,
-    newLeaseEnd,
-    previousRent: String(previousRent),
-    newRent: String(newRent),
-    increaseAmount: String(increaseAmount),
-    increasePercent: String(increasePercent),
-    renewedBy: body.newRentAmount != null ? "manual" : (t.escalationApply ?? "manual"),
-    notes: body.notes ?? null,
-  }).returning();
-  await db.update(tenantsTable).set({
-    leaseStart: newLeaseStart,
-    leaseEnd: newLeaseEnd,
-    rentAmount: String(newRent),
-  }).where(eq(tenantsTable.id, id));
+  const renewedBy = body.newRentAmount != null ? "manual" : (t.escalationApply ?? "manual");
+
+  const renewal = await db.transaction(async (tx) => {
+    const [ren] = await tx.insert(leaseRenewalsTable).values({
+      tenantId: id,
+      renewalDate,
+      previousLeaseStart,
+      previousLeaseEnd,
+      newLeaseStart,
+      newLeaseEnd,
+      previousRent: String(previousRent),
+      newRent: String(newRent),
+      increaseAmount: String(increaseAmount),
+      increasePercent: String(increasePercent),
+      renewedBy,
+      notes: body.notes ?? null,
+    }).returning();
+
+    await tx.update(tenantsTable).set({
+      leaseStart: newLeaseStart,
+      leaseEnd: newLeaseEnd,
+      rentAmount: String(newRent),
+    }).where(eq(tenantsTable.id, id));
+
+    // Update future unpaid generated rents to the new rent amount
+    if (newRent !== previousRent) {
+      const today = renewalDate;
+      await tx.update(generatedRentsTable)
+        .set({ amount: String(newRent) })
+        .where(and(
+          eq(generatedRentsTable.tenantId, id),
+          gte(generatedRentsTable.billingPeriodStart, today),
+          sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
+        ));
+    }
+
+    return ren;
+  });
+
   res.json({
     ...renewal,
     previousRent: parseFloat(String(renewal.previousRent)),
@@ -410,115 +430,150 @@ router.post("/tenants/:id/revise", requireAuth, async (req: AuthRequest, res): P
   const userId = req.user!.id;
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
-  const [row] = await db
-    .select({ tenant: tenantsTable, propertyUserId: propertiesTable.userId })
+
+  // Auth check (read-only, outside transaction)
+  const [authRow] = await db
+    .select({ propertyUserId: propertiesTable.userId })
     .from(tenantsTable)
     .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
     .where(eq(tenantsTable.id, id));
-  if (!row || row.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
+  if (!authRow || authRow.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
 
-  const body = req.body as { newRent: number; effectiveFrom: string; reason?: string };
+  const body = req.body as { newRent: number; effectiveFrom: string; reason?: string; currentRent?: number };
   if (!body.newRent || body.newRent <= 0) { res.status(400).json({ error: "newRent must be a positive number" }); return; }
   if (!body.effectiveFrom) { res.status(400).json({ error: "effectiveFrom is required (YYYY-MM-DD)" }); return; }
 
-  const t = row.tenant;
+  let revision: typeof rentRevisionsTable.$inferSelect;
 
-  // Validate: effectiveFrom must not be before lease start
-  if (body.effectiveFrom < t.leaseStart) {
-    res.status(400).json({ error: `Effective date cannot be before the lease start date (${t.leaseStart})` }); return;
+  try {
+    revision = await db.transaction(async (tx) => {
+      // Re-read tenant inside transaction for consistent snapshot
+      const [row] = await tx
+        .select({ tenant: tenantsTable })
+        .from(tenantsTable)
+        .where(eq(tenantsTable.id, id));
+
+      const t = row.tenant;
+
+      // ── Concurrency guard ─────────────────────────────────────────────────
+      // If the client sent the rent they were looking at, verify it hasn't changed.
+      if (body.currentRent != null) {
+        const actualRent = parseFloat(String(t.rentAmount));
+        if (Math.abs(actualRent - body.currentRent) > 0.005) {
+          throw Object.assign(new Error("STALE_RENT"), { code: "STALE_RENT" });
+        }
+      }
+
+      // Validate: effectiveFrom must not be before lease start
+      if (body.effectiveFrom < t.leaseStart) {
+        throw Object.assign(
+          new Error(`Effective date cannot be before the lease start date (${t.leaseStart})`),
+          { code: "VALIDATION", statusCode: 400 }
+        );
+      }
+
+      // Validate: no duplicate active effectiveFrom for this tenant
+      const [dupCheck] = await tx
+        .select({ id: rentRevisionsTable.id })
+        .from(rentRevisionsTable)
+        .where(and(
+          eq(rentRevisionsTable.tenantId, id),
+          eq(rentRevisionsTable.effectiveFrom, body.effectiveFrom),
+          eq(rentRevisionsTable.status, "active")
+        ));
+      if (dupCheck) {
+        throw Object.assign(
+          new Error("A revision already exists for this effective date. Use a different date."),
+          { code: "VALIDATION", statusCode: 409 }
+        );
+      }
+
+      // Determine previousRent: closest prior active revision, or current rent
+      const [priorRevision] = await tx
+        .select({ newRent: rentRevisionsTable.newRent })
+        .from(rentRevisionsTable)
+        .where(and(
+          eq(rentRevisionsTable.tenantId, id),
+          eq(rentRevisionsTable.status, "active"),
+          lt(rentRevisionsTable.effectiveFrom, body.effectiveFrom)
+        ))
+        .orderBy(desc(rentRevisionsTable.effectiveFrom))
+        .limit(1);
+
+      const previousRent = priorRevision
+        ? parseFloat(String(priorRevision.newRent))
+        : parseFloat(String(t.rentAmount));
+
+      const [rev] = await tx.insert(rentRevisionsTable).values({
+        tenantId: id,
+        previousRent: String(previousRent),
+        newRent: String(body.newRent),
+        effectiveFrom: body.effectiveFrom,
+        reason: body.reason ?? null,
+        changedBy: "manual",
+      }).returning();
+
+      const today = new Date().toISOString().split("T")[0];
+
+      // Sync tenant.rentAmount if revision is effective today or in the past
+      if (body.effectiveFrom <= today) {
+        await tx.update(tenantsTable).set({ rentAmount: String(body.newRent) }).where(eq(tenantsTable.id, id));
+      }
+
+      // Period boundary: don't split an already-generated billing period
+      const [overlappingPeriod] = await tx
+        .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
+        .from(generatedRentsTable)
+        .where(and(
+          eq(generatedRentsTable.tenantId, id),
+          lte(generatedRentsTable.billingPeriodStart, body.effectiveFrom),
+          gte(generatedRentsTable.billingPeriodEnd, body.effectiveFrom)
+        ))
+        .limit(1);
+
+      const updateFromDate = overlappingPeriod
+        ? nextDayAfter(overlappingPeriod.billingPeriodEnd)
+        : body.effectiveFrom;
+
+      // Limit updates to the gap before the next active revision
+      const [nextActiveRevision] = await tx
+        .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
+        .from(rentRevisionsTable)
+        .where(and(
+          eq(rentRevisionsTable.tenantId, id),
+          eq(rentRevisionsTable.status, "active"),
+          gt(rentRevisionsTable.effectiveFrom, body.effectiveFrom)
+        ))
+        .orderBy(asc(rentRevisionsTable.effectiveFrom))
+        .limit(1);
+
+      // Update unpaid future generated rents only — never touches paid or partial entries
+      const updatedRents = await tx.update(generatedRentsTable)
+        .set({ amount: String(body.newRent) })
+        .where(and(
+          eq(generatedRentsTable.tenantId, id),
+          gte(generatedRentsTable.billingPeriodStart, updateFromDate),
+          nextActiveRevision ? lt(generatedRentsTable.billingPeriodStart, nextActiveRevision.effectiveFrom) : undefined,
+          sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
+        ))
+        .returning({ id: generatedRentsTable.id });
+
+      logger.info(
+        { tenantId: id, effectiveFrom: body.effectiveFrom, newRent: body.newRent, updatedRentRows: updatedRents.length },
+        "Manual revision applied — unpaid future rents updated"
+      );
+
+      return rev;
+    });
+  } catch (err: any) {
+    if (err.code === "STALE_RENT") {
+      res.status(409).json({ error: "This tenant's rent has been updated by another user. Please refresh and review the latest rent before creating a new revision." }); return;
+    }
+    if (err.code === "VALIDATION") {
+      res.status(err.statusCode ?? 400).json({ error: err.message }); return;
+    }
+    throw err;
   }
-
-  // Validate: no duplicate active effectiveFrom for this tenant (cancelled ones don't conflict)
-  const [dupCheck] = await db
-    .select({ id: rentRevisionsTable.id })
-    .from(rentRevisionsTable)
-    .where(and(
-      eq(rentRevisionsTable.tenantId, id),
-      eq(rentRevisionsTable.effectiveFrom, body.effectiveFrom),
-      eq(rentRevisionsTable.status, "active")
-    ));
-  if (dupCheck) {
-    res.status(409).json({ error: "A revision already exists for this effective date. Use a different date." }); return;
-  }
-
-  // Determine previousRent based on chronological position in the revision schedule.
-  // Use the closest prior active revision's newRent rather than just tenant.rentAmount.
-  const [priorRevision] = await db
-    .select({ newRent: rentRevisionsTable.newRent })
-    .from(rentRevisionsTable)
-    .where(and(
-      eq(rentRevisionsTable.tenantId, id),
-      eq(rentRevisionsTable.status, "active"),
-      lt(rentRevisionsTable.effectiveFrom, body.effectiveFrom)
-    ))
-    .orderBy(desc(rentRevisionsTable.effectiveFrom))
-    .limit(1);
-
-  const previousRent = priorRevision
-    ? parseFloat(String(priorRevision.newRent))
-    : parseFloat(String(t.rentAmount));
-
-  const [revision] = await db.insert(rentRevisionsTable).values({
-    tenantId: id,
-    previousRent: String(previousRent),
-    newRent: String(body.newRent),
-    effectiveFrom: body.effectiveFrom,
-    reason: body.reason ?? null,
-    changedBy: "manual",
-  }).returning();
-
-  const today = new Date().toISOString().split("T")[0];
-
-  // Apply to tenant.rentAmount immediately if effectiveFrom is today or in the past
-  if (body.effectiveFrom <= today) {
-    await db.update(tenantsTable).set({ rentAmount: String(body.newRent) }).where(eq(tenantsTable.id, id));
-  }
-
-  // ── Period boundary: don't split an already-generated billing period ──────
-  // If effectiveFrom falls inside a generated period, apply from the NEXT period start.
-  // Works for all billing cycles (weekly/monthly/quarterly/yearly) by looking at
-  // actual billingPeriodEnd values in the DB rather than calculating cycle lengths.
-  const [overlappingPeriod] = await db
-    .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
-    .from(generatedRentsTable)
-    .where(and(
-      eq(generatedRentsTable.tenantId, id),
-      lte(generatedRentsTable.billingPeriodStart, body.effectiveFrom),
-      gte(generatedRentsTable.billingPeriodEnd, body.effectiveFrom)
-    ))
-    .limit(1);
-
-  const updateFromDate = overlappingPeriod
-    ? nextDayAfter(overlappingPeriod.billingPeriodEnd)
-    : body.effectiveFrom;
-
-  // Limit updates to the gap before the next active revision (supports multiple future revisions)
-  const [nextActiveRevision] = await db
-    .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
-    .from(rentRevisionsTable)
-    .where(and(
-      eq(rentRevisionsTable.tenantId, id),
-      eq(rentRevisionsTable.status, "active"),
-      gt(rentRevisionsTable.effectiveFrom, body.effectiveFrom)
-    ))
-    .orderBy(asc(rentRevisionsTable.effectiveFrom))
-    .limit(1);
-
-  // Update unpaid future generated rents — NEVER touches paid or partially-paid entries
-  const updatedRents = await db.update(generatedRentsTable)
-    .set({ amount: String(body.newRent) })
-    .where(and(
-      eq(generatedRentsTable.tenantId, id),
-      gte(generatedRentsTable.billingPeriodStart, updateFromDate),
-      nextActiveRevision ? lt(generatedRentsTable.billingPeriodStart, nextActiveRevision.effectiveFrom) : undefined,
-      sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
-    ))
-    .returning({ id: generatedRentsTable.id });
-
-  logger.info(
-    { tenantId: id, effectiveFrom: body.effectiveFrom, newRent: body.newRent, updatedRentRows: updatedRents.length },
-    "Manual revision applied — unpaid future rents updated"
-  );
 
   res.json({
     ...revision,
@@ -534,134 +589,156 @@ router.put("/tenants/:id/revisions/:revId", requireAuth, async (req: AuthRequest
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
   const revId = parseInt(Array.isArray(req.params.revId) ? req.params.revId[0] : req.params.revId, 10);
 
-  const [row] = await db
+  // Auth check (read-only, outside transaction)
+  const [authRow] = await db
     .select({ tenant: tenantsTable, propertyUserId: propertiesTable.userId })
     .from(tenantsTable)
     .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
     .where(eq(tenantsTable.id, id));
-  if (!row || row.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
-
-  const [revision] = await db.select().from(rentRevisionsTable)
-    .where(and(eq(rentRevisionsTable.id, revId), eq(rentRevisionsTable.tenantId, id)));
-  if (!revision) { res.status(404).json({ error: "Revision not found" }); return; }
-
-  const today = new Date().toISOString().split("T")[0];
-  if (revision.effectiveFrom <= today) {
-    res.status(409).json({ error: "This revision is already effective and cannot be edited." }); return;
-  }
-  if (revision.status === "cancelled") {
-    res.status(409).json({ error: "A cancelled revision cannot be edited." }); return;
-  }
-  if (revision.changedBy !== "manual") {
-    res.status(409).json({ error: "Automatic escalation entries cannot be edited manually." }); return;
-  }
+  if (!authRow || authRow.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
 
   const body = req.body as { newRent?: number; effectiveFrom?: string; reason?: string };
-  const newEffectiveFrom = body.effectiveFrom ?? revision.effectiveFrom;
-  const newRentAmount = body.newRent != null ? body.newRent : parseFloat(String(revision.newRent));
+  const today = new Date().toISOString().split("T")[0];
 
-  if (newRentAmount <= 0) { res.status(400).json({ error: "newRent must be a positive number" }); return; }
-  if (newEffectiveFrom < row.tenant.leaseStart) {
-    res.status(400).json({ error: `Effective date cannot be before the lease start date (${row.tenant.leaseStart})` }); return;
+  let updated: typeof rentRevisionsTable.$inferSelect;
+
+  try {
+    updated = await db.transaction(async (tx) => {
+      // Re-read revision inside transaction for consistent snapshot
+      const [revision] = await tx.select().from(rentRevisionsTable)
+        .where(and(eq(rentRevisionsTable.id, revId), eq(rentRevisionsTable.tenantId, id)));
+      if (!revision) throw Object.assign(new Error("Revision not found"), { code: "NOT_FOUND" });
+
+      if (revision.effectiveFrom <= today) {
+        throw Object.assign(new Error("This revision is already effective and cannot be edited."), { code: "CONFLICT" });
+      }
+      if (revision.status === "cancelled") {
+        throw Object.assign(new Error("A cancelled revision cannot be edited."), { code: "CONFLICT" });
+      }
+      if (revision.changedBy !== "manual") {
+        throw Object.assign(new Error("Automatic escalation entries cannot be edited manually."), { code: "CONFLICT" });
+      }
+
+      const newEffectiveFrom = body.effectiveFrom ?? revision.effectiveFrom;
+      const newRentAmount = body.newRent != null ? body.newRent : parseFloat(String(revision.newRent));
+
+      if (newRentAmount <= 0) throw Object.assign(new Error("newRent must be a positive number"), { code: "VALIDATION", statusCode: 400 });
+      if (newEffectiveFrom < authRow.tenant.leaseStart) {
+        throw Object.assign(
+          new Error(`Effective date cannot be before the lease start date (${authRow.tenant.leaseStart})`),
+          { code: "VALIDATION", statusCode: 400 }
+        );
+      }
+      if (newEffectiveFrom <= today) {
+        throw Object.assign(new Error("New effective date must be in the future."), { code: "VALIDATION", statusCode: 400 });
+      }
+
+      // Duplicate check (excluding self)
+      if (newEffectiveFrom !== revision.effectiveFrom) {
+        const [dupCheck] = await tx
+          .select({ id: rentRevisionsTable.id })
+          .from(rentRevisionsTable)
+          .where(and(
+            eq(rentRevisionsTable.tenantId, id),
+            eq(rentRevisionsTable.effectiveFrom, newEffectiveFrom),
+            eq(rentRevisionsTable.status, "active"),
+            sql`${rentRevisionsTable.id} != ${revId}`
+          ));
+        if (dupCheck) {
+          throw Object.assign(
+            new Error("A revision already exists for this effective date. Use a different date."),
+            { code: "VALIDATION", statusCode: 409 }
+          );
+        }
+      }
+
+      // Revert old effect: roll back unpaid rents in the gap this revision covered
+      const [nextAfterOld] = await tx
+        .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
+        .from(rentRevisionsTable)
+        .where(and(
+          eq(rentRevisionsTable.tenantId, id),
+          eq(rentRevisionsTable.status, "active"),
+          gt(rentRevisionsTable.effectiveFrom, revision.effectiveFrom),
+          sql`${rentRevisionsTable.id} != ${revId}`
+        ))
+        .orderBy(asc(rentRevisionsTable.effectiveFrom))
+        .limit(1);
+
+      const [oldOverlap] = await tx
+        .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
+        .from(generatedRentsTable)
+        .where(and(
+          eq(generatedRentsTable.tenantId, id),
+          lte(generatedRentsTable.billingPeriodStart, revision.effectiveFrom),
+          gte(generatedRentsTable.billingPeriodEnd, revision.effectiveFrom)
+        ))
+        .limit(1);
+
+      const oldUpdateFrom = oldOverlap ? nextDayAfter(oldOverlap.billingPeriodEnd) : revision.effectiveFrom;
+
+      await tx.update(generatedRentsTable)
+        .set({ amount: String(revision.previousRent) })
+        .where(and(
+          eq(generatedRentsTable.tenantId, id),
+          gte(generatedRentsTable.billingPeriodStart, oldUpdateFrom),
+          nextAfterOld ? lt(generatedRentsTable.billingPeriodStart, nextAfterOld.effectiveFrom) : undefined,
+          sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
+        ));
+
+      // Apply new effect with period boundary detection
+      const [nextAfterNew] = await tx
+        .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
+        .from(rentRevisionsTable)
+        .where(and(
+          eq(rentRevisionsTable.tenantId, id),
+          eq(rentRevisionsTable.status, "active"),
+          gt(rentRevisionsTable.effectiveFrom, newEffectiveFrom),
+          sql`${rentRevisionsTable.id} != ${revId}`
+        ))
+        .orderBy(asc(rentRevisionsTable.effectiveFrom))
+        .limit(1);
+
+      const [newOverlap] = await tx
+        .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
+        .from(generatedRentsTable)
+        .where(and(
+          eq(generatedRentsTable.tenantId, id),
+          lte(generatedRentsTable.billingPeriodStart, newEffectiveFrom),
+          gte(generatedRentsTable.billingPeriodEnd, newEffectiveFrom)
+        ))
+        .limit(1);
+
+      const newUpdateFrom = newOverlap ? nextDayAfter(newOverlap.billingPeriodEnd) : newEffectiveFrom;
+
+      await tx.update(generatedRentsTable)
+        .set({ amount: String(newRentAmount) })
+        .where(and(
+          eq(generatedRentsTable.tenantId, id),
+          gte(generatedRentsTable.billingPeriodStart, newUpdateFrom),
+          nextAfterNew ? lt(generatedRentsTable.billingPeriodStart, nextAfterNew.effectiveFrom) : undefined,
+          sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
+        ));
+
+      const [upd] = await tx.update(rentRevisionsTable)
+        .set({
+          newRent: String(newRentAmount),
+          effectiveFrom: newEffectiveFrom,
+          reason: body.reason !== undefined ? (body.reason || null) : revision.reason,
+        })
+        .where(eq(rentRevisionsTable.id, revId))
+        .returning();
+
+      logger.info({ tenantId: id, revId, newRentAmount, newEffectiveFrom }, "Rent revision edited");
+      return upd;
+    });
+  } catch (err: any) {
+    if (err.code === "NOT_FOUND") { res.status(404).json({ error: err.message }); return; }
+    if (err.code === "CONFLICT") { res.status(409).json({ error: err.message }); return; }
+    if (err.code === "VALIDATION") { res.status(err.statusCode ?? 400).json({ error: err.message }); return; }
+    throw err;
   }
-  if (newEffectiveFrom <= today) {
-    res.status(400).json({ error: "New effective date must be in the future." }); return;
-  }
 
-  // Duplicate check (excluding self)
-  if (newEffectiveFrom !== revision.effectiveFrom) {
-    const [dupCheck] = await db
-      .select({ id: rentRevisionsTable.id })
-      .from(rentRevisionsTable)
-      .where(and(
-        eq(rentRevisionsTable.tenantId, id),
-        eq(rentRevisionsTable.effectiveFrom, newEffectiveFrom),
-        eq(rentRevisionsTable.status, "active"),
-        sql`${rentRevisionsTable.id} != ${revId}`
-      ));
-    if (dupCheck) {
-      res.status(409).json({ error: "A revision already exists for this effective date. Use a different date." }); return;
-    }
-  }
-
-  // Revert old effect: roll back unpaid rents in the gap this revision covered
-  const [nextAfterOld] = await db
-    .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
-    .from(rentRevisionsTable)
-    .where(and(
-      eq(rentRevisionsTable.tenantId, id),
-      eq(rentRevisionsTable.status, "active"),
-      gt(rentRevisionsTable.effectiveFrom, revision.effectiveFrom),
-      sql`${rentRevisionsTable.id} != ${revId}`
-    ))
-    .orderBy(asc(rentRevisionsTable.effectiveFrom))
-    .limit(1);
-
-  const [oldOverlap] = await db
-    .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
-    .from(generatedRentsTable)
-    .where(and(
-      eq(generatedRentsTable.tenantId, id),
-      lte(generatedRentsTable.billingPeriodStart, revision.effectiveFrom),
-      gte(generatedRentsTable.billingPeriodEnd, revision.effectiveFrom)
-    ))
-    .limit(1);
-
-  const oldUpdateFrom = oldOverlap ? nextDayAfter(oldOverlap.billingPeriodEnd) : revision.effectiveFrom;
-
-  await db.update(generatedRentsTable)
-    .set({ amount: String(revision.previousRent) })
-    .where(and(
-      eq(generatedRentsTable.tenantId, id),
-      gte(generatedRentsTable.billingPeriodStart, oldUpdateFrom),
-      nextAfterOld ? lt(generatedRentsTable.billingPeriodStart, nextAfterOld.effectiveFrom) : undefined,
-      sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
-    ));
-
-  // Apply new effect with period boundary detection
-  const [nextAfterNew] = await db
-    .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
-    .from(rentRevisionsTable)
-    .where(and(
-      eq(rentRevisionsTable.tenantId, id),
-      eq(rentRevisionsTable.status, "active"),
-      gt(rentRevisionsTable.effectiveFrom, newEffectiveFrom),
-      sql`${rentRevisionsTable.id} != ${revId}`
-    ))
-    .orderBy(asc(rentRevisionsTable.effectiveFrom))
-    .limit(1);
-
-  const [newOverlap] = await db
-    .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
-    .from(generatedRentsTable)
-    .where(and(
-      eq(generatedRentsTable.tenantId, id),
-      lte(generatedRentsTable.billingPeriodStart, newEffectiveFrom),
-      gte(generatedRentsTable.billingPeriodEnd, newEffectiveFrom)
-    ))
-    .limit(1);
-
-  const newUpdateFrom = newOverlap ? nextDayAfter(newOverlap.billingPeriodEnd) : newEffectiveFrom;
-
-  await db.update(generatedRentsTable)
-    .set({ amount: String(newRentAmount) })
-    .where(and(
-      eq(generatedRentsTable.tenantId, id),
-      gte(generatedRentsTable.billingPeriodStart, newUpdateFrom),
-      nextAfterNew ? lt(generatedRentsTable.billingPeriodStart, nextAfterNew.effectiveFrom) : undefined,
-      sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
-    ));
-
-  const [updated] = await db.update(rentRevisionsTable)
-    .set({
-      newRent: String(newRentAmount),
-      effectiveFrom: newEffectiveFrom,
-      reason: body.reason !== undefined ? (body.reason || null) : revision.reason,
-    })
-    .where(eq(rentRevisionsTable.id, revId))
-    .returning();
-
-  logger.info({ tenantId: id, revId, newRentAmount, newEffectiveFrom }, "Rent revision edited");
   res.json({
     ...updated,
     previousRent: parseFloat(String(updated.previousRent)),
@@ -676,70 +753,84 @@ router.delete("/tenants/:id/revisions/:revId", requireAuth, async (req: AuthRequ
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
   const revId = parseInt(Array.isArray(req.params.revId) ? req.params.revId[0] : req.params.revId, 10);
 
-  const [row] = await db
+  // Auth check (read-only, outside transaction)
+  const [authRow] = await db
     .select({ propertyUserId: propertiesTable.userId })
     .from(tenantsTable)
     .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
     .where(eq(tenantsTable.id, id));
-  if (!row || row.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
-
-  const [revision] = await db.select().from(rentRevisionsTable)
-    .where(and(eq(rentRevisionsTable.id, revId), eq(rentRevisionsTable.tenantId, id)));
-  if (!revision) { res.status(404).json({ error: "Revision not found" }); return; }
+  if (!authRow || authRow.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
 
   const today = new Date().toISOString().split("T")[0];
-  if (revision.effectiveFrom <= today) {
-    res.status(409).json({ error: "This revision is already effective and cannot be cancelled." }); return;
+  let cancelled: typeof rentRevisionsTable.$inferSelect;
+
+  try {
+    cancelled = await db.transaction(async (tx) => {
+      // Re-read revision inside transaction for consistent snapshot
+      const [revision] = await tx.select().from(rentRevisionsTable)
+        .where(and(eq(rentRevisionsTable.id, revId), eq(rentRevisionsTable.tenantId, id)));
+      if (!revision) throw Object.assign(new Error("Revision not found"), { code: "NOT_FOUND" });
+
+      if (revision.effectiveFrom <= today) {
+        throw Object.assign(new Error("This revision is already effective and cannot be cancelled."), { code: "CONFLICT" });
+      }
+      if (revision.status === "cancelled") {
+        throw Object.assign(new Error("This revision is already cancelled."), { code: "CONFLICT" });
+      }
+      if (revision.changedBy !== "manual") {
+        throw Object.assign(new Error("Automatic escalation entries cannot be cancelled manually."), { code: "CONFLICT" });
+      }
+
+      // Find the next active revision to bound the revert range
+      const [nextRevision] = await tx
+        .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
+        .from(rentRevisionsTable)
+        .where(and(
+          eq(rentRevisionsTable.tenantId, id),
+          eq(rentRevisionsTable.status, "active"),
+          gt(rentRevisionsTable.effectiveFrom, revision.effectiveFrom)
+        ))
+        .orderBy(asc(rentRevisionsTable.effectiveFrom))
+        .limit(1);
+
+      // Period boundary: if effectiveFrom falls inside a generated period, revert starts at next period
+      const [overlapPeriod] = await tx
+        .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
+        .from(generatedRentsTable)
+        .where(and(
+          eq(generatedRentsTable.tenantId, id),
+          lte(generatedRentsTable.billingPeriodStart, revision.effectiveFrom),
+          gte(generatedRentsTable.billingPeriodEnd, revision.effectiveFrom)
+        ))
+        .limit(1);
+
+      const revertFromDate = overlapPeriod ? nextDayAfter(overlapPeriod.billingPeriodEnd) : revision.effectiveFrom;
+
+      // Revert unpaid rents back to previousRent — never touches paid or partial entries
+      await tx.update(generatedRentsTable)
+        .set({ amount: String(revision.previousRent) })
+        .where(and(
+          eq(generatedRentsTable.tenantId, id),
+          gte(generatedRentsTable.billingPeriodStart, revertFromDate),
+          nextRevision ? lt(generatedRentsTable.billingPeriodStart, nextRevision.effectiveFrom) : undefined,
+          sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
+        ));
+
+      // Soft-cancel: preserve the audit trail
+      const [can] = await tx.update(rentRevisionsTable)
+        .set({ status: "cancelled" })
+        .where(eq(rentRevisionsTable.id, revId))
+        .returning();
+
+      logger.info({ tenantId: id, revId, revertFromDate }, "Rent revision cancelled — unpaid rents reverted to previousRent");
+      return can;
+    });
+  } catch (err: any) {
+    if (err.code === "NOT_FOUND") { res.status(404).json({ error: err.message }); return; }
+    if (err.code === "CONFLICT") { res.status(409).json({ error: err.message }); return; }
+    throw err;
   }
-  if (revision.status === "cancelled") {
-    res.status(409).json({ error: "This revision is already cancelled." }); return;
-  }
-  if (revision.changedBy !== "manual") {
-    res.status(409).json({ error: "Automatic escalation entries cannot be cancelled manually." }); return;
-  }
 
-  // Find the next active revision to bound the revert range
-  const [nextRevision] = await db
-    .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
-    .from(rentRevisionsTable)
-    .where(and(
-      eq(rentRevisionsTable.tenantId, id),
-      eq(rentRevisionsTable.status, "active"),
-      gt(rentRevisionsTable.effectiveFrom, revision.effectiveFrom)
-    ))
-    .orderBy(asc(rentRevisionsTable.effectiveFrom))
-    .limit(1);
-
-  // Period boundary: if effectiveFrom falls inside a generated period, revert starts at next period
-  const [overlapPeriod] = await db
-    .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
-    .from(generatedRentsTable)
-    .where(and(
-      eq(generatedRentsTable.tenantId, id),
-      lte(generatedRentsTable.billingPeriodStart, revision.effectiveFrom),
-      gte(generatedRentsTable.billingPeriodEnd, revision.effectiveFrom)
-    ))
-    .limit(1);
-
-  const revertFromDate = overlapPeriod ? nextDayAfter(overlapPeriod.billingPeriodEnd) : revision.effectiveFrom;
-
-  // Revert unpaid rents in the gap this revision covered back to previousRent
-  await db.update(generatedRentsTable)
-    .set({ amount: String(revision.previousRent) })
-    .where(and(
-      eq(generatedRentsTable.tenantId, id),
-      gte(generatedRentsTable.billingPeriodStart, revertFromDate),
-      nextRevision ? lt(generatedRentsTable.billingPeriodStart, nextRevision.effectiveFrom) : undefined,
-      sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
-    ));
-
-  // Soft-cancel: preserve the audit trail
-  const [cancelled] = await db.update(rentRevisionsTable)
-    .set({ status: "cancelled" })
-    .where(eq(rentRevisionsTable.id, revId))
-    .returning();
-
-  logger.info({ tenantId: id, revId, revertFromDate }, "Rent revision cancelled — unpaid rents reverted to previousRent");
   res.json({
     ...cancelled,
     previousRent: parseFloat(String(cancelled.previousRent)),

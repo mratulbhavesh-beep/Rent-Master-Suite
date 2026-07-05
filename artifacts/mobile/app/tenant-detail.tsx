@@ -364,7 +364,7 @@ export default function TenantDetailScreen() {
     if (!pendingRevision) return;
     setShowRevisionConfirm(false);
     reviseMutation.mutate(
-      { id: tenantId, data: { newRent: pendingRevision.newRent, effectiveFrom: pendingRevision.isoDate, reason: pendingRevision.reason || undefined } },
+      { id: tenantId, data: { newRent: pendingRevision.newRent, effectiveFrom: pendingRevision.isoDate, reason: pendingRevision.reason || undefined, currentRent: tenant ? parseFloat(String(tenant.rentAmount)) : undefined } },
       {
         onSuccess: (data: RentRevision) => {
           queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(tenantId) });

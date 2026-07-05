@@ -1840,6 +1840,9 @@ components:
           type: string
         reason:
           type: string
+        currentRent:
+          type: number
+          description: The rent amount the client currently sees. Used for optimistic concurrency detection.
 
     RentRevisionUpdateInput:
       type: object
