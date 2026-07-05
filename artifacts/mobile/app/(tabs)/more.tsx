@@ -239,6 +239,16 @@ export default function MoreScreen() {
             onPress={() => router.push("/business-settings-billing" as any)}
           />
           <MenuItem
+            title="WhatsApp Reminders"
+            icon="message-circle"
+            onPress={() => router.push("/reminders" as any)}
+          />
+          <MenuItem
+            title="Activity Log"
+            icon="activity"
+            onPress={() => router.push("/activity-log" as any)}
+          />
+          <MenuItem
             title="Backup & Restore"
             icon="database"
             onPress={() => router.push("/backup")}

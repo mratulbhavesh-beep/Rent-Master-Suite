@@ -32,22 +32,27 @@ import type {
   ChangePasswordInput,
   CreateBackupInput,
   DashboardSummary,
+  DownloadReceiptPdfParams,
   Expense,
   ExpenseInput,
   ExpenseUpdate,
   GeneratedRent,
   GetMonthlyReportParams,
+  GetReminderConfig200,
   GetYearlyReportParams,
   GoogleSignInInput,
   HealthStatus,
   ImportBackupInput,
   LeaseRenewal,
   LeaseRenewalInput,
+  ListActivityLogs200,
+  ListActivityLogsParams,
   ListExpensesParams,
   ListGeneratedRentsParams,
   ListMaintenanceRequestsParams,
   ListPaymentsParams,
   ListPropertiesParams,
+  ListReminderLogsParams,
   ListTenantsParams,
   Loan,
   LoanInput,
@@ -58,6 +63,7 @@ import type {
   MaintenanceRequest,
   MaintenanceRequestInput,
   MaintenanceRequestUpdate,
+  MessageTemplate,
   MonthlyReport,
   Payment,
   PaymentInput,
@@ -65,18 +71,22 @@ import type {
   PropertyInput,
   PropertyUpdate,
   RegisterInput,
+  ReminderLog,
   RentRevision,
   RentRevisionInput,
   RentRevisionUpdateInput,
   ResetPassword200,
   ResetPasswordInput,
   RestoreResult,
+  RunReminders200,
+  SendManualReminderBody,
   Tenant,
   TenantDocument,
   TenantInput,
   TenantUpdate,
   TriggerRentGeneration200,
   UpdateProfileInput,
+  UpdateReminderTemplateBody,
   User,
   YearlyReport
 } from './api.schemas';
@@ -4592,6 +4602,768 @@ export function useGetYearlyReport<TData = Awaited<ReturnType<typeof getYearlyRe
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetYearlyReportQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListActivityLogsUrl = (params?: ListActivityLogsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/activity-logs?${stringifiedParams}` : `/api/activity-logs`
+}
+
+/**
+ * @summary List activity logs with filters
+ */
+export const listActivityLogs = async (params?: ListActivityLogsParams, options?: RequestInit): Promise<ListActivityLogs200> => {
+
+  return customFetch<ListActivityLogs200>(getListActivityLogsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListActivityLogsQueryKey = (params?: ListActivityLogsParams,) => {
+    return [
+    `/api/activity-logs`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListActivityLogsQueryOptions = <TData = Awaited<ReturnType<typeof listActivityLogs>>, TError = ErrorType<unknown>>(params?: ListActivityLogsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listActivityLogs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListActivityLogsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listActivityLogs>>> = ({ signal }) => listActivityLogs(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listActivityLogs>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListActivityLogsQueryResult = NonNullable<Awaited<ReturnType<typeof listActivityLogs>>>
+export type ListActivityLogsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List activity logs with filters
+ */
+
+export function useListActivityLogs<TData = Awaited<ReturnType<typeof listActivityLogs>>, TError = ErrorType<unknown>>(
+ params?: ListActivityLogsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listActivityLogs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListActivityLogsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getClearActivityLogsUrl = () => {
+
+
+
+
+  return `/api/activity-logs`
+}
+
+/**
+ * @summary Clear all activity logs (admin only)
+ */
+export const clearActivityLogs = async ( options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getClearActivityLogsUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getClearActivityLogsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof clearActivityLogs>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof clearActivityLogs>>, TError,void, TContext> => {
+
+const mutationKey = ['clearActivityLogs'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof clearActivityLogs>>, void> = () => {
+
+
+          return  clearActivityLogs(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ClearActivityLogsMutationResult = NonNullable<Awaited<ReturnType<typeof clearActivityLogs>>>
+
+    export type ClearActivityLogsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Clear all activity logs (admin only)
+ */
+export const useClearActivityLogs = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof clearActivityLogs>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof clearActivityLogs>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getClearActivityLogsMutationOptions(options));
+    }
+
+export const getDeleteActivityLogUrl = (id: number,) => {
+
+
+
+
+  return `/api/activity-logs/${id}`
+}
+
+/**
+ * @summary Delete a single activity log entry (admin only)
+ */
+export const deleteActivityLog = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteActivityLogUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteActivityLogMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteActivityLog>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteActivityLog>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteActivityLog'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteActivityLog>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteActivityLog(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteActivityLogMutationResult = NonNullable<Awaited<ReturnType<typeof deleteActivityLog>>>
+
+    export type DeleteActivityLogMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete a single activity log entry (admin only)
+ */
+export const useDeleteActivityLog = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteActivityLog>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteActivityLog>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteActivityLogMutationOptions(options));
+    }
+
+export const getListReminderTemplatesUrl = () => {
+
+
+
+
+  return `/api/reminders/templates`
+}
+
+/**
+ * @summary List all WhatsApp message templates
+ */
+export const listReminderTemplates = async ( options?: RequestInit): Promise<MessageTemplate[]> => {
+
+  return customFetch<MessageTemplate[]>(getListReminderTemplatesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListReminderTemplatesQueryKey = () => {
+    return [
+    `/api/reminders/templates`
+    ] as const;
+    }
+
+
+export const getListReminderTemplatesQueryOptions = <TData = Awaited<ReturnType<typeof listReminderTemplates>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReminderTemplates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListReminderTemplatesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listReminderTemplates>>> = ({ signal }) => listReminderTemplates({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listReminderTemplates>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListReminderTemplatesQueryResult = NonNullable<Awaited<ReturnType<typeof listReminderTemplates>>>
+export type ListReminderTemplatesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all WhatsApp message templates
+ */
+
+export function useListReminderTemplates<TData = Awaited<ReturnType<typeof listReminderTemplates>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReminderTemplates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListReminderTemplatesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateReminderTemplateUrl = (id: number,) => {
+
+
+
+
+  return `/api/reminders/templates/${id}`
+}
+
+/**
+ * @summary Update a WhatsApp message template
+ */
+export const updateReminderTemplate = async (id: number,
+    updateReminderTemplateBody: UpdateReminderTemplateBody, options?: RequestInit): Promise<MessageTemplate> => {
+
+  return customFetch<MessageTemplate>(getUpdateReminderTemplateUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(updateReminderTemplateBody)
+  }
+);}
+
+
+
+
+export const getUpdateReminderTemplateMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateReminderTemplate>>, TError,{id: number;data: BodyType<UpdateReminderTemplateBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateReminderTemplate>>, TError,{id: number;data: BodyType<UpdateReminderTemplateBody>}, TContext> => {
+
+const mutationKey = ['updateReminderTemplate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateReminderTemplate>>, {id: number;data: BodyType<UpdateReminderTemplateBody>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateReminderTemplate(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateReminderTemplateMutationResult = NonNullable<Awaited<ReturnType<typeof updateReminderTemplate>>>
+    export type UpdateReminderTemplateMutationBody = BodyType<UpdateReminderTemplateBody>
+    export type UpdateReminderTemplateMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update a WhatsApp message template
+ */
+export const useUpdateReminderTemplate = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateReminderTemplate>>, TError,{id: number;data: BodyType<UpdateReminderTemplateBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateReminderTemplate>>,
+        TError,
+        {id: number;data: BodyType<UpdateReminderTemplateBody>},
+        TContext
+      > => {
+      return useMutation(getUpdateReminderTemplateMutationOptions(options));
+    }
+
+export const getSendManualReminderUrl = () => {
+
+
+
+
+  return `/api/reminders/send`
+}
+
+/**
+ * @summary Send a manual WhatsApp reminder to a tenant
+ */
+export const sendManualReminder = async (sendManualReminderBody: SendManualReminderBody, options?: RequestInit): Promise<ReminderLog> => {
+
+  return customFetch<ReminderLog>(getSendManualReminderUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(sendManualReminderBody)
+  }
+);}
+
+
+
+
+export const getSendManualReminderMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendManualReminder>>, TError,{data: BodyType<SendManualReminderBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendManualReminder>>, TError,{data: BodyType<SendManualReminderBody>}, TContext> => {
+
+const mutationKey = ['sendManualReminder'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendManualReminder>>, {data: BodyType<SendManualReminderBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  sendManualReminder(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendManualReminderMutationResult = NonNullable<Awaited<ReturnType<typeof sendManualReminder>>>
+    export type SendManualReminderMutationBody = BodyType<SendManualReminderBody>
+    export type SendManualReminderMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Send a manual WhatsApp reminder to a tenant
+ */
+export const useSendManualReminder = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendManualReminder>>, TError,{data: BodyType<SendManualReminderBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendManualReminder>>,
+        TError,
+        {data: BodyType<SendManualReminderBody>},
+        TContext
+      > => {
+      return useMutation(getSendManualReminderMutationOptions(options));
+    }
+
+export const getListReminderLogsUrl = (params?: ListReminderLogsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/reminders/logs?${stringifiedParams}` : `/api/reminders/logs`
+}
+
+/**
+ * @summary List WhatsApp reminder send logs
+ */
+export const listReminderLogs = async (params?: ListReminderLogsParams, options?: RequestInit): Promise<ReminderLog[]> => {
+
+  return customFetch<ReminderLog[]>(getListReminderLogsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListReminderLogsQueryKey = (params?: ListReminderLogsParams,) => {
+    return [
+    `/api/reminders/logs`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListReminderLogsQueryOptions = <TData = Awaited<ReturnType<typeof listReminderLogs>>, TError = ErrorType<unknown>>(params?: ListReminderLogsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReminderLogs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListReminderLogsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listReminderLogs>>> = ({ signal }) => listReminderLogs(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listReminderLogs>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListReminderLogsQueryResult = NonNullable<Awaited<ReturnType<typeof listReminderLogs>>>
+export type ListReminderLogsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List WhatsApp reminder send logs
+ */
+
+export function useListReminderLogs<TData = Awaited<ReturnType<typeof listReminderLogs>>, TError = ErrorType<unknown>>(
+ params?: ListReminderLogsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReminderLogs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListReminderLogsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetReminderConfigUrl = () => {
+
+
+
+
+  return `/api/reminders/configured`
+}
+
+/**
+ * @summary Check if Twilio is configured for WhatsApp
+ */
+export const getReminderConfig = async ( options?: RequestInit): Promise<GetReminderConfig200> => {
+
+  return customFetch<GetReminderConfig200>(getGetReminderConfigUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetReminderConfigQueryKey = () => {
+    return [
+    `/api/reminders/configured`
+    ] as const;
+    }
+
+
+export const getGetReminderConfigQueryOptions = <TData = Awaited<ReturnType<typeof getReminderConfig>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getReminderConfig>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetReminderConfigQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getReminderConfig>>> = ({ signal }) => getReminderConfig({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getReminderConfig>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetReminderConfigQueryResult = NonNullable<Awaited<ReturnType<typeof getReminderConfig>>>
+export type GetReminderConfigQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Check if Twilio is configured for WhatsApp
+ */
+
+export function useGetReminderConfig<TData = Awaited<ReturnType<typeof getReminderConfig>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getReminderConfig>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetReminderConfigQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRunRemindersUrl = () => {
+
+
+
+
+  return `/api/reminders/run`
+}
+
+/**
+ * @summary Manually trigger the daily reminder job
+ */
+export const runReminders = async ( options?: RequestInit): Promise<RunReminders200> => {
+
+  return customFetch<RunReminders200>(getRunRemindersUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRunRemindersMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runReminders>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runReminders>>, TError,void, TContext> => {
+
+const mutationKey = ['runReminders'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runReminders>>, void> = () => {
+
+
+          return  runReminders(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunRemindersMutationResult = NonNullable<Awaited<ReturnType<typeof runReminders>>>
+
+    export type RunRemindersMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Manually trigger the daily reminder job
+ */
+export const useRunReminders = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runReminders>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runReminders>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRunRemindersMutationOptions(options));
+    }
+
+export const getDownloadReceiptPdfUrl = (id: number,
+    params?: DownloadReceiptPdfParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/payments/${id}/receipt.pdf?${stringifiedParams}` : `/api/payments/${id}/receipt.pdf`
+}
+
+/**
+ * @summary Download a payment receipt as PDF
+ */
+export const downloadReceiptPdf = async (id: number,
+    params?: DownloadReceiptPdfParams, options?: RequestInit): Promise<Blob> => {
+
+  return customFetch<Blob>(getDownloadReceiptPdfUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getDownloadReceiptPdfQueryKey = (id: number,
+    params?: DownloadReceiptPdfParams,) => {
+    return [
+    `/api/payments/${id}/receipt.pdf`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getDownloadReceiptPdfQueryOptions = <TData = Awaited<ReturnType<typeof downloadReceiptPdf>>, TError = ErrorType<unknown>>(id: number,
+    params?: DownloadReceiptPdfParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadReceiptPdf>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getDownloadReceiptPdfQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof downloadReceiptPdf>>> = ({ signal }) => downloadReceiptPdf(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof downloadReceiptPdf>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type DownloadReceiptPdfQueryResult = NonNullable<Awaited<ReturnType<typeof downloadReceiptPdf>>>
+export type DownloadReceiptPdfQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Download a payment receipt as PDF
+ */
+
+export function useDownloadReceiptPdf<TData = Awaited<ReturnType<typeof downloadReceiptPdf>>, TError = ErrorType<unknown>>(
+ id: number,
+    params?: DownloadReceiptPdfParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadReceiptPdf>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getDownloadReceiptPdfQueryOptions(id,params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

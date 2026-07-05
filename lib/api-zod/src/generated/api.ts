@@ -1496,3 +1496,170 @@ export const GetYearlyReportResponse = zod.object({
 })
 
 
+/**
+ * @summary List activity logs with filters
+ */
+export const ListActivityLogsQueryParams = zod.object({
+  "fromDate": zod.coerce.string().optional(),
+  "toDate": zod.coerce.string().optional(),
+  "entity": zod.coerce.string().optional(),
+  "action": zod.coerce.string().optional(),
+  "propertyId": zod.coerce.number().optional(),
+  "page": zod.coerce.number().optional(),
+  "limit": zod.coerce.number().optional()
+})
+
+export const ListActivityLogsResponse = zod.object({
+  "logs": zod.array(zod.object({
+  "id": zod.number(),
+  "userId": zod.number().nullish(),
+  "userEmail": zod.string().nullish(),
+  "action": zod.string(),
+  "entity": zod.string(),
+  "entityId": zod.number().nullish(),
+  "description": zod.string(),
+  "oldData": zod.unknown().optional(),
+  "newData": zod.unknown().optional(),
+  "propertyId": zod.number().nullish(),
+  "ipAddress": zod.string().nullish(),
+  "createdAt": zod.string()
+})),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number()
+})
+
+
+/**
+ * @summary Clear all activity logs (admin only)
+ */
+export const ClearActivityLogsResponse = zod.void()
+
+
+/**
+ * @summary Delete a single activity log entry (admin only)
+ */
+export const DeleteActivityLogParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteActivityLogResponse = zod.void()
+
+
+/**
+ * @summary List all WhatsApp message templates
+ */
+export const ListReminderTemplatesResponseItem = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "type": zod.string(),
+  "body": zod.string(),
+  "variables": zod.array(zod.string()),
+  "isActive": zod.boolean(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+export const ListReminderTemplatesResponse = zod.array(ListReminderTemplatesResponseItem)
+
+
+/**
+ * @summary Update a WhatsApp message template
+ */
+export const UpdateReminderTemplateParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateReminderTemplateBody = zod.object({
+  "name": zod.string().optional(),
+  "body": zod.string().optional(),
+  "isActive": zod.boolean().optional()
+})
+
+export const UpdateReminderTemplateResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "type": zod.string(),
+  "body": zod.string(),
+  "variables": zod.array(zod.string()),
+  "isActive": zod.boolean(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Send a manual WhatsApp reminder to a tenant
+ */
+export const SendManualReminderBody = zod.object({
+  "tenantId": zod.number(),
+  "type": zod.string(),
+  "message": zod.string().optional(),
+  "phone": zod.string().optional()
+})
+
+export const SendManualReminderResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "type": zod.string(),
+  "phone": zod.string().nullish(),
+  "message": zod.string().nullish(),
+  "status": zod.string(),
+  "error": zod.string().nullish(),
+  "sentAt": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary List WhatsApp reminder send logs
+ */
+export const ListReminderLogsQueryParams = zod.object({
+  "tenantId": zod.coerce.number().optional(),
+  "status": zod.coerce.string().optional(),
+  "page": zod.coerce.number().optional()
+})
+
+export const ListReminderLogsResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "type": zod.string(),
+  "phone": zod.string().nullish(),
+  "message": zod.string().nullish(),
+  "status": zod.string(),
+  "error": zod.string().nullish(),
+  "sentAt": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+export const ListReminderLogsResponse = zod.array(ListReminderLogsResponseItem)
+
+
+/**
+ * @summary Check if Twilio is configured for WhatsApp
+ */
+export const GetReminderConfigResponse = zod.object({
+  "configured": zod.boolean()
+})
+
+
+/**
+ * @summary Manually trigger the daily reminder job
+ */
+export const RunRemindersResponse = zod.object({
+  "sent": zod.number()
+})
+
+
+/**
+ * @summary Download a payment receipt as PDF
+ */
+export const DownloadReceiptPdfParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DownloadReceiptPdfQueryParams = zod.object({
+  "token": zod.coerce.string().optional().describe('JWT token (alternative to Authorization header for direct browser download)')
+})
+
+export const DownloadReceiptPdfResponse = zod.unknown()
+
+

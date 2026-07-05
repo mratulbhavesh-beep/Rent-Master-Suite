@@ -14,6 +14,8 @@ import documentsRouter from "./documents";
 import backupRouter from "./backup";
 import businessSettingsRouter from "./business-settings";
 import generatedRentsRouter from "./generated-rents";
+import activityLogsRouter from "./activity-logs";
+import remindersRouter from "./reminders";
 
 const router: IRouter = Router();
 
@@ -32,5 +34,7 @@ router.use(documentsRouter);
 router.use(backupRouter);
 router.use(businessSettingsRouter);
 router.use(generatedRentsRouter);
+router.use(activityLogsRouter);
+router.use(remindersRouter);
 
 export default router;

@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, paymentsTable, tenantsTable, propertiesTable, generatedRentsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
+import { logActivity } from "./activity-logs";
 
 const router: IRouter = Router();
 
@@ -82,7 +83,118 @@ router.post("/payments", requireAuth, async (req: AuthRequest, res): Promise<voi
   }
 
   const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, payment.tenantId));
+  await logActivity({
+    userId, userEmail: req.user!.email,
+    action: "payment", entity: "payment", entityId: payment.id,
+    description: `Payment of ₹${amount} recorded for ${tenant?.name ?? tenantId} (${receiptNumber})`,
+    newData: { amount, method, receiptNumber, month, year },
+    propertyId,
+    ipAddress: req.ip,
+  });
   res.status(201).json(formatPayment(payment, tenant?.name, property.name, tenant?.unitNumber));
+});
+
+router.get("/payments/:id/receipt.pdf", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+
+  const [row] = await db
+    .select({
+      payment: paymentsTable,
+      tenantName: tenantsTable.name,
+      tenantPhone: tenantsTable.phone,
+      propertyName: propertiesTable.name,
+      unitNumber: tenantsTable.unitNumber,
+      propertyUserId: propertiesTable.userId,
+    })
+    .from(paymentsTable)
+    .leftJoin(tenantsTable, eq(paymentsTable.tenantId, tenantsTable.id))
+    .leftJoin(propertiesTable, eq(paymentsTable.propertyId, propertiesTable.id))
+    .where(eq(paymentsTable.id, id));
+
+  if (!row || row.propertyUserId !== userId) {
+    res.status(404).json({ error: "Payment not found" });
+    return;
+  }
+
+  const p = row.payment;
+  const amount = parseFloat(String(p.amount));
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const monthName = MONTHS[(p.month ?? 1) - 1] ?? "";
+  const formattedDate = p.paymentDate
+    ? new Date(p.paymentDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+    : "";
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const PDFDocument = require("pdfkit") as typeof import("pdfkit");
+  const doc = new PDFDocument({ size: "A4", margin: 50 });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="receipt-${p.receiptNumber}.pdf"`);
+  doc.pipe(res);
+
+  const navy = "#0a2342";
+  const gold = "#c8942a";
+  const light = "#f5f7fa";
+
+  // Header band
+  doc.rect(0, 0, doc.page.width, 100).fill(navy);
+  doc.fontSize(26).fillColor("#ffffff").font("Helvetica-Bold").text("RENT RECEIPT", 50, 30);
+  doc.fontSize(10).fillColor(gold).font("Helvetica").text("Gemini Rent Manager", 50, 62);
+  doc.fontSize(10).fillColor("#cccccc").text(`Receipt No: ${p.receiptNumber ?? "—"}`, 50, 78);
+
+  // Gold accent line
+  doc.rect(0, 100, doc.page.width, 4).fill(gold);
+
+  // Body
+  doc.fillColor("#333333").font("Helvetica").fontSize(11);
+  const startY = 130;
+  const col1 = 50;
+  const col2 = 220;
+  const lineH = 30;
+
+  const rows: [string, string][] = [
+    ["Tenant", row.tenantName ?? "—"],
+    ["Property", row.propertyName ?? "—"],
+    ["Unit No.", row.unitNumber ?? "—"],
+    ["Period", `${monthName} ${p.year}`],
+    ["Payment Date", formattedDate],
+    ["Payment Mode", (p.method ?? "—").toUpperCase()],
+    ["Status", (p.status ?? "paid").toUpperCase()],
+  ];
+
+  rows.forEach(([label, value], i) => {
+    const y = startY + i * lineH;
+    const bg = i % 2 === 0 ? light : "#ffffff";
+    doc.rect(col1 - 10, y - 6, doc.page.width - 80, lineH).fill(bg);
+    doc.fillColor(navy).font("Helvetica-Bold").text(label, col1, y);
+    doc.fillColor("#333333").font("Helvetica").text(value, col2, y);
+  });
+
+  // Amount box
+  const amtY = startY + rows.length * lineH + 20;
+  doc.rect(col1 - 10, amtY, doc.page.width - 80, 54).fill(navy);
+  doc.fontSize(13).fillColor(gold).font("Helvetica-Bold").text("AMOUNT PAID", col1, amtY + 10);
+  doc.fontSize(22).fillColor("#ffffff").font("Helvetica-Bold")
+    .text(`₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`, col1, amtY + 26);
+
+  // Notes
+  if (p.notes) {
+    doc.fillColor("#666666").font("Helvetica").fontSize(10)
+      .text(`Notes: ${p.notes}`, col1, amtY + 80);
+  }
+
+  // Footer
+  const footerY = doc.page.height - 80;
+  doc.rect(0, footerY, doc.page.width, 80).fill(navy);
+  doc.fillColor(gold).font("Helvetica-Bold").fontSize(10).text("Thank you for your payment!", col1, footerY + 14);
+  doc.fillColor("#cccccc").font("Helvetica").fontSize(9)
+    .text("This is a computer-generated receipt and does not require a physical signature.", col1, footerY + 32);
+  doc.fillColor("#aaaaaa").fontSize(8)
+    .text(`Generated: ${new Date().toLocaleString("en-IN")}`, col1, footerY + 50);
+
+  doc.end();
 });
 
 router.get("/payments/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {
@@ -131,12 +243,19 @@ router.delete("/payments/:id", requireAuth, async (req: AuthRequest, res): Promi
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   const [existing] = await db
-    .select({ propertyUserId: propertiesTable.userId })
+    .select({ propertyUserId: propertiesTable.userId, tenantId: paymentsTable.tenantId, amount: paymentsTable.amount })
     .from(paymentsTable)
     .leftJoin(propertiesTable, eq(paymentsTable.propertyId, propertiesTable.id))
     .where(eq(paymentsTable.id, id));
   if (!existing || existing.propertyUserId !== userId) { res.status(404).json({ error: "Payment not found" }); return; }
   await db.delete(paymentsTable).where(eq(paymentsTable.id, id));
+  await logActivity({
+    userId, userEmail: req.user!.email,
+    action: "delete", entity: "payment", entityId: id,
+    description: `Payment #${id} deleted (₹${parseFloat(String(existing.amount))})`,
+    oldData: { id, amount: existing.amount },
+    ipAddress: req.ip,
+  });
   res.sendStatus(204);
 });
 

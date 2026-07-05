@@ -1078,6 +1078,53 @@ export interface TenantDocument {
   createdAt: string;
 }
 
+export interface ActivityLog {
+  id: number;
+  /** @nullable */
+  userId?: number | null;
+  /** @nullable */
+  userEmail?: string | null;
+  action: string;
+  entity: string;
+  /** @nullable */
+  entityId?: number | null;
+  description: string;
+  oldData?: unknown;
+  newData?: unknown;
+  /** @nullable */
+  propertyId?: number | null;
+  /** @nullable */
+  ipAddress?: string | null;
+  createdAt: string;
+}
+
+export interface MessageTemplate {
+  id: number;
+  name: string;
+  type: string;
+  body: string;
+  variables: string[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReminderLog {
+  id: number;
+  tenantId: number;
+  type: string;
+  /** @nullable */
+  phone?: string | null;
+  /** @nullable */
+  message?: string | null;
+  status: string;
+  /** @nullable */
+  error?: string | null;
+  /** @nullable */
+  sentAt?: string | null;
+  createdAt: string;
+}
+
 export type ResetPassword200 = {
   message: string;
 };
@@ -1131,5 +1178,56 @@ month: number;
 
 export type GetYearlyReportParams = {
 year: number;
+};
+
+export type ListActivityLogsParams = {
+fromDate?: string;
+toDate?: string;
+entity?: string;
+action?: string;
+propertyId?: number;
+page?: number;
+limit?: number;
+};
+
+export type ListActivityLogs200 = {
+  logs: ActivityLog[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type UpdateReminderTemplateBody = {
+  name?: string;
+  body?: string;
+  isActive?: boolean;
+};
+
+export type SendManualReminderBody = {
+  tenantId: number;
+  type: string;
+  message?: string;
+  phone?: string;
+};
+
+export type ListReminderLogsParams = {
+tenantId?: number;
+status?: string;
+page?: number;
+};
+
+export type GetReminderConfig200 = {
+  configured: boolean;
+};
+
+export type RunReminders200 = {
+  sent: number;
+};
+
+export type DownloadReceiptPdfParams = {
+/**
+ * JWT token (alternative to Authorization header for direct browser download)
+ */
+token?: string;
 };
 

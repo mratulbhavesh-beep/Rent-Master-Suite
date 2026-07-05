@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { runRentGeneration } from "./lib/rent-generator";
+import { startCronJobs } from "./lib/cron";
 import cron from "node-cron";
 
 const rawPort = process.env["PORT"];
@@ -32,4 +33,7 @@ app.listen(port, (err) => {
   cron.schedule("0 * * * *", () => {
     runRentGeneration().catch(e => logger.error({ err: e }, "Scheduled rent generation failed"));
   });
+
+  // Start daily WhatsApp reminder cron
+  startCronJobs();
 });

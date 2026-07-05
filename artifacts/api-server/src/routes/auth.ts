@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import { hashPassword, comparePassword, signToken } from "../lib/auth";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
+import { logActivity } from "./activity-logs";
 
 interface GoogleTokenPayload {
   sub: string;
@@ -35,6 +36,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
   const token = signToken({ id: user.id, email: user.email, role: user.role });
+  logActivity({ userId: user.id, userEmail: user.email, action: "login", entity: "user", entityId: user.id, description: `${user.email} logged in`, ipAddress: (req as any).ip });
   res.json({
     token,
     user: { id: user.id, name: user.name, email: user.email, role: user.role, createdAt: user.createdAt.toISOString() },
@@ -60,6 +62,7 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     role: role === "admin" ? "admin" : "employee",
   }).returning();
   const token = signToken({ id: user.id, email: user.email, role: user.role });
+  logActivity({ userId: user.id, userEmail: user.email, action: "register", entity: "user", entityId: user.id, description: `New user registered: ${user.email} (${user.role})`, ipAddress: (req as any).ip });
   res.status(201).json({
     token,
     user: { id: user.id, name: user.name, email: user.email, role: user.role, createdAt: user.createdAt.toISOString() },

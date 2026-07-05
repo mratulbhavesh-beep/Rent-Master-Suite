@@ -12,3 +12,6 @@ export * from "./tenant-documents";
 export * from "./backups";
 export * from "./business-settings";
 export * from "./generated-rents";
+export * from "./activity-logs";
+export * from "./message-templates";
+export * from "./reminder-logs";
