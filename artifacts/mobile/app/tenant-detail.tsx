@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
-  ActivityIndicator, Alert, Platform, Linking,
+  ActivityIndicator, Alert, Platform, Linking, Switch,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
@@ -16,6 +16,8 @@ import {
   useGetBusinessBillingSettings, getGetBusinessBillingSettingsQueryKey,
   useListLeaseRenewals, getListLeaseRenewalsQueryKey, useRenewLease,
   LeaseRenewal,
+  useListRentRevisions, getListRentRevisionsQueryKey, useReviseRent,
+  RentRevision,
   Agreement,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -110,6 +112,12 @@ export default function TenantDetailScreen() {
   const [newRentForRenewal, setNewRentForRenewal] = useState("");
   const [renewalNotes, setRenewalNotes] = useState("");
 
+  // Manual Rent Revision state
+  const [revisionEnabled, setRevisionEnabled] = useState(false);
+  const [newRevisionAmount, setNewRevisionAmount] = useState("");
+  const [revisionDate, setRevisionDate] = useState("");
+  const [revisionReason, setRevisionReason] = useState("");
+
   // Agreement form state
   const [showAgrForm, setShowAgrForm] = useState(false);
   const [editingAgrId, setEditingAgrId] = useState<number | null>(null);
@@ -165,6 +173,12 @@ export default function TenantDetailScreen() {
     { query: { queryKey: getListLeaseRenewalsQueryKey(tenantId), enabled: !!tenantId } }
   );
   const renewMutation = useRenewLease();
+
+  const { data: rentRevisions } = useListRentRevisions(
+    tenantId,
+    { query: { queryKey: getListRentRevisionsQueryKey(tenantId), enabled: !!tenantId } }
+  );
+  const reviseMutation = useReviseRent();
 
   useEffect(() => {
     if (tenant) {
@@ -290,6 +304,40 @@ export default function TenantDetailScreen() {
           );
         },
         onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to renew lease"),
+      }
+    );
+  };
+
+  const handleRevision = () => {
+    const parts = revisionDate.split("/");
+    const isoDate = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : "";
+    if (!newRevisionAmount || !isoDate) {
+      Alert.alert("Missing Info", "Enter new rent amount and effective date (DD/MM/YYYY)");
+      return;
+    }
+    const newRent = parseFloat(newRevisionAmount);
+    if (isNaN(newRent) || newRent <= 0) {
+      Alert.alert("Invalid Amount", "Please enter a valid rent amount");
+      return;
+    }
+    reviseMutation.mutate(
+      { id: tenantId, data: { newRent, effectiveFrom: isoDate, reason: revisionReason.trim() || undefined } },
+      {
+        onSuccess: (data: RentRevision) => {
+          queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(tenantId) });
+          queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getListRentRevisionsQueryKey(tenantId) });
+          queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+          setRevisionEnabled(false);
+          setNewRevisionAmount("");
+          setRevisionDate("");
+          setRevisionReason("");
+          Alert.alert(
+            "Rent Revised ✓",
+            `New rent: ₹${Math.round(data.newRent).toLocaleString("en-IN")} from ${revisionDate}`
+          );
+        },
+        onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to apply revision"),
       }
     );
   };
@@ -974,6 +1022,47 @@ export default function TenantDetailScreen() {
                 );
               })()}
 
+              {/* Rent Revision History */}
+              {rentRevisions && rentRevisions.length > 0 && (
+                <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <Feather name="edit-2" size={16} color={colors.primary} />
+                    <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Rent Revision History</Text>
+                    <View style={[styles.badge, { marginLeft: "auto" as any, backgroundColor: `${colors.primary}14` }]}>
+                      <Text style={{ fontSize: 10, fontWeight: "800", color: colors.primary }}>{rentRevisions.length} REVISION{rentRevisions.length !== 1 ? "S" : ""}</Text>
+                    </View>
+                  </View>
+                  {rentRevisions.map((r, idx) => {
+                    const prev = parseFloat(String(r.previousRent));
+                    const next = parseFloat(String(r.newRent));
+                    const isIncrease = next > prev;
+                    return (
+                      <View key={r.id} style={[{ paddingVertical: 10 }, idx < rentRevisions.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
+                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 13, fontWeight: "700", color: colors.foreground }}>
+                              ₹{Math.round(prev).toLocaleString("en-IN")} → ₹{Math.round(next).toLocaleString("en-IN")}
+                            </Text>
+                            <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>Effective: {fmtDate(r.effectiveFrom)}</Text>
+                            {r.reason ? <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 1 }}>Reason: {r.reason}</Text> : null}
+                          </View>
+                          <View style={{ alignItems: "flex-end" }}>
+                            <Text style={{ fontSize: 10, color: colors.mutedForeground }}>
+                              {new Date(r.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                            </Text>
+                            <View style={[styles.badge, { marginTop: 4, backgroundColor: isIncrease ? `${colors.destructive}15` : `${colors.primary}15` }]}>
+                              <Text style={{ fontSize: 10, fontWeight: "700", color: isIncrease ? colors.destructive : colors.primary }}>
+                                {isIncrease ? "↑" : "↓"} MANUAL
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
               {/* Lease Renewal History */}
               {leaseRenewals && leaseRenewals.length > 0 && (
                 <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
@@ -1482,6 +1571,87 @@ export default function TenantDetailScreen() {
                   </View>
                 </View>
               )}
+
+              {/* Manual Rent Revision */}
+              <View style={[styles.sectionDivider, { backgroundColor: colors.border }]} />
+              <View style={{ marginBottom: 4 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <View style={{ flex: 1, paddingRight: 12 }}>
+                    <Text style={[styles.inputLabel, { color: colors.foreground, marginBottom: 2 }]}>Manual Rent Revision</Text>
+                    <Text style={{ fontSize: 11, color: colors.mutedForeground }}>Override current rent without triggering a full lease renewal</Text>
+                  </View>
+                  <Switch
+                    value={revisionEnabled}
+                    onValueChange={setRevisionEnabled}
+                    trackColor={{ false: colors.border, true: colors.primary }}
+                    thumbColor={colors.background}
+                  />
+                </View>
+                {revisionEnabled && (
+                  <View style={{ marginTop: 10, gap: 10 }}>
+                    <View>
+                      <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>New Rent Amount (₹)</Text>
+                      <TextInput
+                        style={[styles.input, { color: colors.foreground, backgroundColor: colors.input, borderColor: colors.border }]}
+                        value={newRevisionAmount}
+                        onChangeText={setNewRevisionAmount}
+                        placeholder={`Current: ₹${Math.round(parseFloat(String(tenant?.rentAmount ?? "0"))).toLocaleString("en-IN")}`}
+                        placeholderTextColor={colors.mutedForeground}
+                        keyboardType="numeric"
+                      />
+                    </View>
+                    <View>
+                      <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Effective From (DD/MM/YYYY)</Text>
+                      <TextInput
+                        style={[styles.input, { color: colors.foreground, backgroundColor: colors.input, borderColor: colors.border }]}
+                        value={revisionDate}
+                        onChangeText={setRevisionDate}
+                        placeholder="e.g. 01/08/2025"
+                        placeholderTextColor={colors.mutedForeground}
+                        keyboardType="numeric"
+                        maxLength={10}
+                      />
+                    </View>
+                    <View>
+                      <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Reason (Optional)</Text>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                        {["Negotiation", "Discount", "Market Rate", "Owner Decision", "Agreement Amendment", "Other"].map(opt => (
+                          <TouchableOpacity
+                            key={opt}
+                            style={[{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, borderWidth: 1.5 },
+                              revisionReason === opt
+                                ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                                : { backgroundColor: colors.input, borderColor: colors.border }]}
+                            onPress={() => setRevisionReason(r => r === opt ? "" : opt)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: "600", color: revisionReason === opt ? colors.primaryForeground : colors.foreground }}>{opt}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+                    <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
+                      <TouchableOpacity
+                        style={{ flex: 1, paddingVertical: 11, borderRadius: 10, borderWidth: 1.5, alignItems: "center", borderColor: colors.border, backgroundColor: colors.input }}
+                        onPress={() => { setRevisionEnabled(false); setNewRevisionAmount(""); setRevisionDate(""); setRevisionReason(""); }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: "600", color: colors.mutedForeground }}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{ flex: 2, paddingVertical: 11, borderRadius: 10, alignItems: "center", backgroundColor: colors.primary, opacity: reviseMutation.isPending ? 0.6 : 1 }}
+                        onPress={handleRevision}
+                        disabled={reviseMutation.isPending}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: "700", color: colors.primaryForeground }}>
+                          {reviseMutation.isPending ? "Applying..." : "Apply Revision"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </View>
 
               {/* Renewal Notice */}
               <View style={{ marginTop: 12 }}>

@@ -779,6 +779,50 @@ paths:
               schema:
                 $ref: "#/components/schemas/LeaseRenewal"
 
+  /tenants/{id}/revisions:
+    get:
+      operationId: listRentRevisions
+      tags: [tenants]
+      summary: List rent revision history for a tenant
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of rent revisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RentRevision"
+    post:
+      operationId: reviseRent
+      tags: [tenants]
+      summary: Apply a manual rent revision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RentRevisionInput"
+      responses:
+        "200":
+          description: Rent revised successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RentRevision"
+
   /tenants/{id}/agreements:
     get:
       operationId: listTenantAgreements
@@ -1709,6 +1753,38 @@ components:
         newRentAmount:
           type: number
         notes:
+          type: string
+
+    RentRevision:
+      type: object
+      required: [id, tenantId, previousRent, newRent, effectiveFrom, changedBy, createdAt]
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        previousRent:
+          type: number
+        newRent:
+          type: number
+        effectiveFrom:
+          type: string
+        reason:
+          type: ["string", "null"]
+        changedBy:
+          type: string
+        createdAt:
+          type: string
+
+    RentRevisionInput:
+      type: object
+      required: [newRent, effectiveFrom]
+      properties:
+        newRent:
+          type: number
+        effectiveFrom:
+          type: string
+        reason:
           type: string
 
     Payment:

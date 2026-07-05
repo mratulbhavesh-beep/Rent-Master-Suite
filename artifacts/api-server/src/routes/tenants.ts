@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { and, eq, inArray, desc } from "drizzle-orm";
-import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable, rentAgreementsTable, tenantDocumentsTable, leaseRenewalsTable } from "@workspace/db";
+import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable, rentAgreementsTable, tenantDocumentsTable, leaseRenewalsTable, rentRevisionsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -358,6 +358,68 @@ router.post("/tenants/:id/renew", requireAuth, async (req: AuthRequest, res): Pr
   });
 });
 
+router.get("/tenants/:id/revisions", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  const [row] = await db
+    .select({ propertyUserId: propertiesTable.userId })
+    .from(tenantsTable)
+    .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
+    .where(eq(tenantsTable.id, id));
+  if (!row || row.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
+  const revisions = await db.select().from(rentRevisionsTable)
+    .where(eq(rentRevisionsTable.tenantId, id))
+    .orderBy(desc(rentRevisionsTable.createdAt));
+  res.json(revisions.map(r => ({
+    ...r,
+    previousRent: parseFloat(String(r.previousRent)),
+    newRent: parseFloat(String(r.newRent)),
+    createdAt: r.createdAt.toISOString(),
+  })));
+});
+
+router.post("/tenants/:id/revise", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  const [row] = await db
+    .select({ tenant: tenantsTable, propertyUserId: propertiesTable.userId })
+    .from(tenantsTable)
+    .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
+    .where(eq(tenantsTable.id, id));
+  if (!row || row.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
+
+  const body = req.body as { newRent: number; effectiveFrom: string; reason?: string };
+  if (!body.newRent || body.newRent <= 0) { res.status(400).json({ error: "newRent must be a positive number" }); return; }
+  if (!body.effectiveFrom) { res.status(400).json({ error: "effectiveFrom is required (YYYY-MM-DD)" }); return; }
+
+  const t = row.tenant;
+  const previousRent = parseFloat(String(t.rentAmount));
+
+  const [revision] = await db.insert(rentRevisionsTable).values({
+    tenantId: id,
+    previousRent: String(previousRent),
+    newRent: String(body.newRent),
+    effectiveFrom: body.effectiveFrom,
+    reason: body.reason ?? null,
+    changedBy: "manual",
+  }).returning();
+
+  // Apply immediately if effectiveFrom is today or in the past
+  const today = new Date().toISOString().split("T")[0];
+  if (body.effectiveFrom <= today) {
+    await db.update(tenantsTable).set({ rentAmount: String(body.newRent) }).where(eq(tenantsTable.id, id));
+  }
+
+  res.json({
+    ...revision,
+    previousRent: parseFloat(String(revision.previousRent)),
+    newRent: parseFloat(String(revision.newRent)),
+    createdAt: revision.createdAt.toISOString(),
+  });
+});
+
 router.delete("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const userId = req.user!.id;
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
@@ -372,6 +434,7 @@ router.delete("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promis
   await db.delete(maintenanceRequestsTable).where(eq(maintenanceRequestsTable.tenantId, id));
   await db.delete(rentAgreementsTable).where(eq(rentAgreementsTable.tenantId, id));
   await db.delete(tenantDocumentsTable).where(eq(tenantDocumentsTable.tenantId, id));
+  await db.delete(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, id));
   const deleted = await db.delete(tenantsTable).where(eq(tenantsTable.id, id)).returning();
   if (!deleted.length) { res.status(404).json({ error: "Tenant not found" }); return; }
   res.sendStatus(204);

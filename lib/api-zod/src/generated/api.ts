@@ -901,6 +901,51 @@ export const RenewLeaseResponse = zod.object({
 
 
 /**
+ * @summary List rent revision history for a tenant
+ */
+export const ListRentRevisionsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ListRentRevisionsResponseItem = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "previousRent": zod.number(),
+  "newRent": zod.number(),
+  "effectiveFrom": zod.string(),
+  "reason": zod.string().nullish(),
+  "changedBy": zod.string(),
+  "createdAt": zod.string()
+})
+export const ListRentRevisionsResponse = zod.array(ListRentRevisionsResponseItem)
+
+
+/**
+ * @summary Apply a manual rent revision
+ */
+export const ReviseRentParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ReviseRentBody = zod.object({
+  "newRent": zod.number(),
+  "effectiveFrom": zod.string(),
+  "reason": zod.string().optional()
+})
+
+export const ReviseRentResponse = zod.object({
+  "id": zod.number(),
+  "tenantId": zod.number(),
+  "previousRent": zod.number(),
+  "newRent": zod.number(),
+  "effectiveFrom": zod.string(),
+  "reason": zod.string().nullish(),
+  "changedBy": zod.string(),
+  "createdAt": zod.string()
+})
+
+
+/**
  * @summary List all agreements for a tenant
  */
 export const ListTenantAgreementsParams = zod.object({

@@ -561,6 +561,24 @@ export interface LeaseRenewalInput {
   notes?: string;
 }
 
+export interface RentRevision {
+  id: number;
+  tenantId: number;
+  previousRent: number;
+  newRent: number;
+  effectiveFrom: string;
+  /** @nullable */
+  reason?: string | null;
+  changedBy: string;
+  createdAt: string;
+}
+
+export interface RentRevisionInput {
+  newRent: number;
+  effectiveFrom: string;
+  reason?: string;
+}
+
 export type PaymentMethod = typeof PaymentMethod[keyof typeof PaymentMethod];
 
 
