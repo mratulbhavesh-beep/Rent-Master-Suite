@@ -1270,39 +1270,46 @@ export default function TenantDetailScreen() {
                     </TouchableOpacity>
                   ))}
                   {renewalMethod === "custom" && (
-                    <View style={{ marginTop: 4, gap: 8 }}>
-                      <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Lease Duration Value</Text>
+                    <View style={{ marginTop: 4, gap: 10 }}>
+                      {/* Quick presets */}
                       <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                        {["11", "12", "18", "24"].map(preset => (
-                          <TouchableOpacity
-                            key={preset}
-                            style={[{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8, borderWidth: 1.5 },
-                              customRenewalValue === preset && customRenewalUnit === "months"
-                                ? { backgroundColor: colors.primary, borderColor: colors.primary }
-                                : { backgroundColor: colors.input, borderColor: colors.border }]}
-                            onPress={() => { setCustomRenewalValue(preset); setCustomRenewalUnit("months"); }}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={{ fontSize: 12, fontWeight: "600", color: customRenewalValue === preset && customRenewalUnit === "months" ? colors.primaryForeground : colors.foreground }}>{preset}M</Text>
-                          </TouchableOpacity>
-                        ))}
-                        {["2", "3", "5", "11"].map(preset => (
-                          <TouchableOpacity
-                            key={`y${preset}`}
-                            style={[{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8, borderWidth: 1.5 },
-                              customRenewalValue === preset && customRenewalUnit === "years"
-                                ? { backgroundColor: colors.primary, borderColor: colors.primary }
-                                : { backgroundColor: colors.input, borderColor: colors.border }]}
-                            onPress={() => { setCustomRenewalValue(preset); setCustomRenewalUnit("years"); }}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={{ fontSize: 12, fontWeight: "600", color: customRenewalValue === preset && customRenewalUnit === "years" ? colors.primaryForeground : colors.foreground }}>{preset}Y</Text>
-                          </TouchableOpacity>
-                        ))}
+                        {([["11","months"],["12","months"],["18","months"]] as [string,"months"][]).map(([val, unit]) => {
+                          const active = customRenewalValue === val && customRenewalUnit === unit;
+                          return (
+                            <TouchableOpacity
+                              key={`${val}${unit}`}
+                              style={[{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8, borderWidth: 1.5 },
+                                active ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                                       : { backgroundColor: colors.input, borderColor: colors.border }]}
+                              onPress={() => { setCustomRenewalValue(val); setCustomRenewalUnit(unit); }}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={{ fontSize: 12, fontWeight: "600", color: active ? colors.primaryForeground : colors.foreground }}>{val} Mo</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                        {([["2","years"],["3","years"],["5","years"],["11","years"]] as [string,"years"][]).map(([val, unit]) => {
+                          const active = customRenewalValue === val && customRenewalUnit === unit;
+                          return (
+                            <TouchableOpacity
+                              key={`${val}${unit}`}
+                              style={[{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8, borderWidth: 1.5 },
+                                active ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                                       : { backgroundColor: colors.input, borderColor: colors.border }]}
+                              onPress={() => { setCustomRenewalValue(val); setCustomRenewalUnit(unit); }}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={{ fontSize: 12, fontWeight: "600", color: active ? colors.primaryForeground : colors.foreground }}>{val} Yr</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
                       </View>
+
+                      {/* Custom duration */}
+                      <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Custom Lease Duration</Text>
                       <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
                         <TextInput
-                          style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border, flex: 1, marginBottom: 0, height: 42 }]}
+                          style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border, flex: 1, marginBottom: 0, height: 44 }]}
                           value={customRenewalValue}
                           onChangeText={setCustomRenewalValue}
                           keyboardType="numeric"
@@ -1313,7 +1320,7 @@ export default function TenantDetailScreen() {
                           {(["months", "years"] as const).map(unit => (
                             <TouchableOpacity
                               key={unit}
-                              style={[{ paddingHorizontal: 14, paddingVertical: 11, borderRadius: 8, borderWidth: 1.5 },
+                              style={[{ paddingHorizontal: 14, paddingVertical: 12, borderRadius: 8, borderWidth: 1.5 },
                                 customRenewalUnit === unit
                                   ? { backgroundColor: `${colors.primary}15`, borderColor: colors.primary }
                                   : { backgroundColor: colors.input, borderColor: colors.border }]}
@@ -1325,6 +1332,7 @@ export default function TenantDetailScreen() {
                           ))}
                         </View>
                       </View>
+
                       {customRenewalValue && parseInt(customRenewalValue, 10) > 0 && (
                         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: `${colors.primary}10`, padding: 10, borderRadius: 8 }}>
                           <Feather name="calendar" size={12} color={colors.primary} />
@@ -1358,31 +1366,41 @@ export default function TenantDetailScreen() {
                   {/* Escalation Frequency */}
                   <View>
                     <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Escalation Frequency</Text>
-                    <Text style={{ fontSize: 11, color: colors.mutedForeground, marginBottom: 6 }}>Rent increases every N years, independent of lease renewal</Text>
-                    <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                      {["1", "2", "3", "5"].map(preset => (
-                        <TouchableOpacity
-                          key={preset}
-                          style={[{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5 },
-                            escalationFrequencyYears === preset
-                              ? { backgroundColor: colors.primary, borderColor: colors.primary }
-                              : { backgroundColor: colors.input, borderColor: colors.border }]}
-                          onPress={() => setEscalationFrequencyYears(preset)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={{ fontSize: 12, fontWeight: "600", color: escalationFrequencyYears === preset ? colors.primaryForeground : colors.foreground }}>
-                            {preset} Year{preset === "1" ? "" : "s"}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
+                    <Text style={{ fontSize: 11, color: colors.mutedForeground, marginBottom: 8 }}>Rent increases every N years, independent of lease renewal</Text>
+                    {/* Quick presets */}
+                    <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                      {["1", "2", "3", "5"].map(preset => {
+                        const active = escalationFrequencyYears === preset;
+                        return (
+                          <TouchableOpacity
+                            key={preset}
+                            style={[{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, borderWidth: 1.5 },
+                              active ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                                     : { backgroundColor: colors.input, borderColor: colors.border }]}
+                            onPress={() => setEscalationFrequencyYears(preset)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={{ fontSize: 12, fontWeight: "600", color: active ? colors.primaryForeground : colors.foreground }}>
+                              Every {preset} Year{preset === "1" ? "" : "s"}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    {/* Custom frequency */}
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <Text style={{ fontSize: 13, color: colors.mutedForeground, fontWeight: "500" }}>Every</Text>
                       <TextInput
-                        style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border, flex: 1, marginBottom: 0, height: 40, minWidth: 60 }]}
+                        style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border, width: 80, marginBottom: 0, height: 44, textAlign: "center" }]}
                         value={escalationFrequencyYears}
                         onChangeText={v => setEscalationFrequencyYears(v.replace(/[^0-9]/g, ""))}
                         keyboardType="numeric"
-                        placeholder="Custom"
+                        placeholder="N"
                         placeholderTextColor={colors.mutedForeground}
                       />
+                      <Text style={{ fontSize: 13, color: colors.mutedForeground, fontWeight: "500" }}>
+                        Year{escalationFrequencyYears === "1" ? "" : "s"}
+                      </Text>
                     </View>
                   </View>
                   <View>
