@@ -1,108 +1,17 @@
 import { Router, type IRouter } from "express";
-import { and, eq, gte, lte, inArray, desc } from "drizzle-orm";
+import { and, eq, inArray, desc } from "drizzle-orm";
 import {
   db, messageTemplatesTable, reminderLogsTable,
-  generatedRentsTable, tenantsTable, propertiesTable, businessSettingsTable,
+  tenantsTable, propertiesTable,
 } from "@workspace/db";
 import { requireAuth, requireAdmin, type AuthRequest } from "../middlewares/auth";
-import { sendWhatsApp, interpolate, isTwilioConfigured } from "../lib/whatsapp";
 import { logActivity } from "./activity-logs";
 
 const router: IRouter = Router();
 
-export async function runDailyReminders() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayStr = today.toISOString().split("T")[0];
-  const in3Days = new Date(today);
-  in3Days.setDate(in3Days.getDate() + 3);
-  const in3DaysStr = in3Days.toISOString().split("T")[0];
-
-  const templates = await db.select().from(messageTemplatesTable).where(eq(messageTemplatesTable.isActive, true));
-  const tplMap = Object.fromEntries(templates.map(t => [t.type, t]));
-
-  const pendingRents = await db
-    .select({
-      rent: generatedRentsTable,
-      tenant: tenantsTable,
-      property: propertiesTable,
-    })
-    .from(generatedRentsTable)
-    .leftJoin(tenantsTable, eq(generatedRentsTable.tenantId, tenantsTable.id))
-    .leftJoin(propertiesTable, eq(generatedRentsTable.propertyId, propertiesTable.id))
-    .where(
-      and(
-        inArray(generatedRentsTable.status, ["pending", "overdue"]),
-        lte(generatedRentsTable.dueDate, in3DaysStr),
-      )
-    );
-
-  let sent = 0;
-  for (const row of pendingRents) {
-    if (!row.tenant?.phone || !row.rent.dueDate) continue;
-    const dueDate = row.rent.dueDate;
-    const overdueDays = Math.max(0, Math.floor((today.getTime() - new Date(dueDate).getTime()) / 86400000));
-    const isToday = dueDate === todayStr;
-    const is3Days = dueDate === in3DaysStr;
-    const isOverdue = overdueDays > 0;
-
-    let type: string;
-    if (isOverdue) type = "reminder_overdue";
-    else if (isToday) type = "reminder_due";
-    else if (is3Days) type = "reminder_3days";
-    else continue;
-
-    const alreadySent = await db.select({ id: reminderLogsTable.id })
-      .from(reminderLogsTable)
-      .where(
-        and(
-          eq(reminderLogsTable.generatedRentId, row.rent.id),
-          eq(reminderLogsTable.type, type),
-          ...(isOverdue ? [eq(db.$count(reminderLogsTable) as any, 0)] : []),
-        )
-      )
-      .limit(1);
-
-    if (!isOverdue && alreadySent.length > 0) continue;
-
-    const tpl = tplMap[type];
-    if (!tpl) continue;
-
-    const propUserId = row.property?.userId;
-    if (propUserId == null) continue;
-    const settings = await db.select().from(businessSettingsTable)
-      .where(eq(businessSettingsTable.userId, propUserId)).limit(1);
-
-    const ownerName = row.property?.name ?? "Your Landlord";
-    const vars: Record<string, string> = {
-      tenantName: row.tenant.name,
-      amount: parseFloat(String(row.rent.amount)).toLocaleString("en-IN"),
-      property: row.property?.name ?? "",
-      unit: row.tenant.unitNumber ?? "",
-      dueDate,
-      ownerName,
-      overdueDays: String(overdueDays),
-    };
-
-    const message = interpolate(tpl.body, vars);
-    const result = await sendWhatsApp(row.tenant.phone, message);
-    const status = "error" in result ? "failed" : "sent";
-
-    await db.insert(reminderLogsTable).values({
-      tenantId: row.tenant.id,
-      generatedRentId: row.rent.id,
-      templateId: tpl.id,
-      type,
-      phone: row.tenant.phone,
-      message,
-      status,
-      error: "error" in result ? result.error : null,
-      sentAt: status === "sent" ? new Date() : null,
-    });
-    sent++;
-  }
-  return sent;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Templates — CRUD (unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
 
 router.get("/reminders/templates", requireAuth, async (_req: AuthRequest, res): Promise<void> => {
   const templates = await db.select().from(messageTemplatesTable).orderBy(messageTemplatesTable.id);
@@ -130,34 +39,53 @@ router.put("/reminders/templates/:id", requireAuth, async (req: AuthRequest, res
   res.json({ ...tpl, createdAt: tpl.createdAt.toISOString(), updatedAt: tpl.updatedAt.toISOString() });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Log a reminder share attempt (called by mobile after sharing)
+// status: "shared" | "share_sheet" | "cancelled"
+// No Twilio, no auto-send — pure history record.
+// ─────────────────────────────────────────────────────────────────────────────
+
 router.post("/reminders/send", requireAuth, async (req: AuthRequest, res): Promise<void> => {
-  const { tenantId, type, message: customMessage, phone } = req.body;
-  if (!tenantId || !type) { res.status(400).json({ error: "tenantId and type are required" }); return; }
+  const { tenantId, type, message, phone, status = "shared", generatedRentId, templateId } = req.body;
+  if (!tenantId || !type) {
+    res.status(400).json({ error: "tenantId and type are required" });
+    return;
+  }
 
   const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, tenantId));
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
 
   const toPhone = phone ?? tenant.phone;
-  if (!toPhone) { res.status(400).json({ error: "No phone number available for this tenant" }); return; }
-
-  const msg = customMessage ?? `Reminder from your landlord for ${tenant.name}`;
-  const result = await sendWhatsApp(toPhone, msg);
-  const status = "error" in result ? "failed" : "sent";
+  const validStatus = ["shared", "share_sheet", "cancelled", "sent", "failed"].includes(status)
+    ? status
+    : "shared";
 
   const [log] = await db.insert(reminderLogsTable).values({
-    tenantId, type, phone: toPhone, message: msg,
-    status, error: "error" in result ? result.error : null,
-    sentAt: status === "sent" ? new Date() : null,
+    tenantId,
+    type,
+    phone: toPhone,
+    message: message ?? null,
+    status: validStatus,
+    error: null,
+    sentAt: validStatus !== "cancelled" ? new Date() : null,
+    generatedRentId: generatedRentId ?? null,
+    templateId: templateId ?? null,
   }).returning();
 
-  await logActivity({
-    userId: req.user!.id, userEmail: req.user!.email,
-    action: "send", entity: "reminder", entityId: log.id,
-    description: `Manual WhatsApp reminder sent to ${tenant.name} (${toPhone})`,
-  });
+  if (validStatus === "shared" || validStatus === "share_sheet") {
+    await logActivity({
+      userId: req.user!.id, userEmail: req.user!.email,
+      action: "send", entity: "reminder", entityId: log.id,
+      description: `WhatsApp reminder shared with ${tenant.name} (${toPhone}) via ${validStatus === "shared" ? "WhatsApp" : "Share Sheet"}`,
+    });
+  }
 
   res.json({ ...log, sentAt: log.sentAt?.toISOString() ?? null, createdAt: log.createdAt.toISOString() });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Logs
+// ─────────────────────────────────────────────────────────────────────────────
 
 router.get("/reminders/logs", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const userId = req.user!.id;
@@ -182,26 +110,39 @@ router.get("/reminders/logs", requireAuth, async (req: AuthRequest, res): Promis
   if (status) conditions.push(eq(reminderLogsTable.status, status) as any);
 
   const pageNum = Math.max(1, parseInt(page ?? "1"));
-  const logs = await db.select().from(reminderLogsTable)
+  const logs = await db.select({
+    log: reminderLogsTable,
+    tenantName: tenantsTable.name,
+  })
+    .from(reminderLogsTable)
+    .leftJoin(tenantsTable, eq(reminderLogsTable.tenantId, tenantsTable.id))
     .where(and(...conditions))
     .orderBy(desc(reminderLogsTable.createdAt))
     .limit(50)
     .offset((pageNum - 1) * 50);
 
-  res.json(logs.map(l => ({
+  res.json(logs.map(({ log: l, tenantName }) => ({
     ...l,
+    tenantName: tenantName ?? null,
     sentAt: l.sentAt?.toISOString() ?? null,
     createdAt: l.createdAt.toISOString(),
   })));
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Config — always ready; no external service needed
+// ─────────────────────────────────────────────────────────────────────────────
+
 router.get("/reminders/configured", requireAuth, async (_req: AuthRequest, res): Promise<void> => {
-  res.json({ configured: isTwilioConfigured() });
+  res.json({ configured: true, method: "whatsapp_share" });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Manual run — kept for admin use but no-op (returns 0 auto-sent)
+// ─────────────────────────────────────────────────────────────────────────────
+
 router.post("/reminders/run", requireAuth, requireAdmin, async (_req: AuthRequest, res): Promise<void> => {
-  const sent = await runDailyReminders();
-  res.json({ sent });
+  res.json({ sent: 0, note: "Auto-send is disabled. Use Share via WhatsApp from the app." });
 });
 
 export default router;

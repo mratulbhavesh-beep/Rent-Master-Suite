@@ -1,17 +1,10 @@
-import cron from "node-cron";
-import { runDailyReminders } from "../routes/reminders";
 import { logger } from "./logger";
 
+/**
+ * Cron jobs placeholder.
+ * Auto-send via Twilio/WhatsApp Business API is disabled.
+ * Reminders are shared manually from the mobile app via WhatsApp deep links.
+ */
 export function startCronJobs() {
-  // Run at 09:00 every day
-  cron.schedule("0 9 * * *", async () => {
-    logger.info("Cron: running daily WhatsApp reminders");
-    try {
-      const sent = await runDailyReminders();
-      logger.info({ sent }, "Cron: daily reminders done");
-    } catch (err) {
-      logger.error({ err }, "Cron: daily reminders failed");
-    }
-  });
-  logger.info("Cron jobs started (daily reminders at 09:00)");
+  logger.info("Cron jobs started (no auto-send — reminders are shared manually via WhatsApp)");
 }
