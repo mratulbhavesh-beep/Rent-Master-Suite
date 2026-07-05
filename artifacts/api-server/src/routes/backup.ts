@@ -14,6 +14,7 @@ import {
   tenantDocumentsTable,
   generatedRentsTable,
   rentRevisionsTable,
+  leaseRenewalsTable,
 } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
@@ -127,6 +128,7 @@ async function restoreFromData(userId: number, snap: any) {
     if (currentTenantIds.length > 0) {
       await tx.delete(generatedRentsTable).where(inArray(generatedRentsTable.tenantId, currentTenantIds));
       await tx.delete(rentRevisionsTable).where(inArray(rentRevisionsTable.tenantId, currentTenantIds));
+      await tx.delete(leaseRenewalsTable).where(inArray(leaseRenewalsTable.tenantId, currentTenantIds));
       await tx.delete(tenantDocumentsTable).where(inArray(tenantDocumentsTable.tenantId, currentTenantIds));
       await tx.delete(rentAgreementsTable).where(inArray(rentAgreementsTable.tenantId, currentTenantIds));
     }
