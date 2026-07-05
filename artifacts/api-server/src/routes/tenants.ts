@@ -1,7 +1,8 @@
 import { Router, type IRouter } from "express";
-import { and, eq, inArray, desc } from "drizzle-orm";
-import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable, rentAgreementsTable, tenantDocumentsTable, leaseRenewalsTable, rentRevisionsTable } from "@workspace/db";
+import { and, eq, inArray, desc, gte, sql } from "drizzle-orm";
+import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable, rentAgreementsTable, tenantDocumentsTable, leaseRenewalsTable, rentRevisionsTable, generatedRentsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
@@ -441,11 +442,28 @@ router.post("/tenants/:id/revise", requireAuth, async (req: AuthRequest, res): P
     changedBy: "manual",
   }).returning();
 
-  // Apply immediately if effectiveFrom is today or in the past
   const today = new Date().toISOString().split("T")[0];
+
+  // Apply to tenant.rentAmount immediately if effectiveFrom is today or in the past
   if (body.effectiveFrom <= today) {
     await db.update(tenantsTable).set({ rentAmount: String(body.newRent) }).where(eq(tenantsTable.id, id));
   }
+
+  // Update unpaid future generated rents on/after the effectiveFrom date.
+  // NEVER touches paid or partially-paid entries — historical records are immutable.
+  const updatedRents = await db.update(generatedRentsTable)
+    .set({ amount: String(body.newRent) })
+    .where(and(
+      eq(generatedRentsTable.tenantId, id),
+      gte(generatedRentsTable.billingPeriodStart, body.effectiveFrom),
+      sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
+    ))
+    .returning({ id: generatedRentsTable.id });
+
+  logger.info(
+    { tenantId: id, effectiveFrom: body.effectiveFrom, newRent: body.newRent, updatedRentRows: updatedRents.length },
+    "Manual revision applied — unpaid future rents updated"
+  );
 
   res.json({
     ...revision,

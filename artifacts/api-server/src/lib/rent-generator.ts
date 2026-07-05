@@ -1,4 +1,4 @@
-import { and, eq, desc } from "drizzle-orm";
+import { and, eq, desc, lte } from "drizzle-orm";
 import { db, tenantsTable, propertiesTable, generatedRentsTable, businessSettingsTable, rentRevisionsTable } from "@workspace/db";
 import { logger } from "./logger";
 
@@ -64,17 +64,21 @@ function computePeriods(
   return periods;
 }
 
+// effectiveBaseRent: the current base rent to escalate from.
+// This is passed explicitly so that if a manual revision fired on the same date,
+// its newRent becomes the base before escalation is calculated (requirement: manual > escalation priority).
 async function applyAutoEscalationIfDue(
   tenant: typeof tenantsTable.$inferSelect,
-  today: string
+  today: string,
+  effectiveBaseRent: string
 ): Promise<string> {
   if (!tenant.rentEscalation || tenant.escalationApply !== "automatic") {
-    return tenant.rentAmount;
+    return effectiveBaseRent;
   }
 
   const freqYears = tenant.escalationFrequencyYears ?? 1;
 
-  const [lastRevision] = await db
+  const [lastAutoRevision] = await db
     .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
     .from(rentRevisionsTable)
     .where(and(
@@ -84,39 +88,47 @@ async function applyAutoEscalationIfDue(
     .orderBy(desc(rentRevisionsTable.effectiveFrom))
     .limit(1);
 
-  const referenceDate = lastRevision?.effectiveFrom ?? tenant.leaseStart;
+  // Guard: don't double-apply if an automatic escalation already ran today
+  if (lastAutoRevision?.effectiveFrom === today) {
+    return effectiveBaseRent;
+  }
+
+  const referenceDate = lastAutoRevision?.effectiveFrom ?? tenant.leaseStart;
   const refMs = new Date(referenceDate + "T00:00:00Z").getTime();
   const yearsSince = (Date.now() - refMs) / (1000 * 60 * 60 * 24 * 365.25);
 
   if (yearsSince < freqYears) {
-    return tenant.rentAmount;
+    return effectiveBaseRent;
   }
 
-  const previousRent = parseFloat(String(tenant.rentAmount));
+  // Escalate from the effective base rent (not tenant.rentAmount snapshot —
+  // a manual revision on the same date takes priority as the base)
+  const previousBaseRent = parseFloat(effectiveBaseRent);
   const escalationType = tenant.escalationType ?? "percentage";
   const escalationValue = parseFloat(String(tenant.escalationValue ?? 0));
 
   let newRent: number;
   if (escalationType === "percentage") {
-    newRent = previousRent * (1 + escalationValue / 100);
+    newRent = previousBaseRent * (1 + escalationValue / 100);
   } else {
-    newRent = previousRent + escalationValue;
+    newRent = previousBaseRent + escalationValue;
   }
 
   await db.update(tenantsTable)
     .set({ rentAmount: String(newRent) })
     .where(eq(tenantsTable.id, tenant.id));
 
+  const usedManualBase = parseFloat(String(tenant.rentAmount)) !== previousBaseRent;
   await db.insert(rentRevisionsTable).values({
     tenantId: tenant.id,
-    previousRent: String(previousRent),
+    previousRent: String(previousBaseRent),
     newRent: String(newRent),
     effectiveFrom: today,
-    reason: `Auto-escalation: ${escalationType === "percentage" ? `${escalationValue}%` : `+${escalationValue}`} applied`,
+    reason: `Auto-escalation: ${escalationType === "percentage" ? `${escalationValue}%` : `+₹${escalationValue}`} applied${usedManualBase ? " (base from manual revision)" : ""}`,
     changedBy: "automatic",
   });
 
-  logger.info({ tenantId: tenant.id, previousRent, newRent }, "Automatic rent escalation applied mid-lease");
+  logger.info({ tenantId: tenant.id, previousBaseRent, newRent, usedManualBase }, "Automatic rent escalation applied mid-lease");
   return String(newRent);
 }
 
@@ -148,8 +160,36 @@ export async function runRentGeneration(): Promise<number> {
         }
       }
 
-      // Apply automatic escalation if due before generating new periods
-      const rentAmountForGeneration = await applyAutoEscalationIfDue(tenant, today);
+      // ── Determine effective base rent ─────────────────────────────────────
+      // Always use the latest active revision (effectiveFrom <= today) as the
+      // authoritative rent, regardless of what tenant.rentAmount currently holds.
+      // This handles: future-dated revisions that have now become active, and
+      // cases where tenant.rentAmount was never synced after a revision.
+      const [latestActiveRevision] = await db
+        .select({ newRent: rentRevisionsTable.newRent })
+        .from(rentRevisionsTable)
+        .where(and(
+          eq(rentRevisionsTable.tenantId, tenant.id),
+          lte(rentRevisionsTable.effectiveFrom, today)
+        ))
+        .orderBy(desc(rentRevisionsTable.effectiveFrom), desc(rentRevisionsTable.id))
+        .limit(1);
+
+      const effectiveBaseRent = latestActiveRevision
+        ? String(latestActiveRevision.newRent)
+        : tenant.rentAmount;
+
+      // Keep tenant.rentAmount in sync with the latest active revision
+      if (latestActiveRevision &&
+          parseFloat(String(latestActiveRevision.newRent)) !== parseFloat(String(tenant.rentAmount))) {
+        await db.update(tenantsTable)
+          .set({ rentAmount: String(latestActiveRevision.newRent) })
+          .where(eq(tenantsTable.id, tenant.id));
+      }
+
+      // Apply automatic escalation if due, passing effective base so manual
+      // revisions on the same date are honoured as the escalation base.
+      const rentAmountForGeneration = await applyAutoEscalationIfDue(tenant, today, effectiveBaseRent);
 
       const [lastRent] = await db
         .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
