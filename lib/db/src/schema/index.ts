@@ -17,3 +17,4 @@ export * from "./message-templates";
 export * from "./reminder-logs";
 export * from "./device-tokens";
 export * from "./push-notification-logs";
+export * from "./user-notification-settings";

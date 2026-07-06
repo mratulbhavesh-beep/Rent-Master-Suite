@@ -94,6 +94,7 @@ function RootLayoutNav() {
       <Stack.Screen name="account-security" />
       <Stack.Screen name="email-verification" />
       <Stack.Screen name="backup" />
+      <Stack.Screen name="notification-settings" />
     </Stack>
   );
 }

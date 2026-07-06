@@ -244,6 +244,11 @@ export default function MoreScreen() {
             onPress={() => router.push("/reminders" as any)}
           />
           <MenuItem
+            title="Notifications"
+            icon="bell"
+            onPress={() => router.push("/notification-settings" as any)}
+          />
+          <MenuItem
             title="Activity Log"
             icon="activity"
             onPress={() => router.push("/activity-log" as any)}

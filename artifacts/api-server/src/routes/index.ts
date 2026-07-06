@@ -17,6 +17,7 @@ import generatedRentsRouter from "./generated-rents";
 import activityLogsRouter from "./activity-logs";
 import remindersRouter from "./reminders";
 import pushTokensRouter from "./push-tokens";
+import notificationSettingsRouter from "./notification-settings";
 
 const router: IRouter = Router();
 
@@ -38,5 +39,6 @@ router.use(generatedRentsRouter);
 router.use(activityLogsRouter);
 router.use(remindersRouter);
 router.use(pushTokensRouter);
+router.use(notificationSettingsRouter);
 
 export default router;

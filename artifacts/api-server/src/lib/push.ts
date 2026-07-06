@@ -1,5 +1,8 @@
 import { logger } from "./logger";
-import { db, deviceTokensTable, pushNotificationLogsTable } from "@workspace/db";
+import {
+  db, deviceTokensTable, pushNotificationLogsTable,
+  userNotificationSettingsTable, DEFAULT_NOTIF_SETTINGS,
+} from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 
 // ─── Notification type constants ─────────────────────────────────────────────
@@ -69,6 +72,50 @@ async function callExpoPushApi(messages: ExpoPushMessage[]): Promise<ExpoPushTic
   return results;
 }
 
+// ─── Notification settings helpers ───────────────────────────────────────────
+
+type SettingsRow = {
+  rentDue3d: boolean; rentDueToday: boolean; rentOverdue: boolean;
+  paymentReceived: boolean; leaseExpiry: boolean; leaseRenewal: boolean;
+  rentEscalation: boolean; quietHoursEnabled: boolean;
+  quietHoursStart: string; quietHoursEnd: string;
+};
+
+async function getUserNotifSettings(userId: number): Promise<SettingsRow> {
+  const [row] = await db
+    .select()
+    .from(userNotificationSettingsTable)
+    .where(eq(userNotificationSettingsTable.userId, userId));
+  return row ?? { userId, ...DEFAULT_NOTIF_SETTINGS };
+}
+
+function isNotifTypeEnabled(s: SettingsRow, type: NotifType): boolean {
+  switch (type) {
+    case "rent_due_3d":       return s.rentDue3d;
+    case "rent_due_today":    return s.rentDueToday;
+    case "rent_overdue":      return s.rentOverdue;
+    case "payment_received":  return s.paymentReceived;
+    case "lease_expiry_60d":
+    case "lease_expiry_30d":
+    case "lease_expiry_7d":   return s.leaseExpiry;
+    case "lease_renewal":     return s.leaseRenewal;
+    case "rent_escalation":   return s.rentEscalation;
+    default:                  return true;
+  }
+}
+
+function isInQuietHours(startStr: string, endStr: string): boolean {
+  const now = new Date();
+  const curr = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const [sh, sm] = startStr.split(":").map(Number);
+  const [eh, em] = endStr.split(":").map(Number);
+  const start = sh * 60 + sm;
+  const end = eh * 60 + em;
+  // Overnight window e.g. 22:00 → 08:00
+  if (start > end) return curr >= start || curr < end;
+  return curr >= start && curr < end;
+}
+
 // ─── Duplicate check ──────────────────────────────────────────────────────────
 
 async function isAlreadySent(
@@ -107,6 +154,17 @@ export interface SendPushOptions {
 
 export async function sendPushToUser(opts: SendPushOptions): Promise<{ sent: number; skipped: boolean }> {
   const { userId, tenantId, generatedRentId, type, billingPeriod, title, body, data } = opts;
+
+  // Notification settings check (type enabled + quiet hours)
+  const userSettings = await getUserNotifSettings(userId);
+  if (!isNotifTypeEnabled(userSettings, type)) {
+    logger.debug({ userId, type }, "Notification type disabled by user settings — skipping");
+    return { sent: 0, skipped: true };
+  }
+  if (userSettings.quietHoursEnabled && isInQuietHours(userSettings.quietHoursStart, userSettings.quietHoursEnd)) {
+    logger.debug({ userId, type }, "In quiet hours — skipping push notification");
+    return { sent: 0, skipped: true };
+  }
 
   // Duplicate prevention
   const skip = await isAlreadySent(userId, tenantId, type, billingPeriod);
