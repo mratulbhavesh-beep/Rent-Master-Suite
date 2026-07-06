@@ -40,9 +40,19 @@ export default function RegisterScreen() {
           router.replace("/(tabs)");
         },
         onError: (err: unknown) => {
-          const data = (err as { data?: { error?: string } })?.data;
+          const data = (err as { data?: { error?: string; code?: string } })?.data;
           const message = data?.error ?? "Could not create account. Please try again.";
-          Alert.alert("Registration Failed", message);
+          if (data?.code === "GOOGLE_ACCOUNT_EXISTS") {
+            Alert.alert(
+              "Account Already Exists",
+              message,
+              [
+                { text: "OK", style: "cancel" },
+              ]
+            );
+          } else {
+            Alert.alert("Registration Failed", message);
+          }
         },
       }
     );

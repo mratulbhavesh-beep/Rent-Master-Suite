@@ -347,6 +347,11 @@ export default function ProfileScreen() {
         <SectionLabel label="Account" />
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <MenuRow
+            icon="shield"
+            label="Security"
+            onPress={() => router.push("/account-security" as any)}
+          />
+          <MenuRow
             icon="lock"
             label="Change Password"
             onPress={() => router.push("/change-password")}
