@@ -1,8 +1,16 @@
 import cron from "node-cron";
 import { logger } from "./logger";
-import { db, generatedRentsTable, tenantsTable, propertiesTable } from "@workspace/db";
+import { db, generatedRentsTable, tenantsTable, propertiesTable, googleDriveConnectionsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 import { NOTIF_TYPES, sendPushToUser, formatAmount, formatDate, daysFromToday } from "./push";
+import {
+  encryptString,
+  decryptString,
+  refreshAccessToken,
+  uploadFileToDrive,
+  encryptBackupContent,
+} from "./gdrive";
+import { gatherUserData } from "../routes/backup";
 
 // ─── Rent due / overdue reminders ─────────────────────────────────────────────
 
@@ -176,10 +184,72 @@ async function runLeaseAndEscalationReminders(): Promise<void> {
   if (tenants.length > 0) logger.info({ checked: tenants.length, sent }, "Lease/escalation reminders dispatched");
 }
 
+// ─── Google Drive auto-backup ─────────────────────────────────────────────────
+
+async function runDriveAutoBackup(): Promise<void> {
+  if (
+    !process.env.GOOGLE_CLIENT_ID ||
+    !process.env.GOOGLE_CLIENT_SECRET ||
+    !process.env.BACKUP_ENCRYPTION_KEY
+  ) {
+    logger.info("Drive auto-backup skipped: credentials not configured");
+    return;
+  }
+  const connections = await db
+    .select()
+    .from(googleDriveConnectionsTable)
+    .where(eq(googleDriveConnectionsTable.autoBackupEnabled, true));
+
+  logger.info({ count: connections.length }, "Starting Drive auto-backups");
+
+  for (const conn of connections) {
+    try {
+      const refreshToken = decryptString(conn.refreshTokenEnc);
+      const { access_token } = await refreshAccessToken(refreshToken);
+      await db
+        .update(googleDriveConnectionsTable)
+        .set({ accessTokenEnc: encryptString(access_token) })
+        .where(eq(googleDriveConnectionsTable.id, conn.id));
+
+      const data = await gatherUserData(conn.userId);
+      const encBuf = encryptBackupContent(JSON.stringify(data));
+      const fileName = `GeminiRent_Backup_uid${conn.userId}.enc`;
+
+      const fileId = await uploadFileToDrive({
+        accessToken: access_token,
+        content: encBuf,
+        mimeType: "application/octet-stream",
+        fileName,
+        fileId: conn.driveFileId ?? undefined,
+      });
+
+      await db
+        .update(googleDriveConnectionsTable)
+        .set({
+          driveFileId: fileId,
+          lastBackupAt: new Date(),
+          lastBackupStatus: "success",
+          lastBackupError: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(googleDriveConnectionsTable.id, conn.id));
+
+      logger.info({ userId: conn.userId, email: conn.googleEmail }, "Drive auto-backup complete");
+    } catch (err: any) {
+      logger.error({ err, userId: conn.userId }, "Drive auto-backup failed for user");
+      await db
+        .update(googleDriveConnectionsTable)
+        .set({ lastBackupStatus: "error", lastBackupError: err.message ?? "Unknown", updatedAt: new Date() })
+        .where(eq(googleDriveConnectionsTable.id, conn.id))
+        .catch(() => {});
+    }
+  }
+}
+
 // ─── Scheduler entry point ────────────────────────────────────────────────────
 
 export function startCronJobs(): void {
-  // Daily at 08:00 UTC (1:30 PM IST)
+  // Daily at 08:00 UTC (1:30 PM IST) — push notifications
   cron.schedule("0 8 * * *", async () => {
     logger.info("Running daily push notification scheduler");
     try {
@@ -190,5 +260,15 @@ export function startCronJobs(): void {
     }
   });
 
-  logger.info("Push notification cron jobs registered (daily at 08:00 UTC)");
+  // Daily at 02:00 UTC — Google Drive auto-backup
+  cron.schedule("0 2 * * *", async () => {
+    logger.info("Running Google Drive auto-backup scheduler");
+    try {
+      await runDriveAutoBackup();
+    } catch (err) {
+      logger.error({ err }, "Drive auto-backup scheduler error");
+    }
+  });
+
+  logger.info("Cron jobs registered (notifications at 08:00 UTC, Drive backup at 02:00 UTC)");
 }

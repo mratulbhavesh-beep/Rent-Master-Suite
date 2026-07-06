@@ -18,6 +18,7 @@ import activityLogsRouter from "./activity-logs";
 import remindersRouter from "./reminders";
 import pushTokensRouter from "./push-tokens";
 import notificationSettingsRouter from "./notification-settings";
+import gdriveRouter from "./gdrive";
 
 const router: IRouter = Router();
 
@@ -40,5 +41,6 @@ router.use(activityLogsRouter);
 router.use(remindersRouter);
 router.use(pushTokensRouter);
 router.use(notificationSettingsRouter);
+router.use(gdriveRouter);
 
 export default router;

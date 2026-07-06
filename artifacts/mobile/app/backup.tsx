@@ -57,6 +57,17 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 
 type Schedule = "off" | "daily" | "weekly" | "monthly";
 
+type DriveStatus = {
+  connected: boolean;
+  email?: string;
+  autoBackupEnabled?: boolean;
+  lastBackupAt?: string | null;
+  lastBackupStatus?: string;
+  lastBackupError?: string | null;
+  connectedAt?: string;
+  hasDriveFile?: boolean;
+};
+
 const SCHEDULE_KEY = "backup_schedule";
 const LAST_AUTO_BACKUP_KEY = "last_auto_backup_ts";
 const SAF_EXPORT_DIR_KEY = "grm_export_saf_dir_uri";
@@ -231,6 +242,64 @@ export default function BackupScreen() {
   const [importing, setImporting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [showReminder, setShowReminder] = useState(false);
+
+  const [driveStatus, setDriveStatus] = useState<DriveStatus | null>(null);
+  const [driveConnecting, setDriveConnecting] = useState(false);
+  const [driveBacking, setDriveBacking] = useState(false);
+  const [driveRestoring, setDriveRestoring] = useState(false);
+  const [drivePollingState, setDrivePollingState] = useState<string | null>(null);
+
+  const loadDriveStatus = useCallback(async () => {
+    try {
+      const s = await apiFetch<DriveStatus>("/api/gdrive/status");
+      setDriveStatus(s);
+    } catch {
+      setDriveStatus({ connected: false });
+    }
+  }, []);
+
+  useEffect(() => { void loadDriveStatus(); }, [loadDriveStatus]);
+
+  useEffect(() => {
+    if (!drivePollingState) return;
+    let cancelled = false;
+    const poll = setInterval(async () => {
+      try {
+        const r = await apiFetch<{ status: string; email?: string; error?: string }>(
+          `/api/gdrive/auth/status/${drivePollingState}`,
+        );
+        if (cancelled) return;
+        if (r.status === "complete") {
+          clearInterval(poll);
+          clearTimeout(deadline);
+          setDrivePollingState(null);
+          setDriveConnecting(false);
+          await loadDriveStatus();
+          Alert.alert("Google Drive Connected", `Connected as ${r.email}`);
+        } else if (r.status === "error") {
+          clearInterval(poll);
+          clearTimeout(deadline);
+          setDrivePollingState(null);
+          setDriveConnecting(false);
+          Alert.alert("Connection Failed", r.error ?? "Authentication failed. Please try again.");
+        }
+      } catch {
+        // network hiccup — keep polling
+      }
+    }, 2000);
+    const deadline = setTimeout(() => {
+      if (cancelled) return;
+      clearInterval(poll);
+      setDrivePollingState(null);
+      setDriveConnecting(false);
+      Alert.alert("Timed Out", "Google authentication timed out. Please try again.");
+    }, 120_000);
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+      clearTimeout(deadline);
+    };
+  }, [drivePollingState, loadDriveStatus]);
 
   const { data: backups = [], isLoading, refetch } = useListBackups();
   const createBackup = useCreateBackup();
@@ -513,6 +582,97 @@ export default function BackupScreen() {
     setRefreshing(false);
   };
 
+  // ── Google Drive handlers ──────────────────────────────────────────────────
+  const handleDriveConnect = async () => {
+    setDriveConnecting(true);
+    try {
+      const { oauthUrl, stateToken } = await apiFetch<{ oauthUrl: string; stateToken: string }>(
+        "/api/gdrive/auth/start",
+      );
+      await Linking.openURL(oauthUrl);
+      setDrivePollingState(stateToken);
+    } catch (err: any) {
+      setDriveConnecting(false);
+      Alert.alert("Error", err.message ?? "Could not start Google authentication");
+    }
+  };
+
+  const handleDriveDisconnect = () => {
+    Alert.alert(
+      "Disconnect Google Drive",
+      "Remove the Google Drive connection? Your Drive backup file will not be deleted.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Disconnect",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await apiFetch("/api/gdrive/disconnect", { method: "DELETE" });
+              setDriveStatus({ connected: false });
+            } catch (err: any) {
+              Alert.alert("Error", err.message ?? "Could not disconnect");
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleDriveBackup = async () => {
+    setDriveBacking(true);
+    try {
+      await apiFetch("/api/gdrive/backup", { method: "POST" });
+      await loadDriveStatus();
+      Alert.alert("Backup Complete", "Your data has been encrypted and saved to Google Drive.");
+    } catch (err: any) {
+      Alert.alert("Backup Failed", err.message ?? "Could not upload to Google Drive");
+    } finally {
+      setDriveBacking(false);
+    }
+  };
+
+  const handleDriveRestore = () => {
+    Alert.alert(
+      "Restore from Google Drive",
+      "This will replace ALL your current data with the Drive backup. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Restore",
+          style: "destructive",
+          onPress: async () => {
+            setDriveRestoring(true);
+            try {
+              await apiFetch("/api/gdrive/restore", { method: "POST" });
+              await refetch();
+              Alert.alert("Restored", "All your data has been restored from Google Drive.");
+            } catch (err: any) {
+              Alert.alert("Restore Failed", err.message ?? "Could not restore from Google Drive");
+            } finally {
+              setDriveRestoring(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleDriveAutoBackupToggle = async () => {
+    if (!driveStatus?.connected) return;
+    const newVal = !driveStatus.autoBackupEnabled;
+    setDriveStatus(prev => (prev ? { ...prev, autoBackupEnabled: newVal } : prev));
+    try {
+      await apiFetch("/api/gdrive/auto-backup", {
+        method: "PUT",
+        body: JSON.stringify({ enabled: newVal }),
+      });
+    } catch (err: any) {
+      setDriveStatus(prev => (prev ? { ...prev, autoBackupEnabled: !newVal } : prev));
+      Alert.alert("Error", err.message ?? "Could not update auto-backup setting");
+    }
+  };
+
   const sortedBackups = [...backups].reverse();
   const latestBackup = sortedBackups[0] ?? null;
   const daysSinceBackup = latestBackup
@@ -670,19 +830,210 @@ export default function BackupScreen() {
             </View>
           </View>
 
-          {/* Future: Google Drive */}
-          <View style={[styles.destRow, { borderBottomWidth: 0, opacity: 0.4 }]}>
-            <View style={[styles.destIcon, { backgroundColor: `${colors.mutedForeground}18` }]}>
-              <Feather name="hard-drive" size={17} color={colors.mutedForeground} />
+          {/* Google Drive */}
+          <View style={[styles.destRow, { borderBottomWidth: 0 }]}>
+            <View style={[styles.destIcon, {
+              backgroundColor: driveStatus?.connected ? `${colors.success}18` : `${colors.mutedForeground}18`,
+            }]}>
+              <Feather
+                name="hard-drive" size={17}
+                color={driveStatus?.connected ? colors.success : colors.mutedForeground}
+              />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={[styles.destLabel, { color: colors.foreground }]}>Google Drive</Text>
-              <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>Sync to Google Drive</Text>
+              <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>
+                {driveStatus?.connected ? driveStatus.email : "Sync to Google Drive"}
+              </Text>
             </View>
-            <View style={[styles.soonBadge, { backgroundColor: `${colors.mutedForeground}15` }]}>
-              <Text style={[styles.soonBadgeText, { color: colors.mutedForeground }]}>Coming Soon</Text>
-            </View>
+            {driveStatus?.connected ? (
+              <View style={[styles.activeBadge, { backgroundColor: `${colors.success}18`, borderColor: `${colors.success}30` }]}>
+                <View style={[styles.activeDot, { backgroundColor: colors.success }]} />
+                <Text style={[styles.activeBadgeText, { color: colors.success }]}>Connected</Text>
+              </View>
+            ) : (
+              <View style={[styles.soonBadge, { backgroundColor: `${colors.mutedForeground}15` }]}>
+                <Text style={[styles.soonBadgeText, { color: colors.mutedForeground }]}>Not Set Up</Text>
+              </View>
+            )}
           </View>
+        </View>
+
+        {/* ── Google Drive Backup ──────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>Google Drive Backup</Text>
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+
+          {/* Connection row */}
+          <View style={[styles.destRow, { borderBottomColor: colors.border }]}>
+            <View style={[styles.destIcon, {
+              backgroundColor: driveStatus?.connected ? `${colors.success}18` : `${colors.mutedForeground}18`,
+            }]}>
+              <Feather
+                name="hard-drive" size={17}
+                color={driveStatus?.connected ? colors.success : colors.mutedForeground}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.destLabel, { color: colors.foreground }]}>
+                {driveStatus?.connected ? driveStatus.email : "Not Connected"}
+              </Text>
+              <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>
+                {driveStatus?.connected
+                  ? (driveStatus.lastBackupAt
+                    ? `Last backup: ${formatDate(driveStatus.lastBackupAt)} · ${timeAgo(driveStatus.lastBackupAt)}`
+                    : "Connected — no backup yet")
+                  : "Connect your Google account to back up data"}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.eiBtn, {
+                backgroundColor: driveStatus?.connected ? `${colors.destructive}15` : `${colors.primary}15`,
+                borderColor: driveStatus?.connected ? `${colors.destructive}25` : `${colors.primary}25`,
+              }]}
+              onPress={driveStatus?.connected ? handleDriveDisconnect : handleDriveConnect}
+              disabled={driveConnecting}
+            >
+              {driveConnecting
+                ? <ActivityIndicator size="small" color={colors.primary} />
+                : <Text style={[styles.eiBtnText, {
+                    color: driveStatus?.connected ? colors.destructive : colors.primary,
+                  }]}>
+                    {driveStatus?.connected ? "Disconnect" : "Connect"}
+                  </Text>
+              }
+            </TouchableOpacity>
+          </View>
+
+          {/* Last backup error */}
+          {driveStatus?.connected && driveStatus.lastBackupStatus === "error" && (
+            <View style={[styles.autoStatusBox, { backgroundColor: `${colors.destructive}08`, borderTopColor: colors.border }]}>
+              <View style={styles.autoStatusRow}>
+                <Feather name="alert-circle" size={14} color={colors.destructive} />
+                <Text style={[styles.autoStatusLabel, { color: colors.destructive }]}>Last backup failed</Text>
+              </View>
+              {!!driveStatus.lastBackupError && (
+                <Text style={[styles.nextBackupNote, { color: colors.mutedForeground }]}>
+                  {driveStatus.lastBackupError}
+                </Text>
+              )}
+            </View>
+          )}
+
+          {/* Backup Now */}
+          {driveStatus?.connected && (
+            <View style={[styles.eiRow, { borderBottomColor: colors.border }]}>
+              <View style={[styles.destIcon, { backgroundColor: `${colors.primary}15` }]}>
+                <Feather name="upload-cloud" size={17} color={colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.destLabel, { color: colors.foreground }]}>Backup Now</Text>
+                <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>
+                  Encrypt and save to Google Drive
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.eiBtn, { backgroundColor: `${colors.primary}15`, borderColor: `${colors.primary}25` }]}
+                onPress={handleDriveBackup}
+                disabled={driveBacking || driveRestoring}
+              >
+                {driveBacking
+                  ? <ActivityIndicator size="small" color={colors.primary} />
+                  : <Text style={[styles.eiBtnText, { color: colors.primary }]}>Backup</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Restore from Drive */}
+          {driveStatus?.connected && driveStatus.hasDriveFile && (
+            <View style={[styles.eiRow, { borderBottomColor: colors.border }]}>
+              <View style={[styles.destIcon, { backgroundColor: `${colors.accent}15` }]}>
+                <Feather name="download-cloud" size={17} color={colors.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.destLabel, { color: colors.foreground }]}>Restore from Drive</Text>
+                <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>
+                  Download and restore your Drive backup
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.eiBtn, { backgroundColor: `${colors.accent}15`, borderColor: `${colors.accent}25` }]}
+                onPress={handleDriveRestore}
+                disabled={driveBacking || driveRestoring}
+              >
+                {driveRestoring
+                  ? <ActivityIndicator size="small" color={colors.accent} />
+                  : <Text style={[styles.eiBtnText, { color: colors.accent }]}>Restore</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Restore disabled — no backup yet */}
+          {driveStatus?.connected && !driveStatus.hasDriveFile && (
+            <View style={[styles.eiRow, { borderBottomColor: colors.border, opacity: 0.5 }]}>
+              <View style={[styles.destIcon, { backgroundColor: `${colors.muted}50` }]}>
+                <Feather name="download-cloud" size={17} color={colors.mutedForeground} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.destLabel, { color: colors.foreground }]}>Restore from Drive</Text>
+                <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>
+                  No Drive backup yet — run a backup first
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Not connected info */}
+          {!driveStatus?.connected && (
+            <View style={[styles.eiRow, { borderBottomColor: colors.border }]}>
+              <View style={[styles.destIcon, { backgroundColor: `${colors.primary}10` }]}>
+                <Feather name="shield" size={17} color={colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.destLabel, { color: colors.foreground }]}>AES-256 Encrypted</Text>
+                <Text style={[styles.destDesc, { color: colors.mutedForeground }]}>
+                  Backup is encrypted before upload · Only you can read it
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Auto-backup toggle */}
+          {driveStatus?.connected && (
+            <View style={[styles.autoStatusBox, { backgroundColor: `${colors.primary}08`, borderTopColor: colors.border }]}>
+              <View style={[styles.autoStatusRow, { justifyContent: "space-between" }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Feather name="zap" size={14} color={colors.primary} />
+                  <Text style={[styles.autoStatusLabel, { color: colors.primary }]}>Daily Auto-Backup</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={handleDriveAutoBackupToggle}
+                  style={[styles.activeBadge, {
+                    backgroundColor: driveStatus.autoBackupEnabled
+                      ? `${colors.success}18` : `${colors.mutedForeground}15`,
+                    borderColor: driveStatus.autoBackupEnabled
+                      ? `${colors.success}30` : colors.border,
+                    paddingHorizontal: 12,
+                  }]}
+                >
+                  {driveStatus.autoBackupEnabled ? (
+                    <>
+                      <View style={[styles.activeDot, { backgroundColor: colors.success }]} />
+                      <Text style={[styles.activeBadgeText, { color: colors.success }]}>ON</Text>
+                    </>
+                  ) : (
+                    <Text style={[styles.soonBadgeText, { color: colors.mutedForeground }]}>OFF</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+              <Text style={[styles.nextBackupNote, { color: colors.mutedForeground }]}>
+                {driveStatus.autoBackupEnabled
+                  ? "Auto-backing up to Google Drive daily at 2 AM UTC"
+                  : "Enable to automatically back up to Google Drive every day"}
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* ── Auto Backup Schedule ─────────────────────────────────────── */}

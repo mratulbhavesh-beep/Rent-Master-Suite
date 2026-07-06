@@ -26,7 +26,7 @@ function buildDefaultLabel(): string {
   return `GeminiRent_Backup_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}`;
 }
 
-async function gatherUserData(userId: number) {
+export async function gatherUserData(userId: number) {
   const properties = await db
     .select()
     .from(propertiesTable)
@@ -104,7 +104,7 @@ async function gatherUserData(userId: number) {
   };
 }
 
-async function restoreFromData(userId: number, snap: any) {
+export async function restoreFromData(userId: number, snap: any) {
   await db.transaction(async tx => {
     const currentProps = await tx
       .select({ id: propertiesTable.id })

@@ -18,3 +18,5 @@ export * from "./reminder-logs";
 export * from "./device-tokens";
 export * from "./push-notification-logs";
 export * from "./user-notification-settings";
+export * from "./google-drive-connections";
+export * from "./gdrive-oauth-states";
