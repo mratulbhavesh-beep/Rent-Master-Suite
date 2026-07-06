@@ -3,6 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db, paymentsTable, tenantsTable, propertiesTable, generatedRentsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { logActivity } from "./activity-logs";
+import { sendPushToUser, NOTIF_TYPES, formatAmount } from "../lib/push";
 
 const router: IRouter = Router();
 
@@ -91,6 +92,18 @@ router.post("/payments", requireAuth, async (req: AuthRequest, res): Promise<voi
     propertyId,
     ipAddress: req.ip,
   });
+
+  // Fire-and-forget push notification — does not block the HTTP response
+  void sendPushToUser({
+    userId,
+    tenantId: payment.tenantId,
+    type: NOTIF_TYPES.PAYMENT_RECEIVED,
+    billingPeriod: String(payment.id),
+    title: "Payment Received",
+    body: `${tenant?.name ?? "Tenant"} paid ${formatAmount(payment.amount)}\n${property.name}${tenant?.unitNumber ? ` • ${tenant.unitNumber}` : ""}`,
+    data: { propertyName: property.name, unitNumber: tenant?.unitNumber ?? "" },
+  }).catch(() => {});
+
   res.status(201).json(formatPayment(payment, tenant?.name, property.name, tenant?.unitNumber));
 });
 

@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQueryClient } from "@tanstack/react-query";
 import { User } from "@workspace/api-client-react";
 import { GoogleSignin } from "@/utils/googleSignin";
+import { registerPushToken, unregisterPushToken, setupPushTokenRefresh } from "@/utils/pushNotifications";
 
 const GOOGLE_WEB_CLIENT_ID = "910455573442-ni8hs248tapqpnimin4il8grhg38f645.apps.googleusercontent.com";
 
@@ -27,6 +28,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const queryClient = useQueryClient();
+  const pushCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     async function loadAuth() {
@@ -45,6 +47,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             } else {
               setToken(storedToken);
               setUser(JSON.parse(storedUser));
+              // Re-register push token on app restart (token may have rotated)
+              void registerPushToken(storedToken).catch(() => {});
+              pushCleanupRef.current = setupPushTokenRefresh(storedToken);
             }
           } catch {
             setToken(storedToken);
@@ -58,6 +63,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
     loadAuth();
+
+    return () => {
+      pushCleanupRef.current?.();
+    };
   }, []);
 
   const login = async (newToken: string, newUser: User) => {
@@ -66,6 +75,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await AsyncStorage.setItem("auth_user", JSON.stringify(newUser));
       setToken(newToken);
       setUser(newUser);
+      // Register device for push notifications (non-blocking)
+      void registerPushToken(newToken).catch(() => {});
+      pushCleanupRef.current?.();
+      pushCleanupRef.current = setupPushTokenRefresh(newToken);
     } catch (e) {
       console.error("Failed to save auth state", e);
     }
@@ -73,6 +86,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     try {
+      // Unregister push token before clearing auth
+      if (token) {
+        await unregisterPushToken(token).catch(() => {});
+      }
+      pushCleanupRef.current?.();
+      pushCleanupRef.current = null;
+
       await AsyncStorage.removeItem("auth_token");
       await AsyncStorage.removeItem("auth_user");
       queryClient.clear();

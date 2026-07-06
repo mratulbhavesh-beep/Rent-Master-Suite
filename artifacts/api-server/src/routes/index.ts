@@ -16,6 +16,7 @@ import businessSettingsRouter from "./business-settings";
 import generatedRentsRouter from "./generated-rents";
 import activityLogsRouter from "./activity-logs";
 import remindersRouter from "./reminders";
+import pushTokensRouter from "./push-tokens";
 
 const router: IRouter = Router();
 
@@ -36,5 +37,6 @@ router.use(businessSettingsRouter);
 router.use(generatedRentsRouter);
 router.use(activityLogsRouter);
 router.use(remindersRouter);
+router.use(pushTokensRouter);
 
 export default router;

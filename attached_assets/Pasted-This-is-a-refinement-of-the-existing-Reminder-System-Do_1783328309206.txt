@@ -1,0 +1,265 @@
+This is a refinement of the existing Reminder System.
+
+Do NOT create a new Reminder module.
+
+Do NOT redesign the existing UI.
+
+Only add Firebase Push Notifications to the existing Reminder implementation.
+
+==================================================
+FIREBASE PUSH NOTIFICATIONS
+==================================================
+
+Use Firebase Cloud Messaging (FCM).
+
+Register every signed-in device securely.
+
+Store the latest FCM token for every logged-in user.
+
+Automatically refresh and update the token whenever Firebase changes it.
+
+Each user must receive notifications only for their own account.
+
+==================================================
+AUTOMATIC NOTIFICATIONS
+==================================================
+
+Automatically send push notifications for:
+
+• Rent Due Reminder
+
+• Due Today
+
+• Overdue Reminder
+
+• Payment Received
+
+• Lease Expiry Reminder
+
+• Lease Renewal Reminder
+
+• Rent Escalation Reminder
+
+• Backup Reminder (Future)
+
+Notifications must automatically follow:
+
+• Billing Cycle
+
+• Rent Collection Type
+
+• Grace Period
+
+• Manual Rent Revision
+
+• Lease Renewal
+
+• Rent Escalation
+
+==================================================
+NOTIFICATION CONTENT
+==================================================
+
+Each notification should display:
+
+• Tenant Name
+
+• Property Name
+
+• Unit Number
+
+• Rent Amount
+
+• Billing Period
+
+• Due Date
+
+Use a clear title and message.
+
+Example:
+
+Rent Due
+
+Rahul Sharma
+
+Flat A-102
+
+₹8,000
+
+Due: 31/07/2026
+
+==================================================
+NOTIFICATION ACTION
+==================================================
+
+When the user taps the notification:
+
+Open the application.
+
+Navigate directly to the corresponding Tenant Details screen.
+
+Do not open the Dashboard first.
+
+==================================================
+DUPLICATE PREVENTION
+==================================================
+
+Never send duplicate notifications for the same billing event.
+
+If the notification has already been delivered successfully,
+
+do not resend it unless the reminder schedule requires another notification.
+
+==================================================
+MULTI USER SUPPORT
+==================================================
+
+Notifications must be isolated.
+
+One user must never receive another user's reminders.
+
+Support multiple logged-in users on different devices.
+
+==================================================
+REMINDER HISTORY
+==================================================
+
+Keep the existing Reminder History.
+
+Automatically record:
+
+• Notification Type
+
+• Date
+
+• Time
+
+• Tenant
+
+• Delivery Status
+
+• Firebase Message ID (if available)
+
+==================================================
+WHATSAPP COMPATIBILITY
+==================================================
+
+Keep the existing Share via WhatsApp feature.
+
+Push Notifications and Share via WhatsApp must work independently.
+
+Do not remove any existing Reminder functionality.
+
+==================================================
+COMPATIBILITY
+==================================================
+
+Maintain full compatibility with:
+
+• Rent Generator
+
+• Billing Cycle
+
+• Manual Rent Revision
+
+• Lease Renewal
+
+• Rent Escalation
+
+• Dashboard
+
+• Outstanding
+
+• Rent Ledger
+
+• Reports
+
+• PDF Receipts
+
+• Backup & Restore
+
+==================================================
+ERROR HANDLING
+==================================================
+
+Handle gracefully:
+
+• Notification permission denied
+
+• Invalid FCM Token
+
+• Expired Token
+
+• Offline Device
+
+• Firebase Service Failure
+
+Automatically retry whenever appropriate.
+
+==================================================
+TESTING
+==================================================
+
+After implementation,
+
+perform a complete end-to-end production verification.
+
+Test:
+
+✓ Weekly Billing
+
+✓ Monthly Billing
+
+✓ Quarterly Billing
+
+✓ Yearly Billing
+
+✓ Advance Rent
+
+✓ Post-paid Rent
+
+✓ Due Reminder
+
+✓ Overdue Reminder
+
+✓ Payment Received
+
+✓ Lease Expiry
+
+✓ Lease Renewal
+
+✓ Rent Escalation
+
+✓ Notification opens correct Tenant
+
+✓ Duplicate Prevention
+
+✓ Multi-user Isolation
+
+✓ Existing Reminder History
+
+✓ Share via WhatsApp
+
+Verify no regression in:
+
+• Dashboard
+
+• Ledger
+
+• Reports
+
+• Payments
+
+• Manual Rent Revision
+
+• Backup & Restore
+
+Return only:
+
+PASS / PARTIAL / FAIL
+
+with evidence.
+
+Keep the existing UI unchanged.
+
+Implement this as a production-ready Play Store quality Firebase Push Notification system.

@@ -8,6 +8,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
+import * as Notifications from "expo-notifications";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -33,6 +34,7 @@ function RootLayoutNav() {
   const segments = useSegments();
   const router = useRouter();
 
+  // Auth guard
   useEffect(() => {
     if (isLoading) return;
     const inProtectedGroup = segments[0] === "(tabs)";
@@ -40,6 +42,33 @@ function RootLayoutNav() {
       router.replace("/login");
     }
   }, [isAuthenticated, isLoading, segments]);
+
+  // Push notification tap handler — opens the correct Tenant Details screen
+  useEffect(() => {
+    function navigateToTenant(data: Record<string, unknown>) {
+      const tenantId = data?.tenantId;
+      if (tenantId != null) {
+        router.push(`/tenant-detail?id=${tenantId}` as Parameters<typeof router.push>[0]);
+      }
+    }
+
+    // Foreground / background tap
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as Record<string, unknown>;
+      navigateToTenant(data);
+    });
+
+    // Cold-start tap (app was killed)
+    Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        if (!response) return;
+        const data = response.notification.request.content.data as Record<string, unknown>;
+        navigateToTenant(data);
+      })
+      .catch(() => {});
+
+    return () => subscription.remove();
+  }, [router]);
 
   return (
     <Stack screenOptions={{ headerShown: false, headerBackTitle: "Back" }}>
