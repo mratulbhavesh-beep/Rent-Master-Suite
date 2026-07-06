@@ -30,6 +30,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { Image as ExpoImage } from "expo-image";
 import { fmtDate } from "@/utils/dateFormat";
+import { shareViaWhatsApp } from "@/utils/whatsapp";
 
 type ActiveTab = "overview" | "agreement" | "documents";
 
@@ -1028,27 +1029,37 @@ export default function TenantDetailScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.recordBtn, { backgroundColor: "#25D366", flex: 1 }]}
-                  onPress={() => {
+                  onPress={async () => {
                     if (!tenant.phone) { Alert.alert("No Phone Number", "This tenant has no phone number on file."); return; }
-                    let digits = tenant.phone.replace(/\D/g, "");
-                    if (digits.length === 10) digits = "91" + digits;
-                    else if (digits.startsWith("0")) digits = "91" + digits.slice(1);
-                    const leaseEndStr = fmtDate(tenant.leaseEnd);
+                    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                    const now = new Date();
                     const message = [
                       `Hello ${tenant.name},`, ``,
                       `This is a friendly reminder for your rent payment.`, ``,
-                      `🏠 Property: ${(tenant as any).propertyName}`,
-                      `📦 Unit: ${tenant.unitNumber}`,
+                      `🏠 Property: ${(tenant as any).propertyName ?? ""}`,
+                      `📦 Unit: ${tenant.unitNumber ?? ""}`,
                       `💰 Monthly Rent: ₹${Math.round(tenant.rentAmount).toLocaleString("en-IN")}`,
                       `⚠️ Balance Due: ₹${Math.round(balanceDue).toLocaleString("en-IN")}`,
-                      `📅 Lease End: ${leaseEndStr}`, ``,
+                      `📅 Billing Period: ${MONTHS[now.getMonth()]} ${now.getFullYear()}`, ``,
                       `Please make the payment at your earliest convenience.`, ``,
                       `Thank you,`, `Gemini Rent Manager`,
                     ].join("\n");
-                    const url = `whatsapp://send?phone=${digits}&text=${encodeURIComponent(message)}`;
-                    Linking.openURL(url).catch(() =>
-                      Alert.alert("WhatsApp Not Available", "Please check if WhatsApp is installed and the phone number is valid.")
-                    );
+                    const result = await shareViaWhatsApp(tenant.phone, message);
+                    if (result !== "cancelled") {
+                      try {
+                        await fetch(`${baseUrl}/api/reminders/send`, {
+                          method: "POST",
+                          headers: { Authorization: `Bearer ${auth.token}`, "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            tenantId: tenant.id,
+                            type: "reminder_overdue",
+                            message,
+                            phone: tenant.phone,
+                            status: result === "whatsapp" ? "shared" : "share_sheet",
+                          }),
+                        });
+                      } catch { /* logging is best-effort */ }
+                    }
                   }}
                   activeOpacity={0.85}
                 >
