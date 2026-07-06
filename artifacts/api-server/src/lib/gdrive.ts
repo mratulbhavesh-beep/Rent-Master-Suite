@@ -3,9 +3,11 @@ import crypto from "node:crypto";
 // ─── Encryption key ───────────────────────────────────────────────────────────
 
 function getEncKey(): Buffer {
-  const hex = process.env.BACKUP_ENCRYPTION_KEY;
-  if (!hex || hex.length !== 64) {
-    throw new Error("BACKUP_ENCRYPTION_KEY not configured (must be 64 hex chars)");
+  const hex = (process.env.BACKUP_ENCRYPTION_KEY ?? "").trim();
+  if (hex.length !== 64) {
+    throw new Error(
+      `BACKUP_ENCRYPTION_KEY misconfigured: expected 64 hex chars, got ${hex.length}`,
+    );
   }
   return Buffer.from(hex, "hex");
 }

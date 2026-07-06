@@ -145,12 +145,14 @@ router.get("/gdrive/callback", async (req: Request, res) => {
 
     html(true);
   } catch (err: any) {
+    const msg: string = err?.message ?? "Unknown error";
+    req.log.error({ err, state }, `gdrive callback error: ${msg}`);
     await db
       .update(gdriveOauthStatesTable)
-      .set({ status: "error", errorMessage: err.message ?? "Unknown error" })
+      .set({ status: "error", errorMessage: msg })
       .where(eq(gdriveOauthStatesTable.state, state))
       .catch(() => {});
-    html(false, "Authentication failed. Please try again.");
+    html(false, `Authentication failed: ${msg}`);
   }
 });
 
