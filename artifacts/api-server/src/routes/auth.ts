@@ -5,7 +5,7 @@ import { db, usersTable } from "@workspace/db";
 import { hashPassword, comparePassword, signToken } from "../lib/auth";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { logActivity } from "./activity-logs";
-import { sendEmail, buildVerificationEmail } from "../lib/email";
+import { sendEmail, buildVerificationEmail, buildPasswordResetEmail } from "../lib/email";
 
 interface GoogleTokenPayload {
   sub: string;
@@ -324,21 +324,108 @@ router.post("/auth/change-password", requireAuth, async (req: AuthRequest, res):
   res.json({ message: "Password changed successfully" });
 });
 
-// ─── Reset password (unauthenticated) ────────────────────────────────────────
+// ─── Forgot password — sends email with reset link ───────────────────────────
 
-router.post("/auth/reset-password", async (req, res): Promise<void> => {
-  const { email, newPassword } = req.body as { email?: string; newPassword?: string };
-  if (!email || !newPassword) { res.status(400).json({ error: "Email and new password required" }); return; }
-  if (newPassword.length < 6) { res.status(400).json({ error: "Password must be at least 6 characters" }); return; }
+router.post("/auth/forgot-password", async (req, res): Promise<void> => {
+  const { email } = req.body as { email?: string };
+  // Always return 200 to prevent email enumeration
+  if (!email) { res.json({ message: "If that email exists, a reset link has been sent." }); return; }
+
   const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email.trim().toLowerCase()));
-  if (!user) { res.status(404).json({ error: "No account found with that email" }); return; }
-  if (!user.passwordHash && user.googleId) {
-    res.status(400).json({ error: "This account uses Google Sign-In. Sign in with Google, then add a password from Account Settings." });
+  if (!user || (!user.passwordHash && user.googleId)) {
+    // Google-only account or unknown — silently succeed
+    res.json({ message: "If that email exists, a reset link has been sent." });
     return;
   }
-  const passwordHash = await hashPassword(newPassword);
-  await db.update(usersTable).set({ passwordHash }).where(eq(usersTable.id, user.id));
-  res.json({ message: "Password reset successfully" });
+
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+  await db.update(usersTable)
+    .set({ resetToken: token, resetTokenExpiry: expiry })
+    .where(eq(usersTable.id, user.id));
+
+  const resetUrl = `${appBaseUrl()}/api/auth/reset-password-page?token=${token}`;
+  const { subject, html, text } = buildPasswordResetEmail(user.name, resetUrl);
+  await sendEmail(user.email, subject, html, text);
+
+  res.json({ message: "If that email exists, a reset link has been sent." });
+});
+
+// ─── Reset-password web page (opened from email link) ────────────────────────
+
+function resetHtmlPage(title: string, body: string, formHtml = ""): string {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} — Gemini Rent Manager</title>
+<style>*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;display:flex;justify-content:center;align-items:flex-start;min-height:100vh;padding:24px}
+.card{background:#fff;border-radius:16px;padding:40px 32px;max-width:420px;width:100%;box-shadow:0 4px 20px rgba(0,0,0,.1);margin-top:40px}
+h1{color:#1e3a5f;margin:0 0 8px;font-size:20px}.header{background:#1e3a5f;border-radius:12px 12px 0 0;padding:20px 28px;margin:-40px -32px 28px}
+.header h2{color:#fff;margin:0;font-size:18px}p{color:#555;line-height:1.6;margin:0 0 20px}
+label{display:block;font-size:13px;font-weight:600;color:#333;margin-bottom:6px}
+input{width:100%;height:48px;border:1.5px solid #ddd;border-radius:8px;padding:0 14px;font-size:15px;outline:none}
+input:focus{border-color:#1e3a5f}button{width:100%;height:48px;background:#1e3a5f;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:bold;cursor:pointer;margin-top:8px}
+button:hover{background:#162d4a}.error{color:#ef4444;font-size:13px;margin:4px 0 0}
+.success{color:#22c55e;font-weight:600}.icon{font-size:40px;text-align:center;margin-bottom:16px}</style>
+</head><body><div class="card">
+<div class="header"><h2>Gemini Rent Manager</h2></div>
+<h1>${title}</h1><p>${body}</p>${formHtml}
+</div></body></html>`;
+}
+
+router.get("/auth/reset-password-page", async (req, res): Promise<void> => {
+  const { token } = req.query as { token?: string };
+  if (!token) {
+    res.status(400).send(resetHtmlPage("Invalid Link", "This password reset link is invalid. Please request a new one from the app."));
+    return;
+  }
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.resetToken, token));
+  if (!user) {
+    res.status(400).send(resetHtmlPage("Link Not Found", "This link is invalid or has already been used. Please request a new password reset from the app."));
+    return;
+  }
+  if (user.resetTokenExpiry && user.resetTokenExpiry < new Date()) {
+    res.status(400).send(resetHtmlPage("Link Expired", "This reset link has expired (links are valid for 1 hour). Please request a new one from the app."));
+    return;
+  }
+  const form = `<form method="POST" action="/api/auth/reset-password-page">
+    <input type="hidden" name="token" value="${token}">
+    <div style="margin-bottom:16px"><label>New Password</label><input type="password" name="password" placeholder="Min. 6 characters" required minlength="6"><p class="error" id="pe"></p></div>
+    <div style="margin-bottom:20px"><label>Confirm Password</label><input type="password" name="confirm" placeholder="Re-enter new password" required minlength="6"></div>
+    <button type="submit">Set New Password</button>
+  </form>`;
+  res.send(resetHtmlPage("Reset Your Password", "Enter your new password below.", form));
+});
+
+router.post("/auth/reset-password-page", async (req, res): Promise<void> => {
+  const { token, password, confirm } = req.body as { token?: string; password?: string; confirm?: string };
+  if (!token || !password || !confirm) {
+    res.status(400).send(resetHtmlPage("Error", "All fields are required."));
+    return;
+  }
+  if (password !== confirm) {
+    res.status(400).send(resetHtmlPage("Passwords Don't Match", "The passwords you entered don't match. Please go back and try again."));
+    return;
+  }
+  if (password.length < 6) {
+    res.status(400).send(resetHtmlPage("Password Too Short", "Password must be at least 6 characters. Please go back and try again."));
+    return;
+  }
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.resetToken, token));
+  if (!user) {
+    res.status(400).send(resetHtmlPage("Link Not Found", "This reset link is invalid or has already been used."));
+    return;
+  }
+  if (user.resetTokenExpiry && user.resetTokenExpiry < new Date()) {
+    res.status(400).send(resetHtmlPage("Link Expired", "This reset link has expired. Please request a new one from the app."));
+    return;
+  }
+  const passwordHash = await hashPassword(password);
+  await db.update(usersTable)
+    .set({ passwordHash, resetToken: null, resetTokenExpiry: null, emailVerified: true })
+    .where(eq(usersTable.id, user.id));
+  logActivity({ userId: user.id, userEmail: user.email, action: "update", entity: "user", entityId: user.id, description: "Password reset via email link" });
+  res.send(resetHtmlPage("Password Reset!", "Your password has been changed successfully. You can now sign in to the Gemini Rent Manager app with your new password."));
 });
 
 // ─── Account Linking: Link Google ────────────────────────────────────────────
