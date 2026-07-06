@@ -63,6 +63,7 @@ function RootLayoutNav() {
       <Stack.Screen name="profile" />
       <Stack.Screen name="change-password" />
       <Stack.Screen name="account-security" />
+      <Stack.Screen name="email-verification" />
       <Stack.Screen name="backup" />
     </Stack>
   );

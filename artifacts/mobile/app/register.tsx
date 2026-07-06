@@ -35,21 +35,14 @@ export default function RegisterScreen() {
     registerMutation.mutate(
       { data: { name: trimmedName, email: trimmedEmail, password, role } },
       {
-        onSuccess: async (data) => {
-          await setAuthData(data.token, data.user);
-          router.replace("/(tabs)");
+        onSuccess: async (_data) => {
+          router.replace(`/email-verification?email=${encodeURIComponent(trimmedEmail)}` as any);
         },
         onError: (err: unknown) => {
           const data = (err as { data?: { error?: string; code?: string } })?.data;
           const message = data?.error ?? "Could not create account. Please try again.";
           if (data?.code === "GOOGLE_ACCOUNT_EXISTS") {
-            Alert.alert(
-              "Account Already Exists",
-              message,
-              [
-                { text: "OK", style: "cancel" },
-              ]
-            );
+            Alert.alert("Account Already Exists", message, [{ text: "OK", style: "cancel" }]);
           } else {
             Alert.alert("Registration Failed", message);
           }
@@ -84,6 +77,9 @@ export default function RegisterScreen() {
             autoCapitalize="none"
             autoCorrect={false}
           />
+          <Text style={[styles.emailNote, { color: colors.mutedForeground }]}>
+            Please use a valid email address. It will be required for email verification, password recovery and important account notifications.
+          </Text>
           <TextInput
             style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
             placeholder="Password (min. 6 characters)"
@@ -141,6 +137,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 32, fontWeight: "bold", marginTop: 16 },
   formContainer: { gap: 16 },
   input: { height: 52, borderWidth: 1, borderRadius: 12, paddingHorizontal: 16, fontSize: 16 },
+  emailNote: { fontSize: 12, lineHeight: 17, marginTop: -8 },
   roleContainer: { flexDirection: "row", gap: 12 },
   roleOption: { flex: 1, height: 44, borderWidth: 1, borderRadius: 8, justifyContent: "center", alignItems: "center" },
   button: { height: 52, borderRadius: 12, justifyContent: "center", alignItems: "center", marginTop: 8 },

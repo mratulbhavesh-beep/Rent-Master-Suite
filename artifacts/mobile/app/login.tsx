@@ -41,7 +41,11 @@ export default function LoginScreen() {
           router.replace("/(tabs)");
         },
         onError: (err: unknown) => {
-          const data = (err as { data?: { error?: string } })?.data;
+          const data = (err as { data?: { error?: string; code?: string } })?.data;
+          if (data?.code === "EMAIL_NOT_VERIFIED") {
+            router.push(`/email-verification?email=${encodeURIComponent(trimmedEmail)}&mode=blocked` as any);
+            return;
+          }
           const message = data?.error ?? "Invalid email or password. Please try again.";
           Alert.alert("Login Failed", message);
         },
