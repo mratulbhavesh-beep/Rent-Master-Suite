@@ -37,7 +37,15 @@
       "expo-router",
       "expo-font",
       "expo-web-browser",
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#0f172a",
+          "sounds": []
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
