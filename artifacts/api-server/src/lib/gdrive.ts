@@ -62,6 +62,8 @@ export function decryptBackupContent(data: Buffer): string {
 // ─── OAuth URL helpers ────────────────────────────────────────────────────────
 
 export function getCallbackUrl(): string {
+  const explicit = process.env.OAUTH_REDIRECT_URI?.trim();
+  if (explicit) return explicit;
   const domains = process.env.REPLIT_DOMAINS?.split(",")[0]?.trim();
   if (domains) return `https://${domains}/api/gdrive/callback`;
   const dev = process.env.REPLIT_DEV_DOMAIN?.trim();
