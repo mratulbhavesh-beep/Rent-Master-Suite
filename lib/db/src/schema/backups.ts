@@ -6,7 +6,8 @@ export const backupsTable = pgTable("backups", {
   userId: integer("user_id").notNull().references(() => usersTable.id),
   label: text("label").notNull(),
   sizeBytes: integer("size_bytes").notNull().default(0),
-  data: jsonb("data").notNull(),
+  data: jsonb("data"),
+  dataEncrypted: text("data_encrypted"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

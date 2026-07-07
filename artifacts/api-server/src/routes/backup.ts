@@ -17,8 +17,27 @@ import {
   leaseRenewalsTable,
 } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
+import { encryptString, decryptString } from "../lib/gdrive";
 
 const router: IRouter = Router();
+
+function encryptBackupJson(json: string): string {
+  if (!process.env.BACKUP_ENCRYPTION_KEY) {
+    throw new Error("BACKUP_ENCRYPTION_KEY is not configured");
+  }
+  return encryptString(json);
+}
+
+function decryptBackupJson(encrypted: string): string {
+  return decryptString(encrypted);
+}
+
+function resolveBackupSnap(backup: { data: unknown; dataEncrypted: string | null }): unknown {
+  if (backup.dataEncrypted) {
+    return JSON.parse(decryptBackupJson(backup.dataEncrypted));
+  }
+  return backup.data;
+}
 
 function buildDefaultLabel(): string {
   const now = new Date();
@@ -275,13 +294,13 @@ router.post("/backup", requireAuth, async (req: AuthRequest, res): Promise<void>
   const data = await gatherUserData(userId);
   const json = JSON.stringify(data);
   const sizeBytes = Buffer.byteLength(json, "utf8");
+  const dataEncrypted = encryptBackupJson(json);
 
   const [backup] = await db
     .insert(backupsTable)
-    .values({ userId, label, sizeBytes, data })
+    .values({ userId, label, sizeBytes, dataEncrypted, data: null })
     .returning();
 
-  // Auto-cleanup: keep at most MAX_BACKUPS_PER_USER per user (deletes oldest)
   await enforceBackupLimit(userId);
 
   res.status(201).json({
@@ -337,12 +356,12 @@ router.get("/backup/:id/data", requireAuth, async (req: AuthRequest, res): Promi
     return;
   }
 
-  const data = backup.data as any;
+  const snap = resolveBackupSnap(backup) as any;
   res.json({
     id: backup.id,
     label: backup.label,
-    version: data?.version ?? "1.0",
-    data,
+    version: snap?.version ?? "1.0",
+    data: snap,
   });
 });
 
@@ -362,7 +381,7 @@ router.post("/backup/:id/restore", requireAuth, async (req: AuthRequest, res): P
     return;
   }
 
-  const snap = backup.data as ReturnType<typeof JSON.parse>;
+  const snap = resolveBackupSnap(backup);
   await restoreFromData(userId, snap);
 
   res.json({
@@ -385,10 +404,11 @@ router.post("/backup/import", requireAuth, async (req: AuthRequest, res): Promis
   const json = JSON.stringify(data);
   const sizeBytes = Buffer.byteLength(json, "utf8");
   const importLabel = (label || buildDefaultLabel()) + " (Imported)";
+  const dataEncrypted = encryptBackupJson(json);
 
   const [backup] = await db
     .insert(backupsTable)
-    .values({ userId, label: importLabel, sizeBytes, data })
+    .values({ userId, label: importLabel, sizeBytes, dataEncrypted, data: null })
     .returning();
 
   // Auto-cleanup after import too

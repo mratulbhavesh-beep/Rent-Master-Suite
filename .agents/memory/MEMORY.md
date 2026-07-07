@@ -2,3 +2,4 @@
 - [Agreement & Document management](agreement-docs.md) — rent_agreements and tenant_documents tables added; routes in agreements.ts/documents.ts; req.params.id needs safeId() helper due to string|string[] TS error
 - [Rent Ledger module](rent-ledger.md) — standalone More→Finance screen; reads existing tenants+payments; status derived client-side; PDF via expo-print; WhatsApp via Linking
 - [Lease Management module](lease-management.md) — 7 lease columns on tenants + lease_renewals table; POST /tenants/:id/renew handles escalation math; DB push via raw SQL (no TTY)
+- [Backup encryption & EAS build quirks](backup-eas.md) — backup data encrypted with AES-256-GCM via encryptString (lib/gdrive); EAS build needs GIT_INDEX_FILE=/tmp/eas-gitidx workaround in main agent; EAS keystore SHA-1 already matches google-services.json
