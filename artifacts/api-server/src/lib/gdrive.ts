@@ -195,15 +195,57 @@ export async function getGoogleUserEmail(accessToken: string): Promise<string> {
 
 // ─── Google Drive API ─────────────────────────────────────────────────────────
 
+export const DRIVE_FOLDER_NAME = "Gemini Rent Manager Backups";
+
+/**
+ * Create a folder in the user's My Drive and return its ID.
+ * Always sets parents: ["root"] so the folder is visible in My Drive.
+ */
+export async function createDriveFolder(
+  accessToken: string,
+  name: string,
+  parentId = "root",
+): Promise<string> {
+  const metadata = JSON.stringify({
+    name,
+    mimeType: "application/vnd.google-apps.folder",
+    parents: [parentId],
+  });
+  const res = await fetch("https://www.googleapis.com/drive/v3/files?fields=id", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: metadata,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Drive folder creation failed (${res.status}): ${text}`);
+  }
+  const data = await res.json() as { id: string };
+  return data.id;
+}
+
+/**
+ * Upload (or overwrite) a file in Google Drive.
+ * Pass `parents` on first upload so the file appears in My Drive.
+ * Do NOT pass `parents` when patching an existing file — Drive ignores
+ * parents on PATCH and including it triggers a 400.
+ */
 export async function uploadFileToDrive(options: {
   accessToken: string;
   content: Buffer;
   mimeType: string;
   fileName: string;
   fileId?: string;
+  parents?: string[];
 }): Promise<string> {
-  const { accessToken, content, mimeType, fileName, fileId } = options;
-  const metadata = JSON.stringify({ name: fileName, mimeType });
+  const { accessToken, content, mimeType, fileName, fileId, parents } = options;
+  const metaObj: Record<string, unknown> = { name: fileName, mimeType };
+  // parents only on new-file creation — not on PATCH (causes 400)
+  if (!fileId && parents?.length) metaObj.parents = parents;
+  const metadata = JSON.stringify(metaObj);
   const boundary = "grm_boundary_" + crypto.randomBytes(8).toString("hex");
   const body = Buffer.concat([
     Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n`),
@@ -212,8 +254,8 @@ export async function uploadFileToDrive(options: {
     Buffer.from(`\r\n--${boundary}--`),
   ]);
   const url = fileId
-    ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
-    : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+    ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id`
+    : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id`;
   const res = await fetch(url, {
     method: fileId ? "PATCH" : "POST",
     headers: {
@@ -228,6 +270,7 @@ export async function uploadFileToDrive(options: {
     throw new Error(`Drive upload failed (${res.status}): ${text}`);
   }
   const data = await res.json() as { id: string };
+  if (!data.id) throw new Error("Drive upload returned no file ID — upload may have failed silently");
   return data.id;
 }
 

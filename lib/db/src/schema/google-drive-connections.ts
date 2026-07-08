@@ -8,6 +8,7 @@ export const googleDriveConnectionsTable = pgTable("google_drive_connections", {
   accessTokenEnc: text("access_token_enc").notNull(),
   refreshTokenEnc: text("refresh_token_enc").notNull(),
   driveFileId: text("drive_file_id"),
+  driveFolderId: text("drive_folder_id"),
   autoBackupEnabled: boolean("auto_backup_enabled").notNull().default(false),
   lastBackupAt: timestamp("last_backup_at", { withTimezone: true }),
   lastBackupStatus: text("last_backup_status").notNull().default("none"),

@@ -16,6 +16,8 @@ import {
   decryptBackupContent,
   encodeGRMContent,
   decodeGRMContent,
+  createDriveFolder,
+  DRIVE_FOLDER_NAME,
 } from "../lib/gdrive";
 import { gatherUserData, restoreFromData } from "./backup";
 
@@ -193,6 +195,9 @@ router.get("/gdrive/status", requireAuth, async (req: AuthRequest, res) => {
     lastBackupError: conn.lastBackupError,
     connectedAt: conn.connectedAt,
     hasDriveFile: !!conn.driveFileId,
+    driveFileId: conn.driveFileId,
+    driveFolderId: conn.driveFolderId,
+    folderName: conn.driveFolderId ? DRIVE_FOLDER_NAME : null,
   });
 });
 
@@ -219,29 +224,53 @@ router.post("/gdrive/backup", requireAuth, async (req: AuthRequest, res) => {
   }
   try {
     const accessToken = await getActiveToken(conn);
+
+    // ── 1. Ensure "Gemini Rent Manager Backups" folder exists in My Drive ──
+    let folderId = conn.driveFolderId ?? null;
+    if (!folderId) {
+      folderId = await createDriveFolder(accessToken, DRIVE_FOLDER_NAME, "root");
+      req.log.info({ folderId }, "Created Drive backup folder");
+    }
+
+    // ── 2. Build .grm file ─────────────────────────────────────────────────
     const data = await gatherUserData(req.user!.id);
     const label = `GeminiRent_Backup_${new Date().toISOString().slice(0, 10)}_uid${req.user!.id}`;
     const grmContent = encodeGRMContent(data, label);
     const contentBuf = Buffer.from(grmContent, "utf8");
     const fileName = `${label}.grm`;
+
+    // ── 3. Upload to the folder (parents only on first POST, not on PATCH) ─
     const fileId = await uploadFileToDrive({
       accessToken,
       content: contentBuf,
       mimeType: "application/octet-stream",
       fileName,
       fileId: conn.driveFileId ?? undefined,
+      parents: [folderId],
     });
+
+    req.log.info({ fileId, folderId, fileName, sizeBytes: contentBuf.length }, "Drive backup uploaded");
+
     await db
       .update(googleDriveConnectionsTable)
       .set({
         driveFileId: fileId,
+        driveFolderId: folderId,
         lastBackupAt: new Date(),
         lastBackupStatus: "success",
         lastBackupError: null,
         updatedAt: new Date(),
       })
       .where(eq(googleDriveConnectionsTable.id, conn.id));
-    res.json({ success: true, fileId, fileName, sizeBytes: contentBuf.length, backedUpAt: new Date() });
+    res.json({
+      success: true,
+      fileId,
+      folderId,
+      fileName,
+      folderName: DRIVE_FOLDER_NAME,
+      sizeBytes: contentBuf.length,
+      backedUpAt: new Date(),
+    });
   } catch (err: any) {
     req.log.error({ err }, "gdrive backup error");
     await db
