@@ -274,6 +274,46 @@ export async function uploadFileToDrive(options: {
   return data.id;
 }
 
+/**
+ * Explicitly move a file into a folder using addParents query param.
+ * This is MORE reliable than setting `parents` in multipart metadata because
+ * it is a separate, dedicated Drive API call — not dependent on metadata parsing.
+ * Also renames the file to the latest fileName.
+ * Returns the file's actual parents list for logging.
+ */
+export async function moveFileToFolder(
+  accessToken: string,
+  fileId: string,
+  folderId: string,
+  fileName: string,
+  previousFolderId?: string | null,
+): Promise<string[]> {
+  const params = new URLSearchParams({
+    addParents: folderId,
+    fields: "id,parents,name",
+  });
+  if (previousFolderId && previousFolderId !== folderId) {
+    params.set("removeParents", previousFolderId);
+  }
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?${params.toString()}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: fileName }),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Drive addParents failed (${res.status}): ${text}`);
+  }
+  const data = await res.json() as { id: string; parents?: string[]; name?: string };
+  return data.parents ?? [];
+}
+
 export async function downloadFileFromDrive(
   accessToken: string,
   fileId: string,

@@ -17,6 +17,7 @@ import {
   encodeGRMContent,
   decodeGRMContent,
   createDriveFolder,
+  moveFileToFolder,
   DRIVE_FOLDER_NAME,
 } from "../lib/gdrive";
 import { gatherUserData, restoreFromData } from "./backup";
@@ -239,7 +240,9 @@ router.post("/gdrive/backup", requireAuth, async (req: AuthRequest, res) => {
     const contentBuf = Buffer.from(grmContent, "utf8");
     const fileName = `${label}.grm`;
 
-    // ── 3. Upload to the folder (parents only on first POST, not on PATCH) ─
+    // ── 3. Upload file content ─────────────────────────────────────────────
+    // parents field in metadata is used as a hint, but we ALSO call addParents
+    // explicitly in step 4 to guarantee the file is visible in the folder.
     const fileId = await uploadFileToDrive({
       accessToken,
       content: contentBuf,
@@ -249,7 +252,20 @@ router.post("/gdrive/backup", requireAuth, async (req: AuthRequest, res) => {
       parents: [folderId],
     });
 
-    req.log.info({ fileId, folderId, fileName, sizeBytes: contentBuf.length }, "Drive backup uploaded");
+    req.log.info({ fileId, folderId, fileName, sizeBytes: contentBuf.length }, "Drive upload confirmed");
+
+    // ── 4. Explicitly place the file in the backup folder via addParents ───
+    // This is the most reliable way to set parent in Drive — a dedicated
+    // PATCH ?addParents= call, independent of the multipart upload metadata.
+    const parents = await moveFileToFolder(
+      accessToken,
+      fileId,
+      folderId,
+      fileName,
+      conn.driveFolderId, // removeParents if the folder changed
+    );
+
+    req.log.info({ fileId, folderId, parents, fileName }, "Drive file placed in folder");
 
     await db
       .update(googleDriveConnectionsTable)
