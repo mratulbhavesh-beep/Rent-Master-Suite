@@ -13,8 +13,9 @@ import {
   getGoogleUserEmail,
   uploadFileToDrive,
   downloadFileFromDrive,
-  encryptBackupContent,
   decryptBackupContent,
+  encodeGRMContent,
+  decodeGRMContent,
 } from "../lib/gdrive";
 import { gatherUserData, restoreFromData } from "./backup";
 
@@ -219,11 +220,13 @@ router.post("/gdrive/backup", requireAuth, async (req: AuthRequest, res) => {
   try {
     const accessToken = await getActiveToken(conn);
     const data = await gatherUserData(req.user!.id);
-    const encBuf = encryptBackupContent(JSON.stringify(data));
-    const fileName = `GeminiRent_Backup_uid${req.user!.id}.enc`;
+    const label = `GeminiRent_Backup_${new Date().toISOString().slice(0, 10)}_uid${req.user!.id}`;
+    const grmContent = encodeGRMContent(data, label);
+    const contentBuf = Buffer.from(grmContent, "utf8");
+    const fileName = `${label}.grm`;
     const fileId = await uploadFileToDrive({
       accessToken,
-      content: encBuf,
+      content: contentBuf,
       mimeType: "application/octet-stream",
       fileName,
       fileId: conn.driveFileId ?? undefined,
@@ -238,7 +241,7 @@ router.post("/gdrive/backup", requireAuth, async (req: AuthRequest, res) => {
         updatedAt: new Date(),
       })
       .where(eq(googleDriveConnectionsTable.id, conn.id));
-    res.json({ success: true, fileId, sizeBytes: encBuf.length, backedUpAt: new Date() });
+    res.json({ success: true, fileId, fileName, sizeBytes: contentBuf.length, backedUpAt: new Date() });
   } catch (err: any) {
     req.log.error({ err }, "gdrive backup error");
     await db
@@ -268,9 +271,22 @@ router.post("/gdrive/restore", requireAuth, async (req: AuthRequest, res) => {
   }
   try {
     const accessToken = await getActiveToken(conn);
-    const encBuf = await downloadFileFromDrive(accessToken, conn.driveFileId);
-    const json = decryptBackupContent(encBuf);
-    const snap = JSON.parse(json);
+    const fileBuf = await downloadFileFromDrive(accessToken, conn.driveFileId);
+
+    // Parse backup data — supports both:
+    //   • New .grm format (JSON envelope, same as local Export/Import)
+    //   • Legacy .enc format (AES-256-GCM binary, old Drive backups)
+    let snap: object;
+    try {
+      const text = fileBuf.toString("utf8");
+      const decoded = decodeGRMContent(text);
+      snap = decoded.data;
+    } catch {
+      // Fall back to legacy binary encryption
+      const json = decryptBackupContent(fileBuf);
+      snap = JSON.parse(json);
+    }
+
     await restoreFromData(req.user!.id, snap);
     res.json({ success: true, restoredAt: new Date() });
   } catch (err: any) {

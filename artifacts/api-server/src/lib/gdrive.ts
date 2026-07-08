@@ -59,6 +59,50 @@ export function decryptBackupContent(data: Buffer): string {
   return decipher.update(enc).toString("utf8") + decipher.final("utf8");
 }
 
+// ─── GRM File Format (mirrors mobile app's .grm format exactly) ──────────────
+// Layout:
+//   Outer JSON: { __grm__, format, v, content: <envelope JSON string> }
+//   Envelope:   { grm, fmtVersion, app, exported, label, checksum, payload: <reversed JSON> }
+// This is the same format produced and consumed by the mobile Export/Import feature,
+// so Drive backups and local backups are fully interchangeable.
+
+const GRM_MAGIC = "GeminiRentManager";
+const GRM_FORMAT_VERSION = "1.0";
+
+function grmChecksum(str: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = (Math.imul(hash, 0x01000193)) >>> 0;
+  }
+  return hash;
+}
+
+export function encodeGRMContent(data: object, label: string): string {
+  const payload = JSON.stringify(data);
+  const checksum = grmChecksum(payload);
+  const envelope = JSON.stringify({
+    grm: GRM_MAGIC,
+    fmtVersion: GRM_FORMAT_VERSION,
+    app: "com.geminirent.manager",
+    exported: new Date().toISOString(),
+    label,
+    checksum,
+    payload: payload.split("").reverse().join(""),
+  });
+  return JSON.stringify({ __grm__: true, format: GRM_MAGIC, v: GRM_FORMAT_VERSION, content: envelope }, null, 2);
+}
+
+export function decodeGRMContent(content: string): { data: object; label: string } {
+  const wrapper = JSON.parse(content);
+  if (!wrapper.__grm__ || wrapper.format !== GRM_MAGIC) throw new Error("Not a valid GRM backup file");
+  const envelope = JSON.parse(wrapper.content as string);
+  if (envelope.grm !== GRM_MAGIC) throw new Error("Invalid GRM envelope");
+  const payload = (envelope.payload as string).split("").reverse().join("");
+  if (grmChecksum(payload) !== envelope.checksum) throw new Error("Backup file checksum mismatch — file may be corrupted");
+  return { data: JSON.parse(payload), label: (envelope.label as string) || "Google Drive Backup" };
+}
+
 // ─── OAuth URL helpers ────────────────────────────────────────────────────────
 
 export function getCallbackUrl(): string {
