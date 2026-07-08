@@ -17,6 +17,8 @@ import {
   encodeGRMContent,
   decodeGRMContent,
   createDriveFolder,
+  checkDriveFolderExists,
+  listFilesInFolder,
   moveFileToFolder,
   DRIVE_FOLDER_NAME,
 } from "../lib/gdrive";
@@ -226,51 +228,85 @@ router.post("/gdrive/backup", requireAuth, async (req: AuthRequest, res) => {
   try {
     const accessToken = await getActiveToken(conn);
 
-    // ── 1. Ensure "Gemini Rent Manager Backups" folder exists in My Drive ──
+    // ── STEP 1: Validate or create the backup folder ───────────────────────
+    // If we have a stored folderId, verify it still exists in Drive.
+    // Users can delete the folder — if so, create a fresh one.
     let folderId = conn.driveFolderId ?? null;
+    let folderAction = "reused";
+    if (folderId) {
+      const folderOk = await checkDriveFolderExists(accessToken, folderId);
+      if (!folderOk) {
+        req.log.warn({ storedFolderId: folderId }, "Stored folder missing/deleted — creating new one");
+        folderId = null;
+        folderAction = "recreated";
+      }
+    }
     if (!folderId) {
       folderId = await createDriveFolder(accessToken, DRIVE_FOLDER_NAME, "root");
-      req.log.info({ folderId }, "Created Drive backup folder");
+      if (!folderId) throw new Error("Drive folder creation returned no ID");
+      if (folderAction !== "recreated") folderAction = "created";
+      req.log.info({ folderId, folderAction }, "Drive backup folder created");
     }
 
-    // ── 2. Build .grm file ─────────────────────────────────────────────────
+    // ── STEP 2: Build the .grm backup file ────────────────────────────────
     const data = await gatherUserData(req.user!.id);
     const label = `GeminiRent_Backup_${new Date().toISOString().slice(0, 10)}_uid${req.user!.id}`;
     const grmContent = encodeGRMContent(data, label);
     const contentBuf = Buffer.from(grmContent, "utf8");
     const fileName = `${label}.grm`;
 
-    // ── 3. Upload file content ─────────────────────────────────────────────
-    // parents field in metadata is used as a hint, but we ALSO call addParents
-    // explicitly in step 4 to guarantee the file is visible in the folder.
-    const fileId = await uploadFileToDrive({
+    req.log.info({ folderId, folderAction, fileName, sizeBytes: contentBuf.length }, "Starting Drive upload");
+
+    // ── STEP 3: Upload file content ────────────────────────────────────────
+    // Always create a fresh file (never reuse driveFileId).
+    // Reusing a fileId with PATCH can silently leave the file outside the folder.
+    const uploadedFileId = await uploadFileToDrive({
       accessToken,
       content: contentBuf,
       mimeType: "application/octet-stream",
       fileName,
-      fileId: conn.driveFileId ?? undefined,
+      // No fileId — always create a new file so parents is always honoured
       parents: [folderId],
     });
+    req.log.info({ uploadedFileId, folderId, fileName }, "Drive upload API returned fileId");
 
-    req.log.info({ fileId, folderId, fileName, sizeBytes: contentBuf.length }, "Drive upload confirmed");
-
-    // ── 4. Explicitly place the file in the backup folder via addParents ───
-    // This is the most reliable way to set parent in Drive — a dedicated
-    // PATCH ?addParents= call, independent of the multipart upload metadata.
-    const parents = await moveFileToFolder(
+    // ── STEP 4: Explicit addParents — guarantee file is inside the folder ──
+    // Separate PATCH call; does not depend on multipart metadata parsing.
+    const parentsAfterMove = await moveFileToFolder(
       accessToken,
-      fileId,
+      uploadedFileId,
       folderId,
       fileName,
-      conn.driveFolderId, // removeParents if the folder changed
+    );
+    req.log.info({ uploadedFileId, folderId, parentsAfterMove }, "addParents PATCH completed");
+
+    // ── STEP 5: Drive API verification — files.list inside the folder ─────
+    // Only declare success after Drive confirms the file is visible in folder.
+    const filesInFolder = await listFilesInFolder(accessToken, folderId);
+    req.log.info({ folderId, filesInFolder }, "Drive files.list verification result");
+
+    const verifiedFile = filesInFolder.find(f => f.id === uploadedFileId);
+    if (!verifiedFile) {
+      throw new Error(
+        `Drive verification failed: fileId ${uploadedFileId} not found in folder ${folderId}. ` +
+        `files.list returned ${filesInFolder.length} file(s): ` +
+        JSON.stringify(filesInFolder.map(f => ({ id: f.id, name: f.name }))),
+      );
+    }
+
+    req.log.info(
+      { fileId: verifiedFile.id, name: verifiedFile.name, size: verifiedFile.size,
+        parents: verifiedFile.parents, webViewLink: verifiedFile.webViewLink },
+      "Drive backup VERIFIED — file confirmed in folder",
     );
 
-    req.log.info({ fileId, folderId, parents, fileName }, "Drive file placed in folder");
-
+    // Delete the old driveFileId if we created a new one (to avoid accumulation
+    // only one backup file is tracked; old ones remain in Drive but are orphaned
+    // from our tracking). Save new fileId to DB.
     await db
       .update(googleDriveConnectionsTable)
       .set({
-        driveFileId: fileId,
+        driveFileId: verifiedFile.id,
         driveFolderId: folderId,
         lastBackupAt: new Date(),
         lastBackupStatus: "success",
@@ -278,13 +314,18 @@ router.post("/gdrive/backup", requireAuth, async (req: AuthRequest, res) => {
         updatedAt: new Date(),
       })
       .where(eq(googleDriveConnectionsTable.id, conn.id));
+
     res.json({
       success: true,
-      fileId,
+      driveVerified: true,
+      fileId: verifiedFile.id,
       folderId,
-      fileName,
+      fileName: verifiedFile.name,
       folderName: DRIVE_FOLDER_NAME,
-      sizeBytes: contentBuf.length,
+      folderAction,
+      sizeBytes: verifiedFile.size ? parseInt(verifiedFile.size, 10) : contentBuf.length,
+      webViewLink: verifiedFile.webViewLink,
+      parents: verifiedFile.parents,
       backedUpAt: new Date(),
     });
   } catch (err: any) {

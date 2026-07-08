@@ -197,6 +197,38 @@ export async function getGoogleUserEmail(accessToken: string): Promise<string> {
 
 export const DRIVE_FOLDER_NAME = "Gemini Rent Manager Backups";
 
+export interface DriveFileInfo {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: string;
+  parents?: string[];
+  webViewLink?: string;
+  createdTime?: string;
+}
+
+/**
+ * Check whether a Drive folder ID is still valid (not deleted, not trashed).
+ * Returns false on 404 or if the item is trashed / not a folder.
+ */
+export async function checkDriveFolderExists(
+  accessToken: string,
+  folderId: string,
+): Promise<boolean> {
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,trashed,mimeType`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (res.status === 404) return false;
+  if (!res.ok) return false;
+  const data = await res.json() as { id?: string; trashed?: boolean; mimeType?: string };
+  return (
+    !!data.id &&
+    !data.trashed &&
+    data.mimeType === "application/vnd.google-apps.folder"
+  );
+}
+
 /**
  * Create a folder in the user's My Drive and return its ID.
  * Always sets parents: ["root"] so the folder is visible in My Drive.
@@ -211,20 +243,50 @@ export async function createDriveFolder(
     mimeType: "application/vnd.google-apps.folder",
     parents: [parentId],
   });
-  const res = await fetch("https://www.googleapis.com/drive/v3/files?fields=id", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
+  const res = await fetch(
+    "https://www.googleapis.com/drive/v3/files?fields=id,name,parents,webViewLink",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: metadata,
     },
-    body: metadata,
-  });
+  );
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Drive folder creation failed (${res.status}): ${text}`);
   }
-  const data = await res.json() as { id: string };
+  const data = await res.json() as { id?: string; name?: string; parents?: string[] };
+  if (!data.id) {
+    throw new Error(`Drive folder creation returned no ID. Raw response: ${JSON.stringify(data)}`);
+  }
   return data.id;
+}
+
+/**
+ * List all non-trashed files directly inside a Drive folder.
+ * Uses drive.file scope — only returns files the app created.
+ */
+export async function listFilesInFolder(
+  accessToken: string,
+  folderId: string,
+): Promise<DriveFileInfo[]> {
+  const q = `'${folderId}' in parents and trashed=false`;
+  const fields = "files(id,name,mimeType,size,parents,webViewLink,createdTime)";
+  const url =
+    `https://www.googleapis.com/drive/v3/files` +
+    `?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&spaces=drive`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Drive files.list failed (${res.status}): ${text}`);
+  }
+  const data = await res.json() as { files?: DriveFileInfo[] };
+  return data.files ?? [];
 }
 
 /**
