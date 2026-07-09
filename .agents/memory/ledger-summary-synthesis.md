@@ -16,10 +16,22 @@ of treating it as a partial/lazy cache of periods.
 **How to apply:** When computing lease-lifetime summary stats, synthesize the full set of billable
 periods from `leaseStart` to today (mirroring the period/due-date arithmetic used by the actual
 rent generator, including rent-revision/escalation history for per-period amounts), then merge with
-actual ledger rows (actual rows win for status/paid amounts) to get correct `monthsElapsed`,
-`totalExpected`, `dueExpected`, and `balanceDue`. Keep this synthesis logic in a shared calculation
-library, duplicating pure period-arithmetic helpers rather than importing from the app-level rent
-generator, to avoid inverting workspace dependency direction (lib importing from app). Any endpoint
-that reports these summary stats (tenant detail, tenant list, dashboard aggregates) needs the same
-lease context (leaseStart, billingCycle, collection type, grace period, revision history) passed in
-— it's easy to update one call site and miss others that compute the same numbers independently.
+actual ledger rows for `dueDate`/`status` (always authoritative) and `amount` — but only use the
+ledger row's stored `amount` once the period is *settled* (`status` is `paid`/`partial`); for
+pending/overdue/upcoming rows, use the recomputed (revision/escalation-aware) amount instead. Keep
+this synthesis logic in a shared calculation library, duplicating pure period-arithmetic helpers
+rather than importing from the app-level rent generator, to avoid inverting workspace dependency
+direction (lib importing from app). Any endpoint that reports these summary stats (tenant detail,
+tenant list, dashboard aggregates) needs the same lease context (leaseStart, billingCycle,
+collection type, grace period, revision history) passed in — it's easy to update one call site and
+miss others that compute the same numbers independently.
+
+**Escalation dates must be recomputed from lease terms, not read from automatic revision rows.**
+An automatic escalation cron job that stamps `rent_revisions.effectiveFrom` with the job's run date
+(rather than the true lease anniversary) produces correct final rent amounts but wrong historical
+timing — e.g. a ₹750/yr escalation from a 2024-01-01 lease should land on 2025-01-01, 2026-01-01,
+etc., not "whenever the cron happened to run." Fix by recomputing an escalation schedule purely from
+`leaseStart` + `escalationFrequencyYears`/`type`/`value` (ignore stored automatic-revision dates
+entirely), and merge that with genuinely manual revisions (`changedBy !== "automatic"`) which DO
+keep their recorded `effectiveFrom`. Don't touch the cron job itself if the task says not to modify
+ledger/revision generation — recompute at the read/summary layer instead.

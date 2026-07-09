@@ -41,9 +41,19 @@ function buildLeaseContext(
   revisions: LedgerRevision[]
 ): LeaseContext {
   const sorted = [...revisions].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
-  const baseRentAmount = sorted.length > 0 && sorted[0].previousRent != null
-    ? sorted[0].previousRent
-    : t.rentAmount;
+  // baseRentAmount is the rent in effect at lease inception — i.e. before ANY
+  // revision (manual or automatic). Automatic escalation revisions are
+  // recomputed from the lease agreement's terms (see buildEscalationSchedule
+  // in @workspace/rent-calc), so only the earliest MANUAL revision's
+  // previousRent can override the tenant's current rentAmount here; absent
+  // that, we fall back to the earliest revision of any kind for backward
+  // compatibility with tenants that predate this distinction.
+  const earliestManual = sorted.find(r => (r.changedBy ?? "manual") !== "automatic");
+  const baseRentAmount = earliestManual?.previousRent != null
+    ? earliestManual.previousRent
+    : sorted[0]?.previousRent != null
+      ? sorted[0].previousRent
+      : t.rentAmount;
   return {
     leaseStart: t.leaseStart,
     billingCycle: t.billingCycle,
@@ -51,6 +61,10 @@ function buildLeaseContext(
     gracePeriodDays: t.gracePeriodDays,
     baseRentAmount,
     revisions: sorted,
+    rentEscalation: t.rentEscalation ?? false,
+    escalationFrequencyYears: t.escalationFrequencyYears ?? 1,
+    escalationType: t.escalationType ?? "percentage",
+    escalationValue: t.escalationValue ?? 0,
   };
 }
 
@@ -140,6 +154,7 @@ router.get("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void>
           newRent: rentRevisionsTable.newRent,
           previousRent: rentRevisionsTable.previousRent,
           status: rentRevisionsTable.status,
+          changedBy: rentRevisionsTable.changedBy,
         }).from(rentRevisionsTable).where(inArray(rentRevisionsTable.tenantId, tenantIds))
       : Promise.resolve([]),
   ]);
@@ -177,6 +192,7 @@ router.get("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void>
       newRent: r.newRent,
       previousRent: r.previousRent,
       status: r.status,
+      changedBy: r.changedBy,
     });
   }
 
@@ -279,6 +295,7 @@ router.get("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise<v
         newRent: rentRevisionsTable.newRent,
         previousRent: rentRevisionsTable.previousRent,
         status: rentRevisionsTable.status,
+        changedBy: rentRevisionsTable.changedBy,
       }).from(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, id)),
   ]);
   const latestAgreement = agreements.length > 0
@@ -397,6 +414,7 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
         newRent: rentRevisionsTable.newRent,
         previousRent: rentRevisionsTable.previousRent,
         status: rentRevisionsTable.status,
+        changedBy: rentRevisionsTable.changedBy,
       }).from(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, id)),
   ]);
   const latestAgreement = agreements.length > 0

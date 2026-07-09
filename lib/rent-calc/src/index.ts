@@ -55,6 +55,8 @@ export type LedgerRevision = {
   newRent: string | number;
   previousRent?: string | number;
   status?: string;
+  /** "manual" | "automatic" (defaults to "manual" when omitted, for backward compat). */
+  changedBy?: string;
 };
 
 /**
@@ -77,6 +79,21 @@ export type LeaseContext = {
   /** Rent amount that applied before the first revision (or the current rent, if none). */
   baseRentAmount: string | number;
   revisions?: LedgerRevision[];
+  /**
+   * Escalation terms from the lease agreement. When `rentEscalation` is true,
+   * the summary layer recomputes the escalation schedule directly from these
+   * terms (every `escalationFrequencyYears` from `leaseStart`) instead of
+   * relying on whatever automatic `rent_revisions` rows happen to exist —
+   * those rows are stamped with the date the escalation job happened to run,
+   * not the lease's true anniversary date, so they cannot be trusted for
+   * historical reconstruction. Manual revisions (see `LedgerRevision.changedBy`)
+   * are still honored as explicit overrides.
+   */
+  rentEscalation?: boolean;
+  escalationFrequencyYears?: number;
+  /** "percentage" | "fixed" */
+  escalationType?: string;
+  escalationValue?: string | number;
 };
 
 function toNum(v: string | number): number {
@@ -93,6 +110,48 @@ function addDaysUTC(dateStr: string, days: number): string {
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().split("T")[0];
+}
+
+function addYearsUTC(dateStr: string, years: number): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCFullYear(d.getUTCFullYear() + years);
+  return d.toISOString().split("T")[0];
+}
+
+/**
+ * Recompute the escalation schedule directly from the lease agreement's
+ * terms (frequency, type, value), anchored to `leaseStart` — NOT from
+ * whatever automatic `rent_revisions` rows happen to exist. Automatic
+ * revisions are stamped with the date the escalation job ran, which can lag
+ * (or predate cron enablement) far behind the lease's true anniversary
+ * dates, so they are not reliable for historical reconstruction. This
+ * produces one event per anniversary up to (and including) `today`, each
+ * compounding on the previous computed amount, exactly mirroring what
+ * should have happened had the lease agreement been followed to the letter.
+ */
+function buildEscalationSchedule(
+  lease: LeaseContext,
+  today: string
+): Array<{ effectiveFrom: string; newRent: number }> {
+  const frequencyYears = lease.escalationFrequencyYears ?? 1;
+  const escalationType = lease.escalationType ?? "percentage";
+  const escalationValue = toNum(lease.escalationValue ?? 0);
+  if (frequencyYears <= 0 || escalationValue === 0) return [];
+
+  const events: Array<{ effectiveFrom: string; newRent: number }> = [];
+  let amount = toNum(lease.baseRentAmount);
+  let anniversary = addYearsUTC(lease.leaseStart, frequencyYears);
+  const MAX_ANNIVERSARIES = 100; // generous cap; a lease running 100+ escalation cycles is not realistic
+  let count = 0;
+
+  while (anniversary <= today && count < MAX_ANNIVERSARIES) {
+    amount = escalationType === "fixed" ? amount + escalationValue : amount * (1 + escalationValue / 100);
+    events.push({ effectiveFrom: anniversary, newRent: amount });
+    anniversary = addYearsUTC(anniversary, frequencyYears);
+    count++;
+  }
+
+  return events;
 }
 
 function getCycleMonths(billingCycle: string): number {
@@ -128,14 +187,23 @@ function synthesizeBillablePeriods(
   lease: LeaseContext,
   today: string
 ): Array<{ billingPeriodStart: string; dueDate: string; amount: number }> {
-  const revisions = [...(lease.revisions ?? [])]
-    .filter(r => (r.status ?? "active") === "active")
+  // Manual revisions are explicit landlord decisions and are always honored
+  // at their recorded date. Automatic revisions already in the DB are NOT
+  // used here — they're superseded by `buildEscalationSchedule`, which
+  // recomputes the true lease-agreement anniversaries below.
+  const manualRevisionEvents = [...(lease.revisions ?? [])]
+    .filter(r => (r.status ?? "active") === "active" && (r.changedBy ?? "manual") !== "automatic")
+    .map(r => ({ effectiveFrom: r.effectiveFrom, newRent: toNum(r.newRent) }));
+
+  const escalationEvents = lease.rentEscalation ? buildEscalationSchedule(lease, today) : [];
+
+  const revisionEvents = [...manualRevisionEvents, ...escalationEvents]
     .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
 
   const rentAt = (periodStart: string): number => {
     let amount = toNum(lease.baseRentAmount);
-    for (const rev of revisions) {
-      if (rev.effectiveFrom <= periodStart) amount = toNum(rev.newRent);
+    for (const rev of revisionEvents) {
+      if (rev.effectiveFrom <= periodStart) amount = rev.newRent;
       else break;
     }
     return amount;
@@ -165,11 +233,17 @@ function synthesizeBillablePeriods(
  *
  * When `lease` is provided, Total Expected / Months Active / Balance Due are
  * derived from every billable period since lease start (honoring rent
- * revision history), not just the rows that happen to already exist in
- * `generated_rents`. Where a real generated_rents row exists for a period,
- * its actual amount/status/dueDate are authoritative (so paid/partial rows
- * and their linked payments are never recalculated). When `lease` is
- * omitted, the summary falls back to the ledger-only calculation.
+ * revision and escalation history), not just the rows that happen to already
+ * exist in `generated_rents`. A real generated_rents row's actual `dueDate`
+ * and `status` are always authoritative. Its `amount` is authoritative too
+ * ONLY once the period is settled (`status` is "paid" or "partial") — paid
+ * history must never be recalculated after the fact. For a period that is
+ * still pending/overdue/upcoming, the recomputed (revision- and
+ * escalation-aware) amount is used instead, since an un-synced ledger row
+ * may still carry a stale pre-escalation amount that hasn't been backfilled
+ * yet; the tenant's true outstanding balance must reflect the lease
+ * agreement, not that staleness. When `lease` is omitted, the summary falls
+ * back to the ledger-only calculation.
  */
 export function computeLedgerSummary(
   generatedRents: LedgerEntry[],
@@ -200,9 +274,16 @@ export function computeLedgerSummary(
 
   const merged = synthesized.map(period => {
     const actual = actualByStart.get(period.billingPeriodStart);
-    return actual
-      ? { billingPeriodStart: actual.billingPeriodStart, dueDate: actual.dueDate, amount: toNum(actual.amount), status: actual.status }
-      : { billingPeriodStart: period.billingPeriodStart, dueDate: period.dueDate, amount: period.amount, status: undefined as string | undefined };
+    if (!actual) {
+      return { billingPeriodStart: period.billingPeriodStart, dueDate: period.dueDate, amount: period.amount, status: undefined as string | undefined };
+    }
+    const isSettled = actual.status === "paid" || actual.status === "partial";
+    return {
+      billingPeriodStart: actual.billingPeriodStart,
+      dueDate: actual.dueDate,
+      amount: isSettled ? toNum(actual.amount) : period.amount,
+      status: actual.status,
+    };
   });
 
   const monthsElapsed = merged.length;

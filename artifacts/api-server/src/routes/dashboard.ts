@@ -37,6 +37,10 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
           billingCycle: tenantsTable.billingCycle,
           rentCollectionType: tenantsTable.rentCollectionType,
           gracePeriodDays: tenantsTable.gracePeriodDays,
+          rentEscalation: tenantsTable.rentEscalation,
+          escalationFrequencyYears: tenantsTable.escalationFrequencyYears,
+          escalationType: tenantsTable.escalationType,
+          escalationValue: tenantsTable.escalationValue,
         })
         .from(tenantsTable)
         .where(sql`${tenantsTable.status} = 'active' AND ${tenantsTable.propertyId} = ANY(${sql.raw(`ARRAY[${userPropertyIds.join(",")}]::int[]`)})`)
@@ -91,6 +95,7 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
           newRent: rentRevisionsTable.newRent,
           previousRent: rentRevisionsTable.previousRent,
           status: rentRevisionsTable.status,
+          changedBy: rentRevisionsTable.changedBy,
         })
         .from(rentRevisionsTable)
         .where(inArray(rentRevisionsTable.tenantId, activeTenantIds))
@@ -106,7 +111,7 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
   const revisionsByTenant = new Map<number, LedgerRevision[]>();
   for (const r of allRevisions) {
     const list = revisionsByTenant.get(r.tenantId) ?? [];
-    list.push({ effectiveFrom: r.effectiveFrom, newRent: r.newRent, previousRent: r.previousRent, status: r.status });
+    list.push({ effectiveFrom: r.effectiveFrom, newRent: r.newRent, previousRent: r.previousRent, status: r.status, changedBy: r.changedBy });
     revisionsByTenant.set(r.tenantId, list);
   }
 
@@ -122,7 +127,17 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
     const entries = rentsByTenant.get(t.id) ?? [];
     const tenantPayments = paymentsForLedgerByTenant.get(t.id) ?? [];
     const revisions = [...(revisionsByTenant.get(t.id) ?? [])].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
-    const baseRentAmount = revisions.length > 0 && revisions[0].previousRent != null ? revisions[0].previousRent : t.rentAmount;
+    // baseRentAmount is the rent at lease inception, before ANY revision.
+    // Automatic escalation revisions are recomputed from the lease
+    // agreement's terms (see buildEscalationSchedule in @workspace/rent-calc),
+    // so only the earliest MANUAL revision's previousRent can override the
+    // tenant's current rentAmount here.
+    const earliestManual = revisions.find(r => (r.changedBy ?? "manual") !== "automatic");
+    const baseRentAmount = earliestManual?.previousRent != null
+      ? earliestManual.previousRent
+      : revisions[0]?.previousRent != null
+        ? revisions[0].previousRent
+        : t.rentAmount;
     const lease: LeaseContext = {
       leaseStart: t.leaseStart,
       billingCycle: t.billingCycle,
@@ -130,6 +145,10 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
       gracePeriodDays: t.gracePeriodDays,
       baseRentAmount,
       revisions,
+      rentEscalation: t.rentEscalation ?? false,
+      escalationFrequencyYears: t.escalationFrequencyYears ?? 1,
+      escalationType: t.escalationType ?? "percentage",
+      escalationValue: t.escalationValue ?? 0,
     };
     totalDue += computeLedgerSummary(entries, tenantPayments, todayStr, lease).balanceDue;
   }
