@@ -32,6 +32,7 @@ import {
   downloadReceiptPDF,
   shareReceiptPDF,
 } from "@/utils/receiptPdf";
+import { confirmAction } from "@/utils/confirm";
 
 export default function PaymentReceiptScreen() {
   const { id } = useLocalSearchParams();
@@ -114,35 +115,29 @@ export default function PaymentReceiptScreen() {
   const handleDeletePayment = () => {
     if (!payment) return;
     const msg = `Delete this payment of ₹${Number(payment.amount).toLocaleString("en-IN")}? This cannot be undone.`;
-    Alert.alert("Delete Payment", msg, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () =>
-          deleteMutation.mutate(
-            { id: payment.id },
-            {
-              onSuccess: () => {
-                queryClient.invalidateQueries({ queryKey: getListPaymentsQueryKey() });
-                queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
-                queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
-                if (payment.tenantId) {
-                  queryClient.invalidateQueries({
-                    queryKey: getGetTenantQueryKey(payment.tenantId),
-                  });
-                }
-                router.back();
-              },
-              onError: (err: any) =>
-                Alert.alert(
-                  "Error",
-                  err?.response?.data?.error || "Failed to delete payment"
-                ),
+    confirmAction("Delete Payment", msg, () =>
+      deleteMutation.mutate(
+        { id: payment.id },
+        {
+          onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: getListPaymentsQueryKey() });
+            queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+            queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
+            if (payment.tenantId) {
+              queryClient.invalidateQueries({
+                queryKey: getGetTenantQueryKey(payment.tenantId),
+              });
             }
-          ),
-      },
-    ]);
+            router.back();
+          },
+          onError: (err: any) =>
+            Alert.alert(
+              "Error",
+              err?.response?.data?.error || "Failed to delete payment"
+            ),
+        }
+      )
+    );
   };
 
   // ── Loading / error states ─────────────────────────────────────────────
