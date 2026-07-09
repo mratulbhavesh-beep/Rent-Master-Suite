@@ -1,28 +1,9 @@
 import { Router, type IRouter } from "express";
-import { eq, inArray, sql } from "drizzle-orm";
-import { db, propertiesTable, tenantsTable, paymentsTable, maintenanceRequestsTable } from "@workspace/db";
+import { and, eq, inArray, lte, ne, sql } from "drizzle-orm";
+import { db, propertiesTable, tenantsTable, paymentsTable, maintenanceRequestsTable, generatedRentsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
-
-function periodsElapsed(leaseStart: string, billingCycle: string): number {
-  const start = new Date(leaseStart);
-  const now = new Date();
-
-  if (billingCycle === "weekly") {
-    const diffMs = now.getTime() - start.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    return Math.max(1, Math.floor(diffDays / 7) + 1);
-  }
-
-  const totalMonths =
-    (now.getFullYear() - start.getFullYear()) * 12 +
-    (now.getMonth() - start.getMonth()) + 1;
-
-  if (billingCycle === "quarterly") return Math.max(1, Math.ceil(totalMonths / 3));
-  if (billingCycle === "yearly") return Math.max(1, Math.ceil(totalMonths / 12));
-  return Math.max(1, totalMonths); // monthly
-}
 
 router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const userId = req.user!.id;
@@ -82,11 +63,34 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
   for (const p of allPayments) {
     paymentsByTenant.set(p.tenantId, (paymentsByTenant.get(p.tenantId) ?? 0) + parseFloat(String(p.amount)));
   }
+
+  // Outstanding = sum of ledger entries whose due_date has passed, minus total payments.
+  // This correctly excludes post-paid entries that are not yet due (e.g. dueDate = Aug 5 on Jul 8).
+  const overdueRows = activeTenantIds.length > 0
+    ? await db
+        .select({
+          tenantId: generatedRentsTable.tenantId,
+          totalExpected: sql<string>`SUM(${generatedRentsTable.amount}::numeric)`,
+        })
+        .from(generatedRentsTable)
+        .where(
+          and(
+            inArray(generatedRentsTable.tenantId, activeTenantIds),
+            lte(generatedRentsTable.dueDate, todayStr),
+            ne(generatedRentsTable.status, "paid")
+          )
+        )
+        .groupBy(generatedRentsTable.tenantId)
+    : [];
+
+  const expectedByTenant = new Map<number, number>();
+  for (const r of overdueRows) {
+    expectedByTenant.set(r.tenantId, parseFloat(String(r.totalExpected)));
+  }
+
   let totalDue = 0;
   for (const t of activeTenants) {
-    const cycle = t.billingCycle ?? "monthly";
-    const periods = periodsElapsed(t.leaseStart, cycle);
-    const expected = periods * parseFloat(String(t.rentAmount));
+    const expected = expectedByTenant.get(t.id) ?? 0;
     const paid = paymentsByTenant.get(t.id) ?? 0;
     totalDue += Math.max(0, expected - paid);
   }
