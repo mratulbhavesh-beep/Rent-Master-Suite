@@ -134,6 +134,101 @@ async function applyAutoEscalationIfDue(
   return String(newRent);
 }
 
+// Generates any missing rent periods (Jan..today) for a single tenant, up to
+// and including the period whose start date is today or earlier. Used both
+// by the batch cron (runRentGeneration) and immediately after tenant
+// creation, so a brand-new tenant (advance or post-paid) doesn't have to wait
+// for the next scheduled run to see their ledger populated.
+async function generateForOneTenant(
+  tenant: typeof tenantsTable.$inferSelect,
+  propertyUserId: number | null,
+  today: string
+): Promise<number> {
+  let generated = 0;
+
+  let billingCycle = tenant.billingCycle;
+  let rentCollectionType = tenant.rentCollectionType;
+  let gracePeriodDays = tenant.gracePeriodDays;
+
+  if (tenant.useBusinessDefault && propertyUserId != null) {
+    const [settings] = await db
+      .select()
+      .from(businessSettingsTable)
+      .where(eq(businessSettingsTable.userId, propertyUserId));
+    if (settings) {
+      billingCycle = settings.defaultBillingCycle;
+      rentCollectionType = settings.defaultRentCollectionType;
+      gracePeriodDays = settings.defaultGracePeriodDays;
+    }
+  }
+
+  // ── Determine effective base rent ─────────────────────────────────────
+  // Always use the latest active revision (effectiveFrom <= today) as the
+  // authoritative rent, regardless of what tenant.rentAmount currently holds.
+  // This handles: future-dated revisions that have now become active, and
+  // cases where tenant.rentAmount was never synced after a revision.
+  const [latestActiveRevision] = await db
+    .select({ newRent: rentRevisionsTable.newRent })
+    .from(rentRevisionsTable)
+    .where(and(
+      eq(rentRevisionsTable.tenantId, tenant.id),
+      lte(rentRevisionsTable.effectiveFrom, today),
+      eq(rentRevisionsTable.status, "active")
+    ))
+    .orderBy(desc(rentRevisionsTable.effectiveFrom), desc(rentRevisionsTable.id))
+    .limit(1);
+
+  const effectiveBaseRent = latestActiveRevision
+    ? String(latestActiveRevision.newRent)
+    : tenant.rentAmount;
+
+  // Keep tenant.rentAmount in sync with the latest active revision
+  if (latestActiveRevision &&
+      parseFloat(String(latestActiveRevision.newRent)) !== parseFloat(String(tenant.rentAmount))) {
+    await db.update(tenantsTable)
+      .set({ rentAmount: String(latestActiveRevision.newRent) })
+      .where(eq(tenantsTable.id, tenant.id));
+  }
+
+  // Apply automatic escalation if due, passing effective base so manual
+  // revisions on the same date are honoured as the escalation base.
+  const rentAmountForGeneration = await applyAutoEscalationIfDue(tenant, today, effectiveBaseRent);
+
+  const [lastRent] = await db
+    .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
+    .from(generatedRentsTable)
+    .where(eq(generatedRentsTable.tenantId, tenant.id))
+    .orderBy(desc(generatedRentsTable.billingPeriodEnd))
+    .limit(1);
+
+  const lastPeriodEnd = lastRent?.billingPeriodEnd ?? null;
+
+  const periods = computePeriods(
+    tenant.leaseStart,
+    lastPeriodEnd,
+    billingCycle,
+    today
+  );
+
+  for (const period of periods) {
+    const dueDate = computeDueDate(period, rentCollectionType, gracePeriodDays);
+    await db.insert(generatedRentsTable).values({
+      tenantId: tenant.id,
+      propertyId: tenant.propertyId,
+      amount: rentAmountForGeneration,
+      billingPeriodStart: period.start,
+      billingPeriodEnd: period.end,
+      dueDate,
+      billingCycle,
+      status: "pending",
+      paymentId: null,
+    }).onConflictDoNothing();
+    generated++;
+  }
+
+  return generated;
+}
+
 export async function runRentGeneration(): Promise<number> {
   const today = new Date().toISOString().split("T")[0];
   let generated = 0;
@@ -146,85 +241,7 @@ export async function runRentGeneration(): Promise<number> {
 
   for (const { tenant, propertyUserId } of tenants) {
     try {
-      let billingCycle = tenant.billingCycle;
-      let rentCollectionType = tenant.rentCollectionType;
-      let gracePeriodDays = tenant.gracePeriodDays;
-
-      if (tenant.useBusinessDefault && propertyUserId != null) {
-        const [settings] = await db
-          .select()
-          .from(businessSettingsTable)
-          .where(eq(businessSettingsTable.userId, propertyUserId));
-        if (settings) {
-          billingCycle = settings.defaultBillingCycle;
-          rentCollectionType = settings.defaultRentCollectionType;
-          gracePeriodDays = settings.defaultGracePeriodDays;
-        }
-      }
-
-      // ── Determine effective base rent ─────────────────────────────────────
-      // Always use the latest active revision (effectiveFrom <= today) as the
-      // authoritative rent, regardless of what tenant.rentAmount currently holds.
-      // This handles: future-dated revisions that have now become active, and
-      // cases where tenant.rentAmount was never synced after a revision.
-      const [latestActiveRevision] = await db
-        .select({ newRent: rentRevisionsTable.newRent })
-        .from(rentRevisionsTable)
-        .where(and(
-          eq(rentRevisionsTable.tenantId, tenant.id),
-          lte(rentRevisionsTable.effectiveFrom, today),
-          eq(rentRevisionsTable.status, "active")
-        ))
-        .orderBy(desc(rentRevisionsTable.effectiveFrom), desc(rentRevisionsTable.id))
-        .limit(1);
-
-      const effectiveBaseRent = latestActiveRevision
-        ? String(latestActiveRevision.newRent)
-        : tenant.rentAmount;
-
-      // Keep tenant.rentAmount in sync with the latest active revision
-      if (latestActiveRevision &&
-          parseFloat(String(latestActiveRevision.newRent)) !== parseFloat(String(tenant.rentAmount))) {
-        await db.update(tenantsTable)
-          .set({ rentAmount: String(latestActiveRevision.newRent) })
-          .where(eq(tenantsTable.id, tenant.id));
-      }
-
-      // Apply automatic escalation if due, passing effective base so manual
-      // revisions on the same date are honoured as the escalation base.
-      const rentAmountForGeneration = await applyAutoEscalationIfDue(tenant, today, effectiveBaseRent);
-
-      const [lastRent] = await db
-        .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
-        .from(generatedRentsTable)
-        .where(eq(generatedRentsTable.tenantId, tenant.id))
-        .orderBy(desc(generatedRentsTable.billingPeriodEnd))
-        .limit(1);
-
-      const lastPeriodEnd = lastRent?.billingPeriodEnd ?? null;
-
-      const periods = computePeriods(
-        tenant.leaseStart,
-        lastPeriodEnd,
-        billingCycle,
-        today
-      );
-
-      for (const period of periods) {
-        const dueDate = computeDueDate(period, rentCollectionType, gracePeriodDays);
-        await db.insert(generatedRentsTable).values({
-          tenantId: tenant.id,
-          propertyId: tenant.propertyId,
-          amount: rentAmountForGeneration,
-          billingPeriodStart: period.start,
-          billingPeriodEnd: period.end,
-          dueDate,
-          billingCycle,
-          status: "pending",
-          paymentId: null,
-        }).onConflictDoNothing();
-        generated++;
-      }
+      generated += await generateForOneTenant(tenant, propertyUserId, today);
     } catch (err) {
       logger.error({ err, tenantId: tenant.id }, "Rent generation failed for tenant");
     }
@@ -232,4 +249,29 @@ export async function runRentGeneration(): Promise<number> {
 
   logger.info({ generated }, "Rent generation complete");
   return generated;
+}
+
+// Immediately backfills rent periods for a single freshly-created (or
+// updated) tenant, instead of waiting for the next scheduled batch run.
+// Collection-type-agnostic: advance and post-paid tenants both go through
+// the exact same period/due-date logic as the batch path above.
+export async function runRentGenerationForTenant(tenantId: number): Promise<number> {
+  const today = new Date().toISOString().split("T")[0];
+
+  const [row] = await db
+    .select({ tenant: tenantsTable, propertyUserId: propertiesTable.userId })
+    .from(tenantsTable)
+    .innerJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
+    .where(eq(tenantsTable.id, tenantId));
+
+  if (!row || row.tenant.status !== "active") return 0;
+
+  try {
+    const generated = await generateForOneTenant(row.tenant, row.propertyUserId, today);
+    logger.info({ tenantId, generated }, "Rent generation complete for new tenant");
+    return generated;
+  } catch (err) {
+    logger.error({ err, tenantId }, "Rent generation failed for tenant");
+    return 0;
+  }
 }

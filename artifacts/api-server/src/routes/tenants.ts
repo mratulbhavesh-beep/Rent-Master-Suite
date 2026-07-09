@@ -4,6 +4,7 @@ import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTa
 import { computeLedgerSummary, computeMonthHistory, type LedgerEntry, type LedgerPayment } from "@workspace/rent-calc";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { logger } from "../lib/logger";
+import { runRentGenerationForTenant } from "../lib/rent-generator";
 
 const router: IRouter = Router();
 
@@ -190,6 +191,17 @@ router.post("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void
     customRenewalUnit: customRenewalUnit ?? undefined,
     renewalNotice: renewalNotice ?? undefined,
   }).returning();
+
+  // Backfill rent periods immediately instead of waiting for the next
+  // scheduled cron run — applies identically to advance and post-paid
+  // tenants (collection type only affects due-date anchoring inside
+  // rent-generator, not whether/when generation runs).
+  try {
+    await runRentGenerationForTenant(tenant.id);
+  } catch (err) {
+    logger.error({ err, tenantId: tenant.id }, "Immediate rent generation failed for new tenant");
+  }
+
   res.status(201).json(formatTenant(tenant, property.name, []));
 });
 
@@ -284,6 +296,19 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
   if (body.customRenewalValue !== undefined) updates.customRenewalValue = body.customRenewalValue != null ? parseInt(String(body.customRenewalValue), 10) : null;
   const [tenant] = await db.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
+
+  // If billing settings changed (e.g. lease start, billing cycle, collection
+  // type), backfill any newly-eligible rent periods immediately rather than
+  // waiting for the next scheduled cron run. Same collection-type-agnostic
+  // path used on tenant creation.
+  if (["leaseStart", "billingCycle", "rentCollectionType", "gracePeriodDays", "useBusinessDefault", "status"].some(k => k in updates)) {
+    try {
+      await runRentGenerationForTenant(tenant.id);
+    } catch (err) {
+      logger.error({ err, tenantId: tenant.id }, "Immediate rent generation failed after tenant update");
+    }
+  }
+
   const [[property], payments, agreements, patchGeneratedRents] = await Promise.all([
     db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId)),
     db.select({ amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year })
