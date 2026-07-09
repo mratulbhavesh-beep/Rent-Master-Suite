@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { and, eq, inArray, desc, gte, lte, lt, gt, asc, sql, ne } from "drizzle-orm";
 import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable, rentAgreementsTable, tenantDocumentsTable, leaseRenewalsTable, rentRevisionsTable, generatedRentsTable } from "@workspace/db";
-import { computeLedgerSummary, computeMonthHistory, type LedgerEntry, type LedgerPayment } from "@workspace/rent-calc";
+import { computeLedgerSummary, computeMonthHistory, type LedgerEntry, type LedgerPayment, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { logger } from "../lib/logger";
 import { runRentGenerationForTenant, syncFutureLedgerForRevision } from "../lib/rent-generator";
@@ -24,9 +24,34 @@ function nextDayAfter(dateStr: string): string {
 function computeBalanceFromLedger(
   generatedRents: LedgerEntry[],
   payments: LedgerPayment[],
-  today: string
+  today: string,
+  lease?: LeaseContext
 ) {
-  return computeLedgerSummary(generatedRents, payments, today);
+  return computeLedgerSummary(generatedRents, payments, today, lease);
+}
+
+/**
+ * Builds the LeaseContext the summary layer needs to reconstruct the full
+ * billable-period history since lease start (honoring rent revisions), so
+ * Total Expected / Months Active / Balance Due are correct even when
+ * `generated_rents` hasn't (yet) been backfilled for every past period.
+ */
+function buildLeaseContext(
+  t: typeof tenantsTable.$inferSelect,
+  revisions: LedgerRevision[]
+): LeaseContext {
+  const sorted = [...revisions].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  const baseRentAmount = sorted.length > 0 && sorted[0].previousRent != null
+    ? sorted[0].previousRent
+    : t.rentAmount;
+  return {
+    leaseStart: t.leaseStart,
+    billingCycle: t.billingCycle,
+    rentCollectionType: t.rentCollectionType,
+    gracePeriodDays: t.gracePeriodDays,
+    baseRentAmount,
+    revisions: sorted,
+  };
 }
 
 function formatTenant(
@@ -34,9 +59,11 @@ function formatTenant(
   propertyName: string | null | undefined,
   payments: { amount: string | number; month?: number | null; year?: number | null }[] = [],
   latestAgreement?: { endDate: string } | null,
-  generatedRents: LedgerEntry[] = []
+  generatedRents: LedgerEntry[] = [],
+  revisions: LedgerRevision[] = []
 ) {
   const today = new Date().toISOString().split("T")[0];
+  const lease = buildLeaseContext(t, revisions);
   return {
     ...t,
     rentAmount: parseFloat(String(t.rentAmount)),
@@ -44,7 +71,7 @@ function formatTenant(
     depositStatus: t.depositStatus ?? "held",
     propertyName: propertyName ?? null,
     createdAt: t.createdAt.toISOString(),
-    ...computeBalanceFromLedger(generatedRents, payments, today),
+    ...computeBalanceFromLedger(generatedRents, payments, today, lease),
     activeAgreementEndDate: latestAgreement?.endDate ?? null,
     activeAgreementStatus: latestAgreement
       ? (latestAgreement.endDate >= today ? "active" : "expired")
@@ -88,7 +115,7 @@ router.get("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void>
 
   const tenantIds = results.map(r => r.tenant.id);
 
-  const [allPayments, allAgreements, allGeneratedRents] = await Promise.all([
+  const [allPayments, allAgreements, allGeneratedRents, allRevisions] = await Promise.all([
     tenantIds.length > 0
       ? db.select({ tenantId: paymentsTable.tenantId, amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year })
           .from(paymentsTable).where(inArray(paymentsTable.tenantId, tenantIds))
@@ -105,6 +132,15 @@ router.get("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void>
           status: generatedRentsTable.status,
           billingPeriodStart: generatedRentsTable.billingPeriodStart,
         }).from(generatedRentsTable).where(inArray(generatedRentsTable.tenantId, tenantIds))
+      : Promise.resolve([]),
+    tenantIds.length > 0
+      ? db.select({
+          tenantId: rentRevisionsTable.tenantId,
+          effectiveFrom: rentRevisionsTable.effectiveFrom,
+          newRent: rentRevisionsTable.newRent,
+          previousRent: rentRevisionsTable.previousRent,
+          status: rentRevisionsTable.status,
+        }).from(rentRevisionsTable).where(inArray(rentRevisionsTable.tenantId, tenantIds))
       : Promise.resolve([]),
   ]);
 
@@ -133,6 +169,17 @@ router.get("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void>
     });
   }
 
+  const revisionsByTenant = new Map<number, LedgerRevision[]>();
+  for (const r of allRevisions) {
+    if (!revisionsByTenant.has(r.tenantId)) revisionsByTenant.set(r.tenantId, []);
+    revisionsByTenant.get(r.tenantId)!.push({
+      effectiveFrom: r.effectiveFrom,
+      newRent: r.newRent,
+      previousRent: r.previousRent,
+      status: r.status,
+    });
+  }
+
   if (expiringIn30Days === "true") {
     const today = new Date().toISOString().split("T")[0];
     const in30Days = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
@@ -148,7 +195,8 @@ router.get("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void>
       r.propertyName,
       paymentsByTenant.get(r.tenant.id) ?? [],
       agreementByTenant.get(r.tenant.id),
-      rentsByTenant.get(r.tenant.id) ?? []
+      rentsByTenant.get(r.tenant.id) ?? [],
+      revisionsByTenant.get(r.tenant.id) ?? []
     )
   ));
 });
@@ -215,7 +263,7 @@ router.get("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise<v
     .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
     .where(eq(tenantsTable.id, id));
   if (!row || row.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
-  const [payments, agreements, generatedRents] = await Promise.all([
+  const [payments, agreements, generatedRents, revisions] = await Promise.all([
     db.select({ amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year })
       .from(paymentsTable).where(eq(paymentsTable.tenantId, id)),
     db.select({ endDate: rentAgreementsTable.endDate })
@@ -226,12 +274,18 @@ router.get("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise<v
         status: generatedRentsTable.status,
         billingPeriodStart: generatedRentsTable.billingPeriodStart,
       }).from(generatedRentsTable).where(eq(generatedRentsTable.tenantId, id)),
+    db.select({
+        effectiveFrom: rentRevisionsTable.effectiveFrom,
+        newRent: rentRevisionsTable.newRent,
+        previousRent: rentRevisionsTable.previousRent,
+        status: rentRevisionsTable.status,
+      }).from(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, id)),
   ]);
   const latestAgreement = agreements.length > 0
     ? agreements.reduce((best, a) => a.endDate > best.endDate ? a : best)
     : null;
 
-  res.json(formatTenant(row.tenant, row.propertyName, payments, latestAgreement, generatedRents));
+  res.json(formatTenant(row.tenant, row.propertyName, payments, latestAgreement, generatedRents, revisions));
 });
 
 /**
@@ -326,7 +380,7 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
     }
   }
 
-  const [[property], payments, agreements, patchGeneratedRents] = await Promise.all([
+  const [[property], payments, agreements, patchGeneratedRents, patchRevisions] = await Promise.all([
     db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId)),
     db.select({ amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year })
       .from(paymentsTable).where(eq(paymentsTable.tenantId, id)),
@@ -338,11 +392,17 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
         status: generatedRentsTable.status,
         billingPeriodStart: generatedRentsTable.billingPeriodStart,
       }).from(generatedRentsTable).where(eq(generatedRentsTable.tenantId, id)),
+    db.select({
+        effectiveFrom: rentRevisionsTable.effectiveFrom,
+        newRent: rentRevisionsTable.newRent,
+        previousRent: rentRevisionsTable.previousRent,
+        status: rentRevisionsTable.status,
+      }).from(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, id)),
   ]);
   const latestAgreement = agreements.length > 0
     ? agreements.reduce((best, a) => a.endDate > best.endDate ? a : best)
     : null;
-  res.json(formatTenant(tenant, property?.name, payments, latestAgreement, patchGeneratedRents));
+  res.json(formatTenant(tenant, property?.name, payments, latestAgreement, patchGeneratedRents, patchRevisions));
 });
 
 router.get("/tenants/:id/renewals", requireAuth, async (req: AuthRequest, res): Promise<void> => {

@@ -5,3 +5,4 @@
 - [Backup encryption & EAS build quirks](backup-eas.md) — backup data encrypted with AES-256-GCM via encryptString (lib/gdrive); EAS build needs GIT_INDEX_FILE=/tmp/eas-gitidx workaround in main agent; EAS keystore SHA-1 already matches google-services.json
 - [Production schema / deploy debugging](prod-deploy-debug.md) — routes that exist in prod but query missing tables produce 000 (hang), not 404; JSON error handler must be in app.ts to prevent HTML 500 on mobile; fix = Publish (auto-migrates prod DB schema)
 - [Google Drive OAuth configuration](gdrive-oauth.md) — client ID prefix 910455573442; redirect URI must be registered in Google Cloud Console; OAUTH_REDIRECT_URI env var overrides auto-detected domain
+- [Ledger summary vs generated_rents rows](ledger-summary-synthesis.md) — generated_rents is lazily populated, not a full lease history; summary stats must synthesize periods from leaseStart, not just sum existing rows

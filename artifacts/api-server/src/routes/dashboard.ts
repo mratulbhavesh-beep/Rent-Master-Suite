@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
 import { eq, inArray, sql } from "drizzle-orm";
-import { db, propertiesTable, tenantsTable, paymentsTable, maintenanceRequestsTable, generatedRentsTable } from "@workspace/db";
+import { db, propertiesTable, tenantsTable, paymentsTable, maintenanceRequestsTable, generatedRentsTable, rentRevisionsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
-import { computeLedgerSummary } from "@workspace/rent-calc";
+import { computeLedgerSummary, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
 
 const router: IRouter = Router();
 
@@ -35,6 +35,8 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
           rentAmount: tenantsTable.rentAmount,
           leaseStart: tenantsTable.leaseStart,
           billingCycle: tenantsTable.billingCycle,
+          rentCollectionType: tenantsTable.rentCollectionType,
+          gracePeriodDays: tenantsTable.gracePeriodDays,
         })
         .from(tenantsTable)
         .where(sql`${tenantsTable.status} = 'active' AND ${tenantsTable.propertyId} = ANY(${sql.raw(`ARRAY[${userPropertyIds.join(",")}]::int[]`)})`)
@@ -81,11 +83,31 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
         .where(inArray(generatedRentsTable.tenantId, activeTenantIds))
     : [];
 
+  const allRevisions = activeTenantIds.length > 0
+    ? await db
+        .select({
+          tenantId: rentRevisionsTable.tenantId,
+          effectiveFrom: rentRevisionsTable.effectiveFrom,
+          newRent: rentRevisionsTable.newRent,
+          previousRent: rentRevisionsTable.previousRent,
+          status: rentRevisionsTable.status,
+        })
+        .from(rentRevisionsTable)
+        .where(inArray(rentRevisionsTable.tenantId, activeTenantIds))
+    : [];
+
   const rentsByTenant = new Map<number, typeof allGeneratedRents>();
   for (const r of allGeneratedRents) {
     const list = rentsByTenant.get(r.tenantId) ?? [];
     list.push(r);
     rentsByTenant.set(r.tenantId, list);
+  }
+
+  const revisionsByTenant = new Map<number, LedgerRevision[]>();
+  for (const r of allRevisions) {
+    const list = revisionsByTenant.get(r.tenantId) ?? [];
+    list.push({ effectiveFrom: r.effectiveFrom, newRent: r.newRent, previousRent: r.previousRent, status: r.status });
+    revisionsByTenant.set(r.tenantId, list);
   }
 
   const paymentsForLedgerByTenant = new Map<number, typeof allPayments>();
@@ -99,7 +121,17 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
   for (const t of activeTenants) {
     const entries = rentsByTenant.get(t.id) ?? [];
     const tenantPayments = paymentsForLedgerByTenant.get(t.id) ?? [];
-    totalDue += computeLedgerSummary(entries, tenantPayments, todayStr).balanceDue;
+    const revisions = [...(revisionsByTenant.get(t.id) ?? [])].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+    const baseRentAmount = revisions.length > 0 && revisions[0].previousRent != null ? revisions[0].previousRent : t.rentAmount;
+    const lease: LeaseContext = {
+      leaseStart: t.leaseStart,
+      billingCycle: t.billingCycle,
+      rentCollectionType: t.rentCollectionType,
+      gracePeriodDays: t.gracePeriodDays,
+      baseRentAmount,
+      revisions,
+    };
+    totalDue += computeLedgerSummary(entries, tenantPayments, todayStr, lease).balanceDue;
   }
 
   const totalVacantUnits = Math.max(0, propTotalUnits - activeTenants.length);
