@@ -6,6 +6,7 @@ import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
+import { confirmAction } from "@/utils/confirm";
 import {
   useGetBusinessBillingSettings,
   useUpsertBusinessBillingSettings,
@@ -77,24 +78,19 @@ export default function BusinessSettingsBillingScreen() {
   };
 
   const handleTrigger = () => {
-    Alert.alert(
+    confirmAction(
       "Generate Rents Now",
       "This will create rent entries for all active tenants for any missed billing periods. Continue?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Generate",
-          onPress: () => {
-            triggerMutation.mutate(undefined, {
-              onSuccess: (data) => {
-                Alert.alert("Done", `Generated ${(data as any).generated} new rent entries.`);
-              },
-              onError: (err: any) =>
-                Alert.alert("Error", err?.response?.data?.error || "Failed to trigger generation"),
-            });
+      () => {
+        triggerMutation.mutate(undefined, {
+          onSuccess: (data) => {
+            Alert.alert("Done", `Generated ${(data as any).generated} new rent entries.`);
           },
-        },
-      ]
+          onError: (err: any) =>
+            Alert.alert("Error", err?.response?.data?.error || "Failed to trigger generation"),
+        });
+      },
+      { confirmText: "Generate", destructive: false }
     );
   };
 

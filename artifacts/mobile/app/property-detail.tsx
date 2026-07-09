@@ -36,6 +36,7 @@ import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fmtDate } from "@/utils/dateFormat";
+import { confirmAction } from "@/utils/confirm";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -467,14 +468,7 @@ export default function PropertyDetailScreen() {
 
   const handleDeleteProperty = () => {
     const msg = `Delete "${property?.name}"?\n\nAll tenants and payment records will also be removed. This cannot be undone.`;
-    if (Platform.OS === "web") {
-      if (window.confirm(msg)) doDeleteProperty();
-    } else {
-      Alert.alert("Delete Property", msg, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: doDeleteProperty },
-      ]);
-    }
+    confirmAction("Delete Property", msg, doDeleteProperty);
   };
 
   const doDeleteTenant = (tenantId: number) => {
@@ -493,14 +487,7 @@ export default function PropertyDetailScreen() {
 
   const handleDeleteTenant = (tenant: Tenant) => {
     const msg = `Remove "${tenant.name}" from this property?\n\nAll payment and maintenance records will also be deleted.`;
-    if (Platform.OS === "web") {
-      if (window.confirm(msg)) doDeleteTenant(tenant.id);
-    } else {
-      Alert.alert("Remove Tenant", msg, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Remove", style: "destructive", onPress: () => doDeleteTenant(tenant.id) },
-      ]);
-    }
+    confirmAction("Remove Tenant", msg, () => doDeleteTenant(tenant.id), { confirmText: "Remove" });
   };
 
   const refreshPayments = () => {

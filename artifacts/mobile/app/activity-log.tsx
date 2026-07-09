@@ -8,6 +8,7 @@ import { useColors } from "@/hooks/useColors";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
+import { confirmAction } from "@/utils/confirm";
 const API_BASE = `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`;
 
 const ACTION_COLORS: Record<string, string> = {
@@ -125,38 +126,26 @@ export default function ActivityLogScreen() {
 
   const handleDelete = (id: number) => {
     if (user?.role !== "admin") return;
-    Alert.alert("Delete Log Entry", "Remove this log entry permanently?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete", style: "destructive",
-        onPress: async () => {
-          await fetch(`${API_BASE}/activity-logs/${id}`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          setLogs(prev => prev.filter(l => l.id !== id));
-          setTotal(prev => prev - 1);
-        },
-      },
-    ]);
+    confirmAction("Delete Log Entry", "Remove this log entry permanently?", async () => {
+      await fetch(`${API_BASE}/activity-logs/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setLogs(prev => prev.filter(l => l.id !== id));
+      setTotal(prev => prev - 1);
+    });
   };
 
   const handleClearAll = () => {
     if (user?.role !== "admin") return;
-    Alert.alert("Clear All Logs", "This will permanently delete all activity logs. Continue?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Clear All", style: "destructive",
-        onPress: async () => {
-          await fetch(`${API_BASE}/activity-logs`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          setLogs([]);
-          setTotal(0);
-        },
-      },
-    ]);
+    confirmAction("Clear All Logs", "This will permanently delete all activity logs. Continue?", async () => {
+      await fetch(`${API_BASE}/activity-logs`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setLogs([]);
+      setTotal(0);
+    }, { confirmText: "Clear All" });
   };
 
   const accentColor = (action: string) => ACTION_COLORS[action] ?? ACTION_COLORS.default;

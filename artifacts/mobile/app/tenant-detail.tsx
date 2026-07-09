@@ -31,6 +31,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { Image as ExpoImage } from "expo-image";
 import { fmtDate } from "@/utils/dateFormat";
 import { shareViaWhatsApp } from "@/utils/whatsapp";
+import { confirmAction } from "@/utils/confirm";
 
 type ActiveTab = "overview" | "agreement" | "documents";
 
@@ -286,14 +287,7 @@ export default function TenantDetailScreen() {
 
   const handleDelete = () => {
     const msg = `Delete "${tenant?.name}"?\n\nAll payment and maintenance records will also be deleted. This cannot be undone.`;
-    if (Platform.OS === "web") {
-      if (window.confirm(msg)) performDelete();
-    } else {
-      Alert.alert("Delete Tenant", msg, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: performDelete },
-      ]);
-    }
+    confirmAction("Delete Tenant", msg, performDelete);
   };
 
   const handleRenewal = (customRentAmount?: number) => {
@@ -423,28 +417,23 @@ export default function TenantDetailScreen() {
   };
 
   const handleCancelRevision = (r: RentRevision) => {
-    Alert.alert(
+    const msg = `Cancel the planned revision to ₹${Math.round(parseFloat(String(r.newRent))).toLocaleString("en-IN")} effective ${fmtDate(r.effectiveFrom)}?\n\nFuture unpaid rents will revert to the previous active amount.`;
+    confirmAction(
       "Cancel Revision",
-      `Cancel the planned revision to ₹${Math.round(parseFloat(String(r.newRent))).toLocaleString("en-IN")} effective ${fmtDate(r.effectiveFrom)}?\n\nFuture unpaid rents will revert to the previous active amount.`,
-      [
-        { text: "Keep It", style: "cancel" },
-        {
-          text: "Cancel Revision",
-          style: "destructive",
-          onPress: () =>
-            cancelRevisionMutation.mutate(
-              { id: tenantId, revId: r.id },
-              {
-                onSuccess: () => {
-                  queryClient.invalidateQueries({ queryKey: getListRentRevisionsQueryKey(tenantId) });
-                  queryClient.invalidateQueries({ queryKey: getListGeneratedRentsQueryKey({ tenantId }) });
-                  Alert.alert("Revision Cancelled", "Future unpaid rents have been reverted.");
-                },
-                onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to cancel revision."),
-              }
-            ),
-        },
-      ]
+      msg,
+      () =>
+        cancelRevisionMutation.mutate(
+          { id: tenantId, revId: r.id },
+          {
+            onSuccess: () => {
+              queryClient.invalidateQueries({ queryKey: getListRentRevisionsQueryKey(tenantId) });
+              queryClient.invalidateQueries({ queryKey: getListGeneratedRentsQueryKey({ tenantId }) });
+              Alert.alert("Revision Cancelled", "Future unpaid rents have been reverted.");
+            },
+            onError: (err: any) => Alert.alert("Error", err?.response?.data?.error || "Failed to cancel revision."),
+          }
+        ),
+      { cancelText: "Keep It", confirmText: "Cancel Revision" }
     );
   };
 
@@ -464,14 +453,7 @@ export default function TenantDetailScreen() {
         }
       );
     };
-    if (Platform.OS === "web") {
-      if (window.confirm(msg)) doDelete();
-    } else {
-      Alert.alert("Delete Payment", msg, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: doDelete },
-      ]);
-    }
+    confirmAction("Delete Payment", msg, doDelete);
   };
 
   // ─── Agreement handlers ─────────────────────────────────────────────────
@@ -559,14 +541,7 @@ export default function TenantDetailScreen() {
         }
       );
     };
-    if (Platform.OS === "web") {
-      if (window.confirm(msg)) doDelete();
-    } else {
-      Alert.alert("Delete Agreement", msg, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: doDelete },
-      ]);
-    }
+    confirmAction("Delete Agreement", msg, doDelete);
   };
 
   // ─── Document handlers ──────────────────────────────────────────────────
@@ -633,14 +608,7 @@ export default function TenantDetailScreen() {
         }
       );
     };
-    if (Platform.OS === "web") {
-      if (window.confirm(msg)) doDelete();
-    } else {
-      Alert.alert("Delete Document", msg, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: doDelete },
-      ]);
-    }
+    confirmAction("Delete Document", msg, doDelete);
   };
 
   // ─── Loading / not found ─────────────────────────────────────────────────
@@ -1123,8 +1091,7 @@ export default function TenantDetailScreen() {
                                   }
                                 );
                               };
-                              if (Platform.OS === "web") { if (window.confirm(msg)) doRefund(); }
-                              else { Alert.alert("Refund Deposit", msg, [{ text: "Cancel", style: "cancel" }, { text: "Mark Refunded", style: "default", onPress: doRefund }]); }
+                              confirmAction("Refund Deposit", msg, doRefund, { confirmText: "Mark Refunded", destructive: false });
                             }}
                             disabled={updateMutation.isPending}
                           >

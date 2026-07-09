@@ -9,6 +9,7 @@ import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
 import { GoogleSignin, isSuccessResponse, isGoogleSignInAvailable } from "@/utils/googleSignin";
+import { confirmAction } from "@/utils/confirm";
 
 const BASE_URL = `https://${process.env.EXPO_PUBLIC_DOMAIN}`;
 
@@ -143,32 +144,26 @@ export default function AccountSecurityScreen() {
   // ─── Unlink Google ────────────────────────────────────────────────────────
 
   const handleUnlinkGoogle = () => {
-    Alert.alert(
+    confirmAction(
       "Unlink Google Account",
       "Are you sure? You will only be able to sign in with your email and password after this.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Unlink",
-          style: "destructive",
-          onPress: async () => {
-            setUnlinkingGoogle(true);
-            try {
-              const res = await fetch(`${BASE_URL}/api/auth/unlink-google`, {
-                method: "POST", headers: authHeaders,
-              });
-              const data = await res.json();
-              if (!res.ok) { Alert.alert("Error", data.error ?? "Failed to unlink Google account"); return; }
-              Alert.alert("Success", "Google account unlinked.");
-              await fetchInfo();
-            } catch {
-              Alert.alert("Error", "Could not unlink Google account. Please try again.");
-            } finally {
-              setUnlinkingGoogle(false);
-            }
-          },
-        },
-      ]
+      async () => {
+        setUnlinkingGoogle(true);
+        try {
+          const res = await fetch(`${BASE_URL}/api/auth/unlink-google`, {
+            method: "POST", headers: authHeaders,
+          });
+          const data = await res.json();
+          if (!res.ok) { Alert.alert("Error", data.error ?? "Failed to unlink Google account"); return; }
+          Alert.alert("Success", "Google account unlinked.");
+          await fetchInfo();
+        } catch {
+          Alert.alert("Error", "Could not unlink Google account. Please try again.");
+        } finally {
+          setUnlinkingGoogle(false);
+        }
+      },
+      { confirmText: "Unlink" }
     );
   };
 

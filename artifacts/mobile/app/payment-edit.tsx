@@ -10,6 +10,7 @@ import {
   Platform,
 } from "react-native";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
+import { confirmAction } from "@/utils/confirm";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   useGetPayment,
@@ -152,14 +153,7 @@ export default function PaymentEditScreen() {
         }
       );
     };
-    if (Platform.OS === "web") {
-      if (window.confirm(msg)) doDelete();
-    } else {
-      Alert.alert("Delete Payment", msg, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: doDelete },
-      ]);
-    }
+    confirmAction("Delete Payment", msg, doDelete);
   };
 
   if (isLoading) {

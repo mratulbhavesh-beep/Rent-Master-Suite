@@ -16,6 +16,7 @@ import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather, MaterialIcons } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
+import { confirmAction } from "@/utils/confirm";
 import { useAuth } from "@/context/AuthContext";
 import { useUpdateProfile } from "@workspace/api-client-react";
 
@@ -206,17 +207,10 @@ export default function ProfileScreen() {
   };
 
   const handleLogout = () => {
-    Alert.alert("Logout", "Are you sure you want to logout?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Logout",
-        style: "destructive",
-        onPress: async () => {
-          await logout();
-          router.replace("/login");
-        },
-      },
-    ]);
+    confirmAction("Logout", "Are you sure you want to logout?", async () => {
+      await logout();
+      router.replace("/login");
+    }, { confirmText: "Logout" });
   };
 
   const initials = (name || user?.name || "U")

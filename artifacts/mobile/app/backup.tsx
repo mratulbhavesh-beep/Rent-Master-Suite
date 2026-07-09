@@ -23,6 +23,7 @@ import {
 } from "expo-file-system/legacy";
 import { useColors } from "@/hooks/useColors";
 import { fmtDate } from "@/utils/dateFormat";
+import { showConfirm } from "@/utils/confirm";
 import {
   useListBackups,
   useCreateBackup,
@@ -359,7 +360,7 @@ export default function BackupScreen() {
   // ── Two-step restore ───────────────────────────────────────────────────
   const handleRestore = useCallback((backup: BackupMeta) => {
     // Step 1: Safety backup
-    Alert.alert(
+    showConfirm(
       "Safety Backup",
       "Create a backup of your current data before restoring?\n\nThis lets you undo the restore if needed.",
       [
@@ -388,7 +389,7 @@ export default function BackupScreen() {
   }, [handleCreateBackup]);
 
   const confirmRestore = useCallback((backup: BackupMeta) => {
-    Alert.alert(
+    showConfirm(
       "Restore This Backup?",
       `Current data will be replaced.\n\n📁 ${backup.label}\n🕐 ${formatDateFull(backup.createdAt)}\n📦 ${formatBytes(backup.sizeBytes)}`,
       [
@@ -415,7 +416,7 @@ export default function BackupScreen() {
 
   // ── Delete ─────────────────────────────────────────────────────────────
   const handleDelete = useCallback((backup: BackupMeta) => {
-    Alert.alert(
+    showConfirm(
       "Delete Backup",
       `Delete "${backup.label}"?\n\nThis cannot be undone.`,
       [
@@ -553,7 +554,7 @@ export default function BackupScreen() {
       await queryClient.invalidateQueries({ queryKey: getListBackupsQueryKey() });
 
       // Ask to restore immediately
-      Alert.alert(
+      showConfirm(
         "Import Successful",
         `"${newBackup.label}" has been imported.\n\nDo you want to restore from it now?`,
         [
@@ -598,7 +599,7 @@ export default function BackupScreen() {
   };
 
   const handleDriveDisconnect = () => {
-    Alert.alert(
+    showConfirm(
       "Disconnect Google Drive",
       "Remove the Google Drive connection? Your Drive backup file will not be deleted.",
       [
@@ -633,7 +634,7 @@ export default function BackupScreen() {
   };
 
   const handleDriveRestore = () => {
-    Alert.alert(
+    showConfirm(
       "Restore from Google Drive",
       "This will replace ALL your current data with the Drive backup. This cannot be undone.",
       [
