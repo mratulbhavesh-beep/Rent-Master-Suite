@@ -297,6 +297,23 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
   const [tenant] = await db.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
 
+  // If the rent amount changed, propagate the new amount onto every
+  // not-yet-paid ledger entry (pending/overdue), for BOTH collection types
+  // identically. `generated_rents.amount` is a per-entry snapshot (needed so
+  // historical/paid periods keep the amount that was actually due at the
+  // time), so a plain tenant.rentAmount update alone never reaches entries
+  // already generated — this is the root cause of stale Total
+  // Expected/Balance Due figures after an edit. Paid entries are left
+  // untouched so payment history stays accurate.
+  if ("rentAmount" in updates) {
+    await db.update(generatedRentsTable)
+      .set({ amount: String(updates.rentAmount) })
+      .where(and(
+        eq(generatedRentsTable.tenantId, tenant.id),
+        ne(generatedRentsTable.status, "paid")
+      ));
+  }
+
   // If billing settings changed (e.g. lease start, billing cycle, collection
   // type), backfill any newly-eligible rent periods immediately rather than
   // waiting for the next scheduled cron run. Same collection-type-agnostic
