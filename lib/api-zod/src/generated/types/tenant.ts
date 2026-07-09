@@ -56,8 +56,10 @@ export interface Tenant {
   createdAt: string;
   monthsElapsed?: number;
   totalExpected?: number;
+  dueExpected?: number;
   totalPaid?: number;
   balanceDue?: number;
+  advanceBalance?: number;
   currentMonthDue?: number;
   /** @nullable */
   activeAgreementEndDate?: string | null;

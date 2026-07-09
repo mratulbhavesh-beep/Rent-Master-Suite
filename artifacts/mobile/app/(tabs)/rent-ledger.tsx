@@ -33,6 +33,7 @@ type TenantWithBalance = {
   totalExpected: number;
   totalPaid: number;
   balanceDue: number;
+  advanceBalance: number;
   currentMonthDue: number;
   billingCycle?: string;
   rentCollectionType?: string;
@@ -156,8 +157,8 @@ export default function RentLedgerTab() {
     const ls = getLedgerStatus(item, payments, filterMonth, filterYear);
     const sc = STATUS_CONFIG[ls];
     const lastPayDate = getLastPaymentDate(item.id, payments);
-    const advanceBalance = Math.max(0, item.totalPaid - item.totalExpected);
-    const dueBalance = Math.max(0, item.totalExpected - item.totalPaid);
+    const advanceBalance = item.advanceBalance ?? 0;
+    const dueBalance = item.balanceDue ?? 0;
 
     let paidThisFilter: number | null = null;
     if (filterMonth !== null) {

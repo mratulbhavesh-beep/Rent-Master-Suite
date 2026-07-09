@@ -7,7 +7,9 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   useGetTenant, getGetTenantQueryKey,
   useListPayments, getListPaymentsQueryKey,
+  useGetTenantLedger, getGetTenantLedgerQueryKey,
   Payment,
+  MonthHistoryRow,
 } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
@@ -25,39 +27,18 @@ import {
   shareReceiptPDF,
 } from "@/utils/receiptPdf";
 
-type MonthRow = {
-  month: number;
-  year: number;
+// Display-only row: adds a formatted label and the matching payments (for
+// the receipt-method column) on top of the server-computed MonthHistoryRow.
+// All financial figures (expected/paid/runningBalance/status) come directly
+// from the API — this screen never recomputes balances client-side.
+type MonthRow = MonthHistoryRow & {
   label: string;
-  expected: number;
-  paid: number;
-  runningBalance: number;
-  status: "paid" | "partial" | "pending" | "upcoming";
   payments: Payment[];
 };
 
 type ActiveSection = "history" | "timeline" | "receipts";
 
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-
-function addDaysLocal(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().split("T")[0];
-}
-
-function addMonthsLocal(dateStr: string, months: number): string {
-  const d = new Date(dateStr + "T00:00:00");
-  d.setMonth(d.getMonth() + months);
-  return d.toISOString().split("T")[0];
-}
-
-function computePeriodEndLocal(periodStart: string, billingCycle: string): string {
-  if (billingCycle === "weekly") return addDaysLocal(periodStart, 6);
-  if (billingCycle === "quarterly") return addDaysLocal(addMonthsLocal(periodStart, 3), -1);
-  if (billingCycle === "yearly") return addDaysLocal(addMonthsLocal(periodStart, 12), -1);
-  return addDaysLocal(addMonthsLocal(periodStart, 1), -1);
-}
 
 function makePeriodLabel(periodStart: string, periodEnd: string, billingCycle: string): string {
   const dt = (s: string) => new Date(s + "T00:00:00");
@@ -77,58 +58,21 @@ function makePeriodLabel(periodStart: string, periodEnd: string, billingCycle: s
   return `${fmtMon(periodStart)} – ${fmtMon(periodEnd)}`;
 }
 
-function buildPeriodHistory(
-  leaseStart: string,
-  rentAmount: number,
+// Attaches a display label and the payments that fall within each server-
+// provided period, purely for presentation (receipt method column). Does
+// not touch or re-derive any financial figure.
+function decorateMonthHistory(
+  rows: MonthHistoryRow[],
   payments: Payment[],
   billingCycle: string
 ): MonthRow[] {
-  const rows: MonthRow[] = [];
-  const today = new Date().toISOString().split("T")[0];
-  let periodStart = leaseStart;
-  const MAX = billingCycle === "weekly" ? 156 : 48;
-  let count = 0;
-  let runningBalance = 0;
-
-  while (count < MAX) {
-    if (periodStart > today) break;
-    const periodEnd = computePeriodEndLocal(periodStart, billingCycle);
-
-    let periodPayments: Payment[];
-    if (billingCycle === "monthly") {
-      const pDate = new Date(periodStart + "T00:00:00");
-      const m = pDate.getMonth() + 1;
-      const y = pDate.getFullYear();
-      periodPayments = payments.filter(p => p.month === m && p.year === y);
-    } else {
-      periodPayments = payments.filter(
-        p => p.paymentDate >= periodStart && p.paymentDate <= periodEnd
-      );
-    }
-
-    const paid = periodPayments.reduce((s, p) => s + Number(p.amount), 0);
-    runningBalance += rentAmount - paid;
-
-    let status: MonthRow["status"] = "pending";
-    if (paid >= rentAmount) status = "paid";
-    else if (paid > 0) status = "partial";
-
-    const pDate = new Date(periodStart + "T00:00:00");
-    rows.push({
-      month: pDate.getMonth() + 1,
-      year: pDate.getFullYear(),
-      label: makePeriodLabel(periodStart, periodEnd, billingCycle),
-      expected: rentAmount,
-      paid,
-      runningBalance,
-      status,
-      payments: periodPayments,
-    });
-
-    periodStart = addDaysLocal(periodEnd, 1);
-    count++;
-  }
-  return rows.reverse();
+  return rows.map(r => ({
+    ...r,
+    label: makePeriodLabel(r.billingPeriodStart, r.billingPeriodEnd, billingCycle),
+    payments: payments.filter(
+      p => p.paymentDate >= r.billingPeriodStart && p.paymentDate <= r.billingPeriodEnd
+    ),
+  }));
 }
 
 function generateLedgerHTML(
@@ -285,8 +229,11 @@ export default function RentLedgerDetailScreen() {
     { tenantId },
     { query: { queryKey: getListPaymentsQueryKey({ tenantId }), enabled: !!tenantId } }
   );
+  const { data: ledger, isLoading: ledgerLoading } = useGetTenantLedger(tenantId, {
+    query: { queryKey: getGetTenantLedgerQueryKey(tenantId), enabled: !!tenantId }
+  });
 
-  const isLoading = tenantLoading || paymentsLoading;
+  const isLoading = tenantLoading || paymentsLoading || ledgerLoading;
 
   const anyTenant = tenant as any;
   const fmt = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
@@ -308,14 +255,14 @@ export default function RentLedgerDetailScreen() {
     (anyTenant?.rentCollectionType ?? "post_paid") === "advance" ? "Advance" : "Post-paid";
 
   const monthHistory = useMemo(() => {
-    if (!tenant || !payments) return [];
-    return buildPeriodHistory(tenant.leaseStart, tenant.rentAmount, payments as Payment[], billingCycleValue);
-  }, [tenant, payments, billingCycleValue]);
+    if (!ledger || !payments) return [];
+    return decorateMonthHistory(ledger, payments as Payment[], billingCycleValue);
+  }, [ledger, payments, billingCycleValue]);
 
   const totalPaid = anyTenant?.totalPaid ?? 0;
   const totalExpected = anyTenant?.totalExpected ?? 0;
-  const balanceDue = Math.max(0, totalExpected - totalPaid);
-  const advanceBalance = Math.max(0, totalPaid - totalExpected);
+  const balanceDue = anyTenant?.balanceDue ?? 0;
+  const advanceBalance = anyTenant?.advanceBalance ?? 0;
 
   const sortedPayments = useMemo(() =>
     [...(payments ?? [])].sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime()),
@@ -470,7 +417,7 @@ export default function RentLedgerDetailScreen() {
 
   const paidMonths = monthHistory.filter(m => m.status === "paid").length;
   const partialMonths = monthHistory.filter(m => m.status === "partial").length;
-  const dueMonths = monthHistory.filter(m => m.status === "pending").length;
+  const dueMonths = monthHistory.filter(m => m.status === "overdue").length;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
@@ -616,7 +563,7 @@ export default function RentLedgerDetailScreen() {
               const balLabel = m.runningBalance === 0 ? "—" : m.runningBalance < 0 ? `+${fmt(Math.abs(m.runningBalance))}` : fmt(m.runningBalance);
               return (
                 <View
-                  key={`${m.year}-${m.month}`}
+                  key={m.billingPeriodStart}
                   style={[
                     styles.tableRow,
                     { backgroundColor: isEven ? `${colors.primary}04` : colors.card, borderBottomColor: colors.border },

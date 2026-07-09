@@ -476,8 +476,10 @@ export const ListTenantsResponseItem = zod.object({
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
+  "dueExpected": zod.number().optional(),
   "totalPaid": zod.number().optional(),
   "balanceDue": zod.number().optional(),
+  "advanceBalance": zod.number().optional(),
   "currentMonthDue": zod.number().optional(),
   "activeAgreementEndDate": zod.string().nullish(),
   "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
@@ -553,8 +555,10 @@ export const CreateTenantResponse = zod.object({
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
+  "dueExpected": zod.number().optional(),
   "totalPaid": zod.number().optional(),
   "balanceDue": zod.number().optional(),
+  "advanceBalance": zod.number().optional(),
   "currentMonthDue": zod.number().optional(),
   "activeAgreementEndDate": zod.string().nullish(),
   "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
@@ -602,8 +606,10 @@ export const GetTenantResponse = zod.object({
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
+  "dueExpected": zod.number().optional(),
   "totalPaid": zod.number().optional(),
   "balanceDue": zod.number().optional(),
+  "advanceBalance": zod.number().optional(),
   "currentMonthDue": zod.number().optional(),
   "activeAgreementEndDate": zod.string().nullish(),
   "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
@@ -682,8 +688,10 @@ export const UpdateTenantResponse = zod.object({
   "createdAt": zod.string(),
   "monthsElapsed": zod.number().optional(),
   "totalExpected": zod.number().optional(),
+  "dueExpected": zod.number().optional(),
   "totalPaid": zod.number().optional(),
   "balanceDue": zod.number().optional(),
+  "advanceBalance": zod.number().optional(),
   "currentMonthDue": zod.number().optional(),
   "activeAgreementEndDate": zod.string().nullish(),
   "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
@@ -698,6 +706,25 @@ export const DeleteTenantParams = zod.object({
 })
 
 export const DeleteTenantResponse = zod.void()
+
+
+/**
+ * @summary Month-by-month rent ledger history for a tenant
+ */
+export const GetTenantLedgerParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetTenantLedgerResponseItem = zod.object({
+  "billingPeriodStart": zod.string(),
+  "billingPeriodEnd": zod.string(),
+  "dueDate": zod.string(),
+  "expected": zod.number(),
+  "paid": zod.number(),
+  "runningBalance": zod.number(),
+  "status": zod.enum(['paid', 'partial', 'overdue', 'upcoming'])
+})
+export const GetTenantLedgerResponse = zod.array(GetTenantLedgerResponseItem)
 
 
 /**

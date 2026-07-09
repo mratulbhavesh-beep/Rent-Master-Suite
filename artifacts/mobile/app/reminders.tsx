@@ -44,6 +44,7 @@ interface TenantRow {
   phone: string;
   unitNumber: string | null;
   rentAmount: number;
+  balanceDue: number;
   propertyName: string | null;
   propertyId: number;
   status: string;
@@ -149,6 +150,7 @@ export default function RemindersScreen() {
               phone: t.phone,
               unitNumber: t.unitNumber ?? null,
               rentAmount: parseFloat(String(t.rentAmount ?? 0)),
+              balanceDue: parseFloat(String(t.balanceDue ?? 0)),
               propertyName: t.propertyName ?? null,
               propertyId: t.propertyId,
               status: t.status,
@@ -232,7 +234,7 @@ export default function RemindersScreen() {
       amount: tenant.rentAmount.toLocaleString("en-IN"),
       rentAmount: tenant.rentAmount.toLocaleString("en-IN"),
       dueDate: `${now.getDate() + 5} ${MONTHS[now.getMonth()]}`,
-      outstandingAmount: tenant.rentAmount.toLocaleString("en-IN"),
+      outstandingAmount: tenant.balanceDue.toLocaleString("en-IN"),
       ownerName: user?.name ?? "Your Landlord",
     };
   };

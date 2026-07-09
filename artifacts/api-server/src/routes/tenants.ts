@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { and, eq, inArray, desc, gte, lte, lt, gt, asc, sql, ne } from "drizzle-orm";
 import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable, rentAgreementsTable, tenantDocumentsTable, leaseRenewalsTable, rentRevisionsTable, generatedRentsTable } from "@workspace/db";
+import { computeLedgerSummary, computeMonthHistory, type LedgerEntry, type LedgerPayment } from "@workspace/rent-calc";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { logger } from "../lib/logger";
 
@@ -12,57 +13,19 @@ function nextDayAfter(dateStr: string): string {
   return d.toISOString().split("T")[0];
 }
 
-type LedgerEntry = {
-  amount: string | number;
-  dueDate: string;
-  status: string;
-  billingPeriodStart: string;
-};
-
 /**
- * Compute balance from the Rent Ledger (generated_rents table).
- *
- * Rules (final billing design):
- *  - totalExpected  = sum of ALL generated ledger entries to date (every period the ledger
- *                     has created, regardless of due date). This reflects "rent that has
- *                     accrued for the lease so far" and must NOT collapse to 0 just because
- *                     the current period isn't due yet.
- *  - totalPaid      = sum of all recorded payments (unaffected by billing type).
- *  - balanceDue     = max(0, dueExpected − totalPaid), where dueExpected is the subset of
- *                     ledger entries whose due_date has already passed (≤ today). Collection
- *                     type controls due_date, so post-paid July (due Aug 5) does not count
- *                     toward balanceDue until Aug 5 — even though it's already in totalExpected.
- *  - currentMonthDue = amount of the most recent billing period if its due_date ≤ today
- *                     and it has not been paid.  Zero for post-paid tenants mid-period.
+ * Balance figures (Total Expected / Total Paid / Balance Due / Advance Balance)
+ * are always derived from the shared @workspace/rent-calc module, which is the
+ * single source of truth for every screen (Dashboard, Reports, Rent Ledger list,
+ * Rent Ledger detail / Month History, Tenant Details). Do not re-derive these
+ * numbers locally anywhere else in the app.
  */
 function computeBalanceFromLedger(
   generatedRents: LedgerEntry[],
-  payments: { amount: string | number }[],
+  payments: LedgerPayment[],
   today: string
 ) {
-  const monthsElapsed = generatedRents.length;
-
-  // Total accrued rent across the whole ledger, independent of due date
-  const totalExpected = generatedRents.reduce((s, r) => s + parseFloat(String(r.amount)), 0);
-
-  // Only entries whose due date has passed count toward what's actually owed
-  const dueEntries = generatedRents.filter(r => r.dueDate <= today);
-  const dueExpected = dueEntries.reduce((s, r) => s + parseFloat(String(r.amount)), 0);
-
-  const totalPaid = payments.reduce((s, p) => s + parseFloat(String(p.amount)), 0);
-  const balanceDue = Math.max(0, dueExpected - totalPaid);
-
-  // Current period's outstanding: the latest entry if its due date arrived but it's unpaid
-  const sorted = [...generatedRents].sort((a, b) =>
-    b.billingPeriodStart.localeCompare(a.billingPeriodStart)
-  );
-  const latest = sorted[0];
-  const currentMonthDue =
-    latest && latest.status !== "paid" && latest.dueDate <= today
-      ? parseFloat(String(latest.amount))
-      : 0;
-
-  return { monthsElapsed, totalExpected, totalPaid, balanceDue, currentMonthDue };
+  return computeLedgerSummary(generatedRents, payments, today);
 }
 
 function formatTenant(
@@ -257,6 +220,43 @@ router.get("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise<v
     : null;
 
   res.json(formatTenant(row.tenant, row.propertyName, payments, latestAgreement, generatedRents));
+});
+
+/**
+ * Month-by-month ledger history for a tenant (Rent Ledger detail / Month
+ * History screens). Built server-side from @workspace/rent-calc so the
+ * client never has to reconstruct billing periods or re-derive status.
+ */
+router.get("/tenants/:id/ledger", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  const [row] = await db
+    .select({ propertyUserId: propertiesTable.userId })
+    .from(tenantsTable)
+    .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
+    .where(eq(tenantsTable.id, id));
+  if (!row || row.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
+
+  const [generatedRents, payments] = await Promise.all([
+    db.select({
+        id: generatedRentsTable.id,
+        amount: generatedRentsTable.amount,
+        dueDate: generatedRentsTable.dueDate,
+        status: generatedRentsTable.status,
+        billingPeriodStart: generatedRentsTable.billingPeriodStart,
+        billingPeriodEnd: generatedRentsTable.billingPeriodEnd,
+      }).from(generatedRentsTable).where(eq(generatedRentsTable.tenantId, id)),
+    db.select({
+        amount: paymentsTable.amount,
+        generatedRentId: paymentsTable.generatedRentId,
+        month: paymentsTable.month,
+        year: paymentsTable.year,
+      }).from(paymentsTable).where(eq(paymentsTable.tenantId, id)),
+  ]);
+
+  const today = new Date().toISOString().split("T")[0];
+  res.json(computeMonthHistory(generatedRents, payments, today));
 });
 
 router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {

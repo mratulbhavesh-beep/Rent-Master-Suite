@@ -625,6 +625,29 @@ paths:
         "204":
           description: Deleted
 
+  /tenants/{id}/ledger:
+    get:
+      operationId: getTenantLedger
+      tags: [tenants]
+      summary: Month-by-month rent ledger history for a tenant
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Ledger history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MonthHistoryRow"
+        "404":
+          description: Not found
+
   /payments:
     get:
       operationId: listPayments
@@ -1844,9 +1867,13 @@ components:
           type: integer
         totalExpected:
           type: number
+        dueExpected:
+          type: number
         totalPaid:
           type: number
         balanceDue:
+          type: number
+        advanceBalance:
           type: number
         currentMonthDue:
           type: number
@@ -2562,6 +2589,26 @@ components:
           type: string
         createdAt:
           type: string
+
+    MonthHistoryRow:
+      type: object
+      required: [billingPeriodStart, billingPeriodEnd, dueDate, expected, paid, runningBalance, status]
+      properties:
+        billingPeriodStart:
+          type: string
+        billingPeriodEnd:
+          type: string
+        dueDate:
+          type: string
+        expected:
+          type: number
+        paid:
+          type: number
+        runningBalance:
+          type: number
+        status:
+          type: string
+          enum: [paid, partial, overdue, upcoming]
 
     TenantDocument:
       type: object

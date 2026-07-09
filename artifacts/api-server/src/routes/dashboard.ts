@@ -1,7 +1,8 @@
 import { Router, type IRouter } from "express";
-import { and, eq, inArray, lte, ne, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db, propertiesTable, tenantsTable, paymentsTable, maintenanceRequestsTable, generatedRentsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
+import { computeLedgerSummary } from "@workspace/rent-calc";
 
 const router: IRouter = Router();
 
@@ -64,35 +65,41 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
     paymentsByTenant.set(p.tenantId, (paymentsByTenant.get(p.tenantId) ?? 0) + parseFloat(String(p.amount)));
   }
 
-  // Outstanding = sum of ledger entries whose due_date has passed, minus total payments.
-  // This correctly excludes post-paid entries that are not yet due (e.g. dueDate = Aug 5 on Jul 8).
-  const overdueRows = activeTenantIds.length > 0
+  // Outstanding balance is computed via the shared @workspace/rent-calc
+  // ledger service — the single source of truth also used by the tenant
+  // detail and ledger endpoints, so figures always agree across the app.
+  const allGeneratedRents = activeTenantIds.length > 0
     ? await db
         .select({
           tenantId: generatedRentsTable.tenantId,
-          totalExpected: sql<string>`SUM(${generatedRentsTable.amount}::numeric)`,
+          amount: generatedRentsTable.amount,
+          dueDate: generatedRentsTable.dueDate,
+          status: generatedRentsTable.status,
+          billingPeriodStart: generatedRentsTable.billingPeriodStart,
         })
         .from(generatedRentsTable)
-        .where(
-          and(
-            inArray(generatedRentsTable.tenantId, activeTenantIds),
-            lte(generatedRentsTable.dueDate, todayStr),
-            ne(generatedRentsTable.status, "paid")
-          )
-        )
-        .groupBy(generatedRentsTable.tenantId)
+        .where(inArray(generatedRentsTable.tenantId, activeTenantIds))
     : [];
 
-  const expectedByTenant = new Map<number, number>();
-  for (const r of overdueRows) {
-    expectedByTenant.set(r.tenantId, parseFloat(String(r.totalExpected)));
+  const rentsByTenant = new Map<number, typeof allGeneratedRents>();
+  for (const r of allGeneratedRents) {
+    const list = rentsByTenant.get(r.tenantId) ?? [];
+    list.push(r);
+    rentsByTenant.set(r.tenantId, list);
+  }
+
+  const paymentsForLedgerByTenant = new Map<number, typeof allPayments>();
+  for (const p of allPayments) {
+    const list = paymentsForLedgerByTenant.get(p.tenantId) ?? [];
+    list.push(p);
+    paymentsForLedgerByTenant.set(p.tenantId, list);
   }
 
   let totalDue = 0;
   for (const t of activeTenants) {
-    const expected = expectedByTenant.get(t.id) ?? 0;
-    const paid = paymentsByTenant.get(t.id) ?? 0;
-    totalDue += Math.max(0, expected - paid);
+    const entries = rentsByTenant.get(t.id) ?? [];
+    const tenantPayments = paymentsForLedgerByTenant.get(t.id) ?? [];
+    totalDue += computeLedgerSummary(entries, tenantPayments, todayStr).balanceDue;
   }
 
   const totalVacantUnits = Math.max(0, propTotalUnits - activeTenants.length);

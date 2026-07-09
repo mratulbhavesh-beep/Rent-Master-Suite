@@ -333,8 +333,10 @@ export interface Tenant {
   createdAt: string;
   monthsElapsed?: number;
   totalExpected?: number;
+  dueExpected?: number;
   totalPaid?: number;
   balanceDue?: number;
+  advanceBalance?: number;
   currentMonthDue?: number;
   /** @nullable */
   activeAgreementEndDate?: string | null;
@@ -1053,6 +1055,26 @@ export interface GeneratedRent {
   paymentId?: number | null;
   generatedAt: string;
   createdAt: string;
+}
+
+export type MonthHistoryRowStatus = typeof MonthHistoryRowStatus[keyof typeof MonthHistoryRowStatus];
+
+
+export const MonthHistoryRowStatus = {
+  paid: 'paid',
+  partial: 'partial',
+  overdue: 'overdue',
+  upcoming: 'upcoming',
+} as const;
+
+export interface MonthHistoryRow {
+  billingPeriodStart: string;
+  billingPeriodEnd: string;
+  dueDate: string;
+  expected: number;
+  paid: number;
+  runningBalance: number;
+  status: MonthHistoryRowStatus;
 }
 
 export type TenantDocumentDocumentType = typeof TenantDocumentDocumentType[keyof typeof TenantDocumentDocumentType];

@@ -20,12 +20,14 @@ description: Standalone Rent Ledger screen architecture — data sources, status
 - When `filterMonth === null`: uses `tenant.currentMonthDue` vs `tenant.rentAmount`
 - When month is selected: sums payments for that month/year from allPayments list
 
-## Advance vs Balance
-- `advanceBalance = max(0, totalPaid - totalExpected)` — tenant has overpaid
-- `balanceDue = max(0, totalExpected - totalPaid)` — tenant is behind
+## Advance vs Balance — now server-only (as of 2026-07-09)
+- All ledger/balance math (balanceDue, advanceBalance, month-history, running balance) lives in `@workspace/rent-calc` (`computeLedgerSummary`, `computeMonthHistory`), called from `api-server` routes (tenants, dashboard).
+- Mobile screens (rent-ledger.tsx, rent-ledger-detail.tsx, reminders.tsx) must read `balanceDue`/`advanceBalance` directly from API responses (`GET /tenants`, `GET /tenants/:id/ledger`) — never recompute with local `Math.max(0, totalExpected - totalPaid)` style math again.
+- **Why:** duplicate client-side recompute had drifted from server logic across Reports/Dashboard/Ledger List/Ledger Detail, causing inconsistent numbers for the same tenant across screens.
+- **How to apply:** if a new mobile screen needs a balance/ledger figure, add/extend an API field or endpoint backed by `rent-calc`, don't inline the math client-side. Cosmetic-only client aggregation (e.g. summing payments for a specific filtered month for display) is fine; recomputing the canonical balance/advance is not.
 
 ## Month-wise History
-- `buildMonthHistory(leaseStart, rentAmount, payments)` generates one row per calendar month from leaseStart to today
+- `computeMonthHistory()` (server, `@workspace/rent-calc`) generates one row per billing period; mobile `decorateMonthHistory()` only adds display fields (label, matched payments) on top of the server rows — no financial math client-side.
 - `runningBalance` accumulates month by month (positive = still owed, negative = advance)
 - History shown in reverse order (most recent first)
 
