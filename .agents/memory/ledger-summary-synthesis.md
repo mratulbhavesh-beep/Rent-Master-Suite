@@ -35,3 +35,20 @@ etc., not "whenever the cron happened to run." Fix by recomputing an escalation 
 entirely), and merge that with genuinely manual revisions (`changedBy !== "automatic"`) which DO
 keep their recorded `effectiveFrom`. Don't touch the cron job itself if the task says not to modify
 ledger/revision generation — recompute at the read/summary layer instead.
+
+**`balanceDue` must always equal `max(0, totalExpected - totalPaid)`, never a separate
+"currentMonthDue"/"dueExpected" concept.** A prior implementation computed balance from only
+overdue/current-period rows (`dueExpected`), which broke for post-paid tenants and any tenant with
+history predating the ledger table's lazy window. Keep the narrower "amount due this billing cycle"
+signal (if needed for UI) as a separately named field — never let it leak into the headline Balance
+Due / Advance Balance shown to the user. `advanceBalance = max(0, totalPaid - totalExpected)` is the
+dual and the two must be mutually exclusive.
+
+**Display-time correction without touching stored rows:** `getActiveRent(lease, date)` recomputes
+today's true rent straight from `leaseStart` + escalation terms (never from the last stored revision
+row, which may lag). `buildDisplayRevisionHistory(lease, revisions, today)` renders the *existing*
+revision rows with automatic ones' `effectiveFrom`/`newRent`/`previousRent` corrected to true
+anniversaries (positional match by `createdAt` order against the recomputed escalation schedule),
+leaving manual rows untouched — it does NOT fabricate rows for anniversaries that have no DB record
+yet. Both are pure read-time helpers in the shared calc lib; every endpoint returning "current rent"
+or "revision history" must route through them instead of reading the raw column/table.

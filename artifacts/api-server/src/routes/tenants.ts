@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { and, eq, inArray, desc, gte, lte, lt, gt, asc, sql, ne } from "drizzle-orm";
 import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable, rentAgreementsTable, tenantDocumentsTable, leaseRenewalsTable, rentRevisionsTable, generatedRentsTable } from "@workspace/db";
-import { computeLedgerSummary, computeMonthHistory, type LedgerEntry, type LedgerPayment, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
+import { computeLedgerSummary, computeMonthHistory, getActiveRent, buildDisplayRevisionHistory, type LedgerEntry, type LedgerPayment, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { logger } from "../lib/logger";
 import { runRentGenerationForTenant, syncFutureLedgerForRevision } from "../lib/rent-generator";
@@ -80,7 +80,11 @@ function formatTenant(
   const lease = buildLeaseContext(t, revisions);
   return {
     ...t,
-    rentAmount: parseFloat(String(t.rentAmount)),
+    // The "Current Rent" shown must always be today's active rent per the
+    // lease's escalation schedule (leaseStart + frequency + value),
+    // recomputed here rather than read from the last stored revision row —
+    // that row may lag behind the true anniversary date or not exist yet.
+    rentAmount: getActiveRent(lease, today),
     securityDeposit: t.securityDeposit != null ? parseFloat(String(t.securityDeposit)) : null,
     depositStatus: t.depositStatus ?? "held",
     propertyName: propertyName ?? null,
@@ -581,7 +585,7 @@ router.get("/tenants/:id/revisions", requireAuth, async (req: AuthRequest, res):
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   const [row] = await db
-    .select({ propertyUserId: propertiesTable.userId })
+    .select({ tenant: tenantsTable, propertyUserId: propertiesTable.userId })
     .from(tenantsTable)
     .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
     .where(eq(tenantsTable.id, id));
@@ -589,12 +593,19 @@ router.get("/tenants/:id/revisions", requireAuth, async (req: AuthRequest, res):
   const revisions = await db.select().from(rentRevisionsTable)
     .where(eq(rentRevisionsTable.tenantId, id))
     .orderBy(desc(rentRevisionsTable.createdAt));
-  res.json(revisions.map(r => ({
+  const today = new Date().toISOString().split("T")[0];
+  const parsedRevisions = revisions.map(r => ({
     ...r,
     previousRent: parseFloat(String(r.previousRent)),
     newRent: parseFloat(String(r.newRent)),
     createdAt: r.createdAt.toISOString(),
-  })));
+  }));
+  const lease = buildLeaseContext(row.tenant, parsedRevisions);
+  // Automatic (escalation) revisions display at the true lease-anniversary
+  // date computed from the lease agreement's terms, not the date the cron
+  // job happened to run. This is a read-time correction only — it does not
+  // rewrite the underlying rent_revisions rows.
+  res.json(buildDisplayRevisionHistory(lease, parsedRevisions, today));
 });
 
 router.post("/tenants/:id/revise", requireAuth, async (req: AuthRequest, res): Promise<void> => {

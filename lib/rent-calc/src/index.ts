@@ -34,13 +34,13 @@ export type LedgerSummary = {
   monthsElapsed: number;
   /** Sum of every billable period to date (generated or not), regardless of due date. */
   totalExpected: number;
-  /** Subset of totalExpected whose due date has already passed. */
+  /** Subset of totalExpected whose due date has already passed. Informational only — NOT used for balanceDue. */
   dueExpected: number;
   /** Sum of all recorded payments. */
   totalPaid: number;
-  /** What the tenant currently owes: max(0, dueExpected - totalPaid). */
+  /** What the tenant currently owes: max(0, totalExpected - totalPaid). Always consistent with totalExpected/totalPaid. */
   balanceDue: number;
-  /** Credit the tenant is carrying: max(0, totalPaid - dueExpected). */
+  /** Credit the tenant is carrying: max(0, totalPaid - totalExpected). */
   advanceBalance: number;
   /** Amount owed for the most recent billing period, 0 if not yet due or already paid. */
   currentMonthDue: number;
@@ -177,16 +177,17 @@ function computeDueDateForSummary(
 }
 
 /**
- * Reconstruct every billable period from lease start through today, purely
- * for display/summary purposes. Returns one entry per period with the rent
- * amount that was actually in effect for that period (per rent-revision
- * history), the period's due date, and its billingPeriodStart (used to match
- * against any real `generated_rents` row for that period).
+ * Merge manual revisions (honored at their recorded date) with the
+ * recomputed escalation schedule (honored at the true lease anniversary,
+ * never the automatic job's stamped date) into one ascending list of
+ * `{ effectiveFrom, newRent }` events. This is the single source of truth
+ * for "what rent applied on date X" used by both `getActiveRent` and
+ * `synthesizeBillablePeriods`.
  */
-function synthesizeBillablePeriods(
+function buildRevisionEvents(
   lease: LeaseContext,
   today: string
-): Array<{ billingPeriodStart: string; dueDate: string; amount: number }> {
+): Array<{ effectiveFrom: string; newRent: number }> {
   // Manual revisions are explicit landlord decisions and are always honored
   // at their recorded date. Automatic revisions already in the DB are NOT
   // used here — they're superseded by `buildEscalationSchedule`, which
@@ -197,8 +198,39 @@ function synthesizeBillablePeriods(
 
   const escalationEvents = lease.rentEscalation ? buildEscalationSchedule(lease, today) : [];
 
-  const revisionEvents = [...manualRevisionEvents, ...escalationEvents]
+  return [...manualRevisionEvents, ...escalationEvents]
     .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+}
+
+/**
+ * The rent amount actually in effect on `date`, per the lease's revision and
+ * escalation history — i.e. what should be charged for a billing period
+ * starting on that date. Used for both period synthesis and for showing the
+ * tenant's "Current Rent" (which must reflect today's active rate, not
+ * whatever the last stored revision row happens to say).
+ */
+export function getActiveRent(lease: LeaseContext, date: string): number {
+  const revisionEvents = buildRevisionEvents(lease, date);
+  let amount = toNum(lease.baseRentAmount);
+  for (const rev of revisionEvents) {
+    if (rev.effectiveFrom <= date) amount = rev.newRent;
+    else break;
+  }
+  return amount;
+}
+
+/**
+ * Reconstruct every billable period from lease start through today, purely
+ * for display/summary purposes. Returns one entry per period with the rent
+ * amount that was actually in effect for that period (per rent-revision
+ * history), the period's due date, and its billingPeriodStart (used to match
+ * against any real `generated_rents` row for that period).
+ */
+function synthesizeBillablePeriods(
+  lease: LeaseContext,
+  today: string
+): Array<{ billingPeriodStart: string; dueDate: string; amount: number }> {
+  const revisionEvents = buildRevisionEvents(lease, today);
 
   const rentAt = (periodStart: string): number => {
     let amount = toNum(lease.baseRentAmount);
@@ -224,6 +256,61 @@ function synthesizeBillablePeriods(
   }
 
   return periods;
+}
+
+/**
+ * A rent revision as stored in the DB, for display-correction purposes.
+ * Mirrors `LedgerRevision` but also carries the fields the UI shows
+ * (id/reason/createdAt) so the corrected list can be returned as-is.
+ */
+export type DisplayRevision = {
+  id?: number;
+  effectiveFrom: string;
+  newRent: string | number;
+  previousRent?: string | number;
+  status?: string;
+  changedBy?: string;
+  reason?: string | null;
+  createdAt?: string;
+};
+
+/**
+ * Build the Rent Revision History exactly as it should be displayed: manual
+ * revisions are passed through untouched, but automatic (escalation)
+ * revisions have their `effectiveFrom` corrected to the true lease
+ * anniversary date (and `previousRent`/`newRent` corrected to the
+ * compounding schedule amount), instead of the date the cron job happened to
+ * run. This never writes to the database — it is purely a read-time
+ * correction so historical automatic revisions display consistently with
+ * the escalation schedule used for balance calculations.
+ *
+ * Automatic DB rows are matched positionally (sorted oldest-created-first)
+ * to the recomputed schedule events (oldest-anniversary-first): the Nth
+ * automatic row created corresponds to the Nth escalation anniversary. If
+ * there are more/fewer stored automatic rows than computed anniversaries
+ * (e.g. escalation was disabled after some rows were created), the excess
+ * rows are passed through unmodified rather than dropped, so nothing
+ * silently disappears from history.
+ */
+export function buildDisplayRevisionHistory<T extends DisplayRevision>(
+  lease: LeaseContext,
+  revisions: T[],
+  today: string
+): T[] {
+  const escalationEvents = lease.rentEscalation ? buildEscalationSchedule(lease, today) : [];
+
+  const manual = revisions.filter(r => (r.changedBy ?? "manual") !== "automatic");
+  const automatic = [...revisions.filter(r => (r.changedBy ?? "manual") === "automatic")]
+    .sort((a, b) => (a.createdAt ?? a.effectiveFrom).localeCompare(b.createdAt ?? b.effectiveFrom));
+
+  const correctedAutomatic = automatic.map((r, i) => {
+    const event = escalationEvents[i];
+    if (!event) return r; // no matching schedule anniversary — leave as-is rather than drop it
+    const previousAmount = i === 0 ? toNum(lease.baseRentAmount) : escalationEvents[i - 1].newRent;
+    return { ...r, effectiveFrom: event.effectiveFrom, newRent: event.newRent, previousRent: previousAmount };
+  });
+
+  return [...manual, ...correctedAutomatic].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
 }
 
 /**
@@ -258,8 +345,12 @@ export function computeLedgerSummary(
     const totalExpected = generatedRents.reduce((s, r) => s + toNum(r.amount), 0);
     const dueEntries = generatedRents.filter(r => r.dueDate <= today);
     const dueExpected = dueEntries.reduce((s, r) => s + toNum(r.amount), 0);
-    const balanceDue = Math.max(0, dueExpected - totalPaid);
-    const advanceBalance = Math.max(0, totalPaid - dueExpected);
+    // Balance Due is always Total Expected - Total Paid (never dueExpected),
+    // so the two numbers displayed together on Tenant Details are never
+    // internally inconsistent. `dueExpected` is retained only as a
+    // "how much is currently overdue" signal for currentMonthDue below.
+    const balanceDue = Math.max(0, totalExpected - totalPaid);
+    const advanceBalance = Math.max(0, totalPaid - totalExpected);
     const sorted = [...generatedRents].sort((a, b) => b.billingPeriodStart.localeCompare(a.billingPeriodStart));
     const latest = sorted[0];
     const currentMonthDue =
@@ -289,8 +380,12 @@ export function computeLedgerSummary(
   const monthsElapsed = merged.length;
   const totalExpected = merged.reduce((s, r) => s + r.amount, 0);
   const dueExpected = merged.filter(r => r.dueDate <= today).reduce((s, r) => s + r.amount, 0);
-  const balanceDue = Math.max(0, dueExpected - totalPaid);
-  const advanceBalance = Math.max(0, totalPaid - dueExpected);
+  // Balance Due is always Total Expected - Total Paid (never dueExpected),
+  // so the two numbers displayed together on Tenant Details are never
+  // internally inconsistent. `dueExpected` is retained only as a
+  // "how much is currently overdue" signal for currentMonthDue below.
+  const balanceDue = Math.max(0, totalExpected - totalPaid);
+  const advanceBalance = Math.max(0, totalPaid - totalExpected);
 
   const sorted = [...merged].sort((a, b) => b.billingPeriodStart.localeCompare(a.billingPeriodStart));
   const latest = sorted[0];

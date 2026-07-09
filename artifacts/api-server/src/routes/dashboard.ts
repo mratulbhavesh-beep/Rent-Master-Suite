@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq, inArray, sql } from "drizzle-orm";
 import { db, propertiesTable, tenantsTable, paymentsTable, maintenanceRequestsTable, generatedRentsTable, rentRevisionsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
-import { computeLedgerSummary, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
+import { computeLedgerSummary, getActiveRent, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
 
 const router: IRouter = Router();
 
@@ -62,10 +62,6 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
     .filter(p => p.month === currentMonth && p.year === currentYear)
     .reduce((s, p) => s + parseFloat(String(p.amount)), 0);
 
-  const rentDueThisMonth = activeTenants.reduce(
-    (sum, t) => sum + parseFloat(String(t.rentAmount)), 0
-  );
-
   const paymentsByTenant = new Map<number, number>();
   for (const p of allPayments) {
     paymentsByTenant.set(p.tenantId, (paymentsByTenant.get(p.tenantId) ?? 0) + parseFloat(String(p.amount)));
@@ -123,6 +119,7 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
   }
 
   let totalDue = 0;
+  let rentDueThisMonth = 0;
   for (const t of activeTenants) {
     const entries = rentsByTenant.get(t.id) ?? [];
     const tenantPayments = paymentsForLedgerByTenant.get(t.id) ?? [];
@@ -151,6 +148,10 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
       escalationValue: t.escalationValue ?? 0,
     };
     totalDue += computeLedgerSummary(entries, tenantPayments, todayStr, lease).balanceDue;
+    // Recomputed directly from lease terms (leaseStart + escalation
+    // frequency/value), not the last stored revision row, so this reflects
+    // today's true active rent even if the automatic revision hasn't synced.
+    rentDueThisMonth += getActiveRent(lease, todayStr);
   }
 
   const totalVacantUnits = Math.max(0, propTotalUnits - activeTenants.length);
