@@ -1,4 +1,4 @@
-import { and, eq, desc, lte } from "drizzle-orm";
+import { and, eq, desc, lte, gte, gt, lt, asc, sql } from "drizzle-orm";
 import { db, tenantsTable, propertiesTable, generatedRentsTable, businessSettingsTable, rentRevisionsTable } from "@workspace/db";
 import { logger } from "./logger";
 
@@ -66,6 +66,60 @@ function computePeriods(
   return periods;
 }
 
+// Shared ledger-sync logic used by BOTH the manual rent-edit/revision flow
+// (routes/tenants.ts) and automatic escalation (below). Updates only
+// unpaid/future generated_rents entries from `effectiveFrom` onward, up to
+// (but not including) the next active revision's effective date. Paid and
+// partial entries are never touched, matching the manual-edit behavior.
+type DbLike = Pick<typeof db, "select" | "update">;
+
+export async function syncFutureLedgerForRevision(
+  dbClient: DbLike,
+  tenantId: number,
+  effectiveFrom: string,
+  newRent: string
+): Promise<number> {
+  // Don't split an already-generated billing period: if effectiveFrom falls
+  // inside an existing period, start updating from the next period instead.
+  const [overlappingPeriod] = await dbClient
+    .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
+    .from(generatedRentsTable)
+    .where(and(
+      eq(generatedRentsTable.tenantId, tenantId),
+      lte(generatedRentsTable.billingPeriodStart, effectiveFrom),
+      gte(generatedRentsTable.billingPeriodEnd, effectiveFrom)
+    ))
+    .limit(1);
+
+  const updateFromDate = overlappingPeriod
+    ? addDays(overlappingPeriod.billingPeriodEnd, 1)
+    : effectiveFrom;
+
+  // Limit updates to the gap before the next active revision, if any.
+  const [nextActiveRevision] = await dbClient
+    .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
+    .from(rentRevisionsTable)
+    .where(and(
+      eq(rentRevisionsTable.tenantId, tenantId),
+      eq(rentRevisionsTable.status, "active"),
+      gt(rentRevisionsTable.effectiveFrom, effectiveFrom)
+    ))
+    .orderBy(asc(rentRevisionsTable.effectiveFrom))
+    .limit(1);
+
+  const updatedRents = await dbClient.update(generatedRentsTable)
+    .set({ amount: newRent })
+    .where(and(
+      eq(generatedRentsTable.tenantId, tenantId),
+      gte(generatedRentsTable.billingPeriodStart, updateFromDate),
+      nextActiveRevision ? lt(generatedRentsTable.billingPeriodStart, nextActiveRevision.effectiveFrom) : undefined,
+      sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
+    ))
+    .returning({ id: generatedRentsTable.id });
+
+  return updatedRents.length;
+}
+
 // effectiveBaseRent: the current base rent to escalate from.
 // This is passed explicitly so that if a manual revision fired on the same date,
 // its newRent becomes the base before escalation is calculated (requirement: manual > escalation priority).
@@ -130,7 +184,16 @@ async function applyAutoEscalationIfDue(
     changedBy: "automatic",
   });
 
-  logger.info({ tenantId: tenant.id, previousBaseRent, newRent, usedManualBase }, "Automatic rent escalation applied mid-lease");
+  // Reuse the exact same ledger-sync path as the manual rent-edit flow:
+  // only unpaid/future generated rents from today onward are updated so
+  // Total Expected, Balance Due, Dashboard, Reports and Ledger reflect the
+  // new rent. Paid/partial entries and past history are never touched.
+  const updatedRentRows = await syncFutureLedgerForRevision(db, tenant.id, today, String(newRent));
+
+  logger.info(
+    { tenantId: tenant.id, previousBaseRent, newRent, usedManualBase, updatedRentRows },
+    "Automatic rent escalation applied mid-lease"
+  );
   return String(newRent);
 }
 

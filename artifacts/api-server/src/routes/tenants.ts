@@ -4,7 +4,7 @@ import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTa
 import { computeLedgerSummary, computeMonthHistory, type LedgerEntry, type LedgerPayment } from "@workspace/rent-calc";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { logger } from "../lib/logger";
-import { runRentGenerationForTenant } from "../lib/rent-generator";
+import { runRentGenerationForTenant, syncFutureLedgerForRevision } from "../lib/rent-generator";
 
 const router: IRouter = Router();
 
@@ -613,46 +613,13 @@ router.post("/tenants/:id/revise", requireAuth, async (req: AuthRequest, res): P
         await tx.update(tenantsTable).set({ rentAmount: String(body.newRent) }).where(eq(tenantsTable.id, id));
       }
 
-      // Period boundary: don't split an already-generated billing period
-      const [overlappingPeriod] = await tx
-        .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
-        .from(generatedRentsTable)
-        .where(and(
-          eq(generatedRentsTable.tenantId, id),
-          lte(generatedRentsTable.billingPeriodStart, body.effectiveFrom),
-          gte(generatedRentsTable.billingPeriodEnd, body.effectiveFrom)
-        ))
-        .limit(1);
-
-      const updateFromDate = overlappingPeriod
-        ? nextDayAfter(overlappingPeriod.billingPeriodEnd)
-        : body.effectiveFrom;
-
-      // Limit updates to the gap before the next active revision
-      const [nextActiveRevision] = await tx
-        .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
-        .from(rentRevisionsTable)
-        .where(and(
-          eq(rentRevisionsTable.tenantId, id),
-          eq(rentRevisionsTable.status, "active"),
-          gt(rentRevisionsTable.effectiveFrom, body.effectiveFrom)
-        ))
-        .orderBy(asc(rentRevisionsTable.effectiveFrom))
-        .limit(1);
-
-      // Update unpaid future generated rents only — never touches paid or partial entries
-      const updatedRents = await tx.update(generatedRentsTable)
-        .set({ amount: String(body.newRent) })
-        .where(and(
-          eq(generatedRentsTable.tenantId, id),
-          gte(generatedRentsTable.billingPeriodStart, updateFromDate),
-          nextActiveRevision ? lt(generatedRentsTable.billingPeriodStart, nextActiveRevision.effectiveFrom) : undefined,
-          sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
-        ))
-        .returning({ id: generatedRentsTable.id });
+      // Update unpaid future generated rents only — never touches paid or
+      // partial entries. Shared with automatic escalation so both flows
+      // sync the ledger identically.
+      const updatedRentRows = await syncFutureLedgerForRevision(tx, id, body.effectiveFrom, String(body.newRent));
 
       logger.info(
-        { tenantId: id, effectiveFrom: body.effectiveFrom, newRent: body.newRent, updatedRentRows: updatedRents.length },
+        { tenantId: id, effectiveFrom: body.effectiveFrom, newRent: body.newRent, updatedRentRows },
         "Manual revision applied — unpaid future rents updated"
       );
 
