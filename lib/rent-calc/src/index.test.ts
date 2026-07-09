@@ -159,10 +159,25 @@ describe("Rent Revision History display correction", () => {
     };
     const lease = mehulLease();
     const corrected = buildDisplayRevisionHistory(lease, [staleRow], "2026-07-09");
-    // Only one automatic row exists, so it maps to the first anniversary (2025-01-01),
-    // matching the earliest computed escalation event.
-    expect(corrected[corrected.length - 1].effectiveFrom).toBe("2025-01-01");
-    expect(corrected[corrected.length - 1].newRent).toBe(10750);
+    // Only one stored automatic row exists, but two anniversaries have
+    // occurred by 2026-07-09 (2025-01-01 and 2026-01-01) — both must show.
+    const sortedAsc = [...corrected].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+    expect(sortedAsc).toHaveLength(2);
+    expect(sortedAsc[0].effectiveFrom).toBe("2025-01-01");
+    expect(sortedAsc[0].newRent).toBe(10750);
+    expect(sortedAsc[1].effectiveFrom).toBe("2026-01-01");
+    expect(sortedAsc[1].newRent).toBe(11500);
+  });
+
+  it("synthesizes a display-only entry for an anniversary that has no stored row at all", () => {
+    const lease = mehulLease();
+    // No revision rows in the DB whatsoever — both anniversaries must still
+    // be synthesized for display purposes (no DB writes happen here).
+    const corrected = buildDisplayRevisionHistory(lease, [] as DisplayRevision[], "2026-07-09");
+    const sortedAsc = [...corrected].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+    expect(sortedAsc).toHaveLength(2);
+    expect(sortedAsc[0]).toMatchObject({ effectiveFrom: "2025-01-01", newRent: 10750, previousRent: 10000, changedBy: "automatic" });
+    expect(sortedAsc[1]).toMatchObject({ effectiveFrom: "2026-01-01", newRent: 11500, previousRent: 10750, changedBy: "automatic" });
   });
 
   it("leaves manual revisions untouched while correcting automatic ones", () => {

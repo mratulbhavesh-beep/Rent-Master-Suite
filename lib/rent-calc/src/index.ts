@@ -284,13 +284,18 @@ export type DisplayRevision = {
  * correction so historical automatic revisions display consistently with
  * the escalation schedule used for balance calculations.
  *
- * Automatic DB rows are matched positionally (sorted oldest-created-first)
- * to the recomputed schedule events (oldest-anniversary-first): the Nth
- * automatic row created corresponds to the Nth escalation anniversary. If
- * there are more/fewer stored automatic rows than computed anniversaries
- * (e.g. escalation was disabled after some rows were created), the excess
- * rows are passed through unmodified rather than dropped, so nothing
- * silently disappears from history.
+ * The displayed automatic-revision list is driven by the *computed*
+ * escalation schedule, not by how many automatic rows happen to exist in
+ * the DB — the schedule is the source of truth for how many anniversaries
+ * have occurred, and every one of them must show up in the history. Stored
+ * automatic rows are matched positionally (sorted oldest-created-first) to
+ * the schedule events (oldest-anniversary-first) purely to borrow display
+ * metadata (`id`/`reason`/`createdAt`) for the rows that do have one; any
+ * anniversary with no matching stored row still gets a synthesized display
+ * entry so it isn't silently missing from history. If there happen to be
+ * more stored automatic rows than computed anniversaries (e.g. escalation
+ * was disabled after some rows were created), the excess rows are passed
+ * through unmodified rather than dropped.
  */
 export function buildDisplayRevisionHistory<T extends DisplayRevision>(
   lease: LeaseContext,
@@ -303,14 +308,32 @@ export function buildDisplayRevisionHistory<T extends DisplayRevision>(
   const automatic = [...revisions.filter(r => (r.changedBy ?? "manual") === "automatic")]
     .sort((a, b) => (a.createdAt ?? a.effectiveFrom).localeCompare(b.createdAt ?? b.effectiveFrom));
 
-  const correctedAutomatic = automatic.map((r, i) => {
-    const event = escalationEvents[i];
-    if (!event) return r; // no matching schedule anniversary — leave as-is rather than drop it
+  const correctedAutomatic: T[] = escalationEvents.map((event, i) => {
     const previousAmount = i === 0 ? toNum(lease.baseRentAmount) : escalationEvents[i - 1].newRent;
-    return { ...r, effectiveFrom: event.effectiveFrom, newRent: event.newRent, previousRent: previousAmount };
+    const stored = automatic[i];
+    if (stored) {
+      return { ...stored, effectiveFrom: event.effectiveFrom, newRent: event.newRent, previousRent: previousAmount };
+    }
+    // No stored row for this anniversary yet — synthesize a display-only
+    // entry so the event still appears; this is never persisted anywhere.
+    return {
+      effectiveFrom: event.effectiveFrom,
+      newRent: event.newRent,
+      previousRent: previousAmount,
+      status: "active",
+      changedBy: "automatic",
+      reason: `Auto-escalation: applied on ${event.effectiveFrom}`,
+      createdAt: `${event.effectiveFrom}T00:00:00.000Z`,
+    } as unknown as T;
   });
 
-  return [...manual, ...correctedAutomatic].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
+  // Any stored automatic rows beyond the computed schedule length (should be
+  // rare — e.g. escalation disabled after rows already existed) are kept
+  // as-is rather than dropped.
+  const leftoverStoredAutomatic = automatic.slice(escalationEvents.length);
+
+  return [...manual, ...correctedAutomatic, ...leftoverStoredAutomatic]
+    .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
 }
 
 /**

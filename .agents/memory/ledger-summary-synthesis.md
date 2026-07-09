@@ -48,7 +48,18 @@ dual and the two must be mutually exclusive.
 today's true rent straight from `leaseStart` + escalation terms (never from the last stored revision
 row, which may lag). `buildDisplayRevisionHistory(lease, revisions, today)` renders the *existing*
 revision rows with automatic ones' `effectiveFrom`/`newRent`/`previousRent` corrected to true
-anniversaries (positional match by `createdAt` order against the recomputed escalation schedule),
-leaving manual rows untouched — it does NOT fabricate rows for anniversaries that have no DB record
-yet. Both are pure read-time helpers in the shared calc lib; every endpoint returning "current rent"
-or "revision history" must route through them instead of reading the raw column/table.
+anniversaries, leaving manual rows untouched. Both are pure read-time helpers in the shared calc lib;
+every endpoint returning "current rent" or "revision history" must route through them instead of
+reading the raw column/table.
+
+**The displayed automatic-revision list must be driven by the computed escalation schedule's length,
+not by how many automatic rows exist in the DB.** An earlier version of `buildDisplayRevisionHistory`
+only remapped *existing* automatic rows positionally onto schedule events — if the automatic-revision
+cron had only ever fired once (e.g. one stored row) but two anniversaries had actually elapsed, only
+one history entry displayed even though `getActiveRent` already reflected the second escalation. Fixed
+by iterating over `escalationEvents` (the schedule) as the primary list, borrowing `id`/`reason`/
+`createdAt` from a matching stored row by position when one exists, and synthesizing a display-only
+entry (never persisted) for any anniversary with no stored row yet. Any leftover stored automatic rows
+beyond the schedule length are still appended unmodified. **Why:** history length must always equal
+"anniversaries elapsed by today", independent of whether the generation job happened to run for each
+one — the display and the active-rent calculation must never disagree on how many escalations occurred.
