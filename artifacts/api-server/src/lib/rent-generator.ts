@@ -40,7 +40,6 @@ function computePeriods(
   leaseStart: string,
   lastPeriodEnd: string | null,
   billingCycle: string,
-  rentCollectionType: string,
   today: string
 ): Array<{ start: string; end: string }> {
   const periods: Array<{ start: string; end: string }> = [];
@@ -52,9 +51,12 @@ function computePeriods(
 
   while (count < MAX_PERIODS) {
     const periodEnd = computePeriodEnd(periodStart, billingCycle);
-    const triggerDate = rentCollectionType === "advance" ? periodStart : periodEnd;
 
-    if (triggerDate > today) break;
+    // Entries ALWAYS generate on the first day of the billing period.
+    // Collection type only controls the due date (via computeDueDate), not
+    // when the entry is created. This allows payments to be recorded from
+    // day 1 of the period for both advance and post-paid tenants.
+    if (periodStart > today) break;
 
     periods.push({ start: periodStart, end: periodEnd });
     periodStart = addDays(periodEnd, 1);
@@ -205,7 +207,6 @@ export async function runRentGeneration(): Promise<number> {
         tenant.leaseStart,
         lastPeriodEnd,
         billingCycle,
-        rentCollectionType,
         today
       );
 
