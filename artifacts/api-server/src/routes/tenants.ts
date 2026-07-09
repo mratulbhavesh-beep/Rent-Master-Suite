@@ -23,12 +23,15 @@ type LedgerEntry = {
  * Compute balance from the Rent Ledger (generated_rents table).
  *
  * Rules (final billing design):
- *  - totalExpected  = sum of ledger entries whose due_date has already passed (≤ today).
- *                     Collection type controls due_date, so post-paid July (due Aug 5) is
- *                     NOT included until Aug 5 arrives.
+ *  - totalExpected  = sum of ALL generated ledger entries to date (every period the ledger
+ *                     has created, regardless of due date). This reflects "rent that has
+ *                     accrued for the lease so far" and must NOT collapse to 0 just because
+ *                     the current period isn't due yet.
  *  - totalPaid      = sum of all recorded payments (unaffected by billing type).
- *  - balanceDue     = max(0, totalExpected − totalPaid)  — always from the ledger, never
- *                     from a "months × rent" formula.
+ *  - balanceDue     = max(0, dueExpected − totalPaid), where dueExpected is the subset of
+ *                     ledger entries whose due_date has already passed (≤ today). Collection
+ *                     type controls due_date, so post-paid July (due Aug 5) does not count
+ *                     toward balanceDue until Aug 5 — even though it's already in totalExpected.
  *  - currentMonthDue = amount of the most recent billing period if its due_date ≤ today
  *                     and it has not been paid.  Zero for post-paid tenants mid-period.
  */
@@ -39,12 +42,15 @@ function computeBalanceFromLedger(
 ) {
   const monthsElapsed = generatedRents.length;
 
-  // Only entries whose due date has passed count toward what's "expected"
+  // Total accrued rent across the whole ledger, independent of due date
+  const totalExpected = generatedRents.reduce((s, r) => s + parseFloat(String(r.amount)), 0);
+
+  // Only entries whose due date has passed count toward what's actually owed
   const dueEntries = generatedRents.filter(r => r.dueDate <= today);
-  const totalExpected = dueEntries.reduce((s, r) => s + parseFloat(String(r.amount)), 0);
+  const dueExpected = dueEntries.reduce((s, r) => s + parseFloat(String(r.amount)), 0);
 
   const totalPaid = payments.reduce((s, p) => s + parseFloat(String(p.amount)), 0);
-  const balanceDue = Math.max(0, totalExpected - totalPaid);
+  const balanceDue = Math.max(0, dueExpected - totalPaid);
 
   // Current period's outstanding: the latest entry if its due date arrived but it's unpaid
   const sorted = [...generatedRents].sort((a, b) =>
