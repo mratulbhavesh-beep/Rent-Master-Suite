@@ -63,3 +63,22 @@ entry (never persisted) for any anniversary with no stored row yet. Any leftover
 beyond the schedule length are still appended unmodified. **Why:** history length must always equal
 "anniversaries elapsed by today", independent of whether the generation job happened to run for each
 one — the display and the active-rent calculation must never disagree on how many escalations occurred.
+
+**Advance vs post-paid must gate period *existence*, not just amount/timing.** Advance billing
+generates a period on its FIRST day (`periodStart <= today`); post-paid must generate ONLY once the
+period's LAST day is reached (`periodEnd <= today`) — this gate belongs in both the real generator
+and the synthesis fallback, and the two must mirror each other exactly, or Outstanding/Total
+Expected/Current Due will show an in-progress post-paid month before it's actually billed. Never
+fall back to "Months Active x Rent Amount" for post-paid — Outstanding must always derive from
+periods that actually exist (generated or correctly gated synthesized), never a flat multiply.
+**Why:** a pre-fix generator created post-paid rows on day 1 of the cycle (same as advance), so
+Outstanding/Dashboard Due leaked next month's not-yet-earned rent immediately; fixing only the
+generator without also fixing `synthesizeBillablePeriods` (used for backfill/gap-filling in the
+same summary) reintroduces the bug for any period synthesis touches. **How to apply:** when
+adding any new lease-derived period arithmetic, always branch on `rentCollectionType` and gate
+existence (not just display) accordingly; also union real `generated_rents` rows into merged
+periods even when a row falls outside the synthesized window (e.g. legacy data from before a gating
+fix shipped) — the generated table is always authoritative and must never be silently hidden by a
+tightened synthesis window, even though the synthesis window itself must never manufacture premature
+periods going forward. A stale-data cleanup (deleting incorrectly early-generated pending rows) may
+be needed once when shipping such a fix, since existing rows won't retroactively fix themselves.

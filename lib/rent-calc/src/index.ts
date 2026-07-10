@@ -225,6 +225,18 @@ export function getActiveRent(lease: LeaseContext, date: string): number {
  * amount that was actually in effect for that period (per rent-revision
  * history), the period's due date, and its billingPeriodStart (used to match
  * against any real `generated_rents` row for that period).
+ *
+ * This must mirror the rent generator's own "has this period actually been
+ * generated yet" gate exactly (see `computePeriods` in
+ * artifacts/api-server/src/lib/rent-generator.ts), or the synthesized
+ * summary and the real ledger rows would disagree about which periods exist:
+ *
+ * - ADVANCE billing: a period exists once its first day has arrived
+ *   (`periodStart <= today`) — rent is billed up front.
+ * - POST-PAID billing: a period does NOT exist until its LAST day has been
+ *   reached (`periodEnd <= today`) — rent is billed in arrears, so an
+ *   in-progress month must not appear in Outstanding Balance, Total
+ *   Expected, dashboards, or reports until the cycle actually ends.
  */
 function synthesizeBillablePeriods(
   lease: LeaseContext,
@@ -247,8 +259,10 @@ function synthesizeBillablePeriods(
   let count = 0;
 
   while (count < MAX_PERIODS) {
-    if (periodStart > today) break;
     const periodEnd = computePeriodEndForSummary(periodStart, lease.billingCycle);
+    const isGenerationDateReached =
+      lease.rentCollectionType === "advance" ? periodStart <= today : periodEnd <= today;
+    if (!isGenerationDateReached) break;
     const dueDate = computeDueDateForSummary({ start: periodStart, end: periodEnd }, lease.rentCollectionType, lease.gracePeriodDays);
     periods.push({ billingPeriodStart: periodStart, dueDate, amount: rentAt(periodStart) });
     periodStart = addDaysUTC(periodEnd, 1);
@@ -385,6 +399,7 @@ export function computeLedgerSummary(
   for (const r of generatedRents) actualByStart.set(r.billingPeriodStart, r);
 
   const synthesized = synthesizeBillablePeriods(lease, today);
+  const synthesizedStarts = new Set(synthesized.map(p => p.billingPeriodStart));
 
   const merged = synthesized.map(period => {
     const actual = actualByStart.get(period.billingPeriodStart);
@@ -399,6 +414,17 @@ export function computeLedgerSummary(
       status: actual.status,
     };
   });
+
+  // Any real generated_rents row is authoritative even if the lease-derived
+  // synthesis window wouldn't (yet) project that period — e.g. a row created
+  // before this gating existed, or a period whose lease context changed.
+  // generated_rents is always the single source of truth; synthesis only
+  // fills gaps, it never hides a period that has actually been generated.
+  for (const r of generatedRents) {
+    if (!synthesizedStarts.has(r.billingPeriodStart)) {
+      merged.push({ billingPeriodStart: r.billingPeriodStart, dueDate: r.dueDate, amount: toNum(r.amount), status: r.status });
+    }
+  }
 
   const monthsElapsed = merged.length;
   const totalExpected = merged.reduce((s, r) => s + r.amount, 0);

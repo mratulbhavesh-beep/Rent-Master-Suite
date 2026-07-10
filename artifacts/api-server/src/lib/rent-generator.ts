@@ -36,10 +36,28 @@ function computeDueDate(
   return addDays(anchor, gracePeriodDays);
 }
 
+// Two independent, deliberately different generation systems:
+//
+// ADVANCE billing — the entry (and its due date) is generated on the FIRST
+// day of the billing period, since the tenant owes rent up front for the
+// period they're about to occupy.
+//
+// POST-PAID billing — the entry must NOT be generated until the LAST day of
+// the billing period has been reached (`periodEnd <= today`), since the
+// tenant is being billed in arrears for a period they've already lived
+// through. Generating it early would make that month's rent appear in
+// Outstanding Balance / Total Expected / dashboards before it's actually
+// due, which is exactly what post-paid billing must not do.
+//
+// This gating is the single root-cause control for "when does this period
+// exist at all" — everything downstream (ledger, dashboard, reports) reads
+// generated_rents rows, so gating creation here is sufficient; no display
+// layer needs to re-filter by collection type.
 function computePeriods(
   leaseStart: string,
   lastPeriodEnd: string | null,
   billingCycle: string,
+  rentCollectionType: string,
   today: string
 ): Array<{ start: string; end: string }> {
   const periods: Array<{ start: string; end: string }> = [];
@@ -52,11 +70,9 @@ function computePeriods(
   while (count < MAX_PERIODS) {
     const periodEnd = computePeriodEnd(periodStart, billingCycle);
 
-    // Entries ALWAYS generate on the first day of the billing period.
-    // Collection type only controls the due date (via computeDueDate), not
-    // when the entry is created. This allows payments to be recorded from
-    // day 1 of the period for both advance and post-paid tenants.
-    if (periodStart > today) break;
+    const isGenerationDateReached =
+      rentCollectionType === "advance" ? periodStart <= today : periodEnd <= today;
+    if (!isGenerationDateReached) break;
 
     periods.push({ start: periodStart, end: periodEnd });
     periodStart = addDays(periodEnd, 1);
@@ -270,6 +286,7 @@ async function generateForOneTenant(
     tenant.leaseStart,
     lastPeriodEnd,
     billingCycle,
+    rentCollectionType,
     today
   );
 

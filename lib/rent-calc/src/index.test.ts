@@ -98,42 +98,44 @@ describe("yearly fixed escalation — active rent by date", () => {
 });
 
 describe("yearly fixed escalation — Total Expected / Balance Due (Mehul scenario)", () => {
-  it("matches the exact expected total for 31 elapsed months as of 2026-07-09", () => {
+  it("matches the exact expected total for 30 elapsed (fully-ended) months as of 2026-07-09 — post-paid, so the in-progress July cycle doesn't count yet", () => {
     const lease = mehulLease();
     const summary = computeLedgerSummary([], [], "2026-07-09", lease);
-    // 12mo * 10000 + 12mo * 10750 + 7mo * 11500 = 329500
-    expect(summary.totalExpected).toBe(329500);
-    expect(summary.monthsElapsed).toBe(31);
+    // 12mo * 10000 + 12mo * 10750 + 6mo * 11500 = 318000 (Jan 2024 - Jun 2026;
+    // July 2026 hasn't ended yet, so post-paid must not generate/count it).
+    expect(summary.totalExpected).toBe(318000);
+    expect(summary.monthsElapsed).toBe(30);
   });
 
   it("keeps Balance Due = Total Expected - Total Paid exactly, even with partial payments", () => {
     const lease = mehulLease();
     const summary = computeLedgerSummary([], [{ amount: 2000 }], "2026-07-09", lease);
     expect(summary.balanceDue).toBe(summary.totalExpected - summary.totalPaid);
-    expect(summary.balanceDue).toBe(327500);
+    expect(summary.balanceDue).toBe(316000);
   });
 
-  it("never lets a stale (pre-escalation) ledger row understate the balance for an unpaid period", () => {
+  it("never lets a stale (pre-escalation) ledger row understate the balance for an unpaid, already-ended period", () => {
     const lease = mehulLease();
     const staleLedgerRows = [
-      { amount: "10000.00", dueDate: "2026-08-05", status: "overdue", billingPeriodStart: "2026-07-01" },
+      { amount: "10000.00", dueDate: "2026-07-05", status: "overdue", billingPeriodStart: "2026-06-01" },
     ];
     const summary = computeLedgerSummary(staleLedgerRows, [], "2026-07-09", lease);
-    // Period amount must be recomputed to 11500, not the stale stored 10000.
-    expect(summary.totalExpected).toBe(329500);
+    // June has already ended, so it's a valid post-paid period. Its amount
+    // must be recomputed to 11500, not the stale stored 10000.
+    expect(summary.totalExpected).toBe(318000);
     expect(summary.balanceDue).toBe(summary.totalExpected - summary.totalPaid);
   });
 
   it("keeps a paid period's historical amount untouched even if it predates the correct escalation", () => {
     const lease = mehulLease();
     const settledLedgerRows = [
-      { amount: "10000.00", dueDate: "2026-08-05", status: "paid", billingPeriodStart: "2026-07-01" },
+      { amount: "10000.00", dueDate: "2026-07-05", status: "paid", billingPeriodStart: "2026-06-01" },
     ];
     const summary = computeLedgerSummary(settledLedgerRows, [{ amount: 10000 }], "2026-07-09", lease);
     // The settled row's stored 10000 must be preserved — not silently bumped to 11500.
-    const julyAmount = 10000;
-    const restOfYearsExpected = 329500 - 11500; // total minus what july would have contributed at 11500
-    expect(summary.totalExpected).toBe(restOfYearsExpected + julyAmount);
+    const juneAmount = 10000;
+    const restOfMonthsExpected = 318000 - 11500; // total minus what June would have contributed at 11500
+    expect(summary.totalExpected).toBe(restOfMonthsExpected + juneAmount);
     expect(summary.balanceDue).toBe(summary.totalExpected - summary.totalPaid);
   });
 
@@ -142,6 +144,54 @@ describe("yearly fixed escalation — Total Expected / Balance Due (Mehul scenar
     const overpaid = computeLedgerSummary([], [{ amount: 400000 }], "2026-07-09", lease);
     expect(overpaid.balanceDue).toBe(0);
     expect(overpaid.advanceBalance).toBe(400000 - overpaid.totalExpected);
+  });
+});
+
+describe("Advance vs Post-paid billing generation gating", () => {
+  const advanceLease: LeaseContext = {
+    leaseStart: "2026-05-01",
+    billingCycle: "monthly",
+    rentCollectionType: "advance",
+    gracePeriodDays: 0,
+    baseRentAmount: 5000,
+    revisions: [],
+    rentEscalation: false,
+    escalationFrequencyYears: 1,
+    escalationType: "percentage",
+    escalationValue: 0,
+  };
+  const postPaidLease: LeaseContext = { ...advanceLease, rentCollectionType: "post_paid" };
+
+  it("advance: counts the in-progress current-month period immediately (from day 1 of the cycle)", () => {
+    // As of 2026-07-09, May/Jun/Jul periods have all *started* — advance
+    // bills on the first day of the cycle, so all 3 must be expected already.
+    const summary = computeLedgerSummary([], [], "2026-07-09", advanceLease);
+    expect(summary.monthsElapsed).toBe(3);
+    expect(summary.totalExpected).toBe(15000);
+  });
+
+  it("post-paid: never counts the in-progress current-month period, only fully-ended ones", () => {
+    // As of 2026-07-09, only May and June have fully ENDED; July is still
+    // in progress and must not be billed or counted until 2026-07-31.
+    const summary = computeLedgerSummary([], [], "2026-07-09", postPaidLease);
+    expect(summary.monthsElapsed).toBe(2);
+    expect(summary.totalExpected).toBe(10000);
+  });
+
+  it("post-paid: the moment the cycle ends, that period becomes expected", () => {
+    const dayBefore = computeLedgerSummary([], [], "2026-07-30", postPaidLease);
+    const cycleEndDay = computeLedgerSummary([], [], "2026-07-31", postPaidLease);
+    expect(dayBefore.monthsElapsed).toBe(2);
+    expect(cycleEndDay.monthsElapsed).toBe(3);
+    expect(cycleEndDay.totalExpected).toBe(15000);
+  });
+
+  it("post-paid: currentMonthDue never reflects an ungenerated in-progress period (no Months Active x Rent Amount fallback)", () => {
+    const summary = computeLedgerSummary([], [], "2026-07-09", postPaidLease);
+    // Nothing due for the not-yet-ended July period; only June (already
+    // ended, past its grace-adjusted due date) could contribute here.
+    expect(summary.currentMonthDue).toBeLessThanOrEqual(5000);
+    expect(summary.totalExpected).not.toBe(3 * 5000);
   });
 });
 

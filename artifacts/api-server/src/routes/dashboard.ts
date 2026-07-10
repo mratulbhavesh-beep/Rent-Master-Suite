@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq, inArray, sql } from "drizzle-orm";
 import { db, propertiesTable, tenantsTable, paymentsTable, maintenanceRequestsTable, generatedRentsTable, rentRevisionsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
-import { computeLedgerSummary, getActiveRent, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
+import { computeLedgerSummary, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
 
 const router: IRouter = Router();
 
@@ -147,11 +147,18 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
       escalationType: t.escalationType ?? "percentage",
       escalationValue: t.escalationValue ?? 0,
     };
-    totalDue += computeLedgerSummary(entries, tenantPayments, todayStr, lease).balanceDue;
-    // Recomputed directly from lease terms (leaseStart + escalation
-    // frequency/value), not the last stored revision row, so this reflects
-    // today's true active rent even if the automatic revision hasn't synced.
-    rentDueThisMonth += getActiveRent(lease, todayStr);
+    const ledgerSummary = computeLedgerSummary(entries, tenantPayments, todayStr, lease);
+    totalDue += ledgerSummary.balanceDue;
+    // Sourced entirely from generated_rents-backed periods (via
+    // computeLedgerSummary -> synthesizeBillablePeriods), never from
+    // Months Active x Rent Amount. This is what keeps ADVANCE and
+    // POST-PAID billing correctly independent:
+    // - Advance: a period exists (and is due) from its first day, so this
+    //   already reflects the active rent from day 1 of the cycle.
+    // - Post-paid: a period does not exist at all until its LAST day is
+    //   reached, so an in-progress post-paid month contributes 0 here
+    //   until the generation date arrives, exactly as required.
+    rentDueThisMonth += ledgerSummary.currentMonthDue;
   }
 
   const totalVacantUnits = Math.max(0, propTotalUnits - activeTenants.length);
