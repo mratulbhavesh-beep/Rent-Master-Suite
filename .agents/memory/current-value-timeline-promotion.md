@@ -1,0 +1,13 @@
+---
+name: Current-value column vs event timeline promotion
+description: How to make a denormalized "current" column (e.g. tenant.rentAmount) the permanent single source of truth for "now", directly editable, while a separate event/revision timeline stays authoritative only for historical-period pricing — and how new/future-dated events promote into the column without ever being resynced back out of it.
+---
+
+When a resource has a denormalized "current value" column plus an append-only event/revision timeline, and the product requirement is "the column is always the truth for current state, directly editable, never overridden by the timeline" (stronger than the older pre-history-only variant), split reads by time:
+
+**How to apply:**
+- Add a single time-branching read function (e.g. `getBillableRent(entity, periodStart, today)`): for `periodStart <= lastEventDate`, walk the historical timeline (unchanged accuracy for the past); for `periodStart > lastEventDate`, return the current-value column directly. Never let a period-generation/resync job write the current-value column back from the timeline — that reintroduces the exact coupling the design is trying to remove.
+- The current-value column may only be written by: (a) the direct edit endpoint, (b) the event-creation endpoint when the new event is already effective (`effectiveFrom <= today`) at creation time, and (c) a dedicated **promotion** step for events that were future-dated at creation and have since become effective.
+- The promotion step is the easy-to-miss piece: a future-dated event doesn't get a second webhook/call when its date arrives, so something recurring (cron / next period-generation run) must check for it. Guard promotion with an explicit `appliedToCurrentRent`-style boolean on the event row, not just `effectiveFrom <= today` — the boolean is what prevents re-promoting over a later direct edit made after the event became effective (date-only checks can't distinguish "not yet promoted" from "promoted, then user corrected it").
+- Any endpoint that lets a user edit/cancel a "pending" event must also gate on that same applied flag, not just on `effectiveFrom` being in the future — an early/backdated event-creation path (e.g. "renew now, new terms start later") can write the current-value column immediately while the event row's `effectiveFrom` is still in the future, so date-based pending checks alone are insufficient.
+- When adding the applied flag to existing data, backfill it for all already-effective rows of the affected type before deploying the promotion job, or the first run will treat historical rows as newly pending and clobber the column.

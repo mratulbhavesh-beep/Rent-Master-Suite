@@ -77,6 +77,16 @@ export type LeaseContext = {
   gracePeriodDays: number;
   /** Rent amount that applied before the first revision (or the current rent, if none). */
   baseRentAmount: string | number;
+  /**
+   * The tenant's Current Rent — the single source of truth column
+   * (`tenants.rentAmount`), always directly editable via Edit Tenant and
+   * NEVER derived from the revision timeline. Used as the billed amount for
+   * any period that falls after the last revision/escalation event that has
+   * actually occurred (see `getBillableRent`) — i.e. "now and going
+   * forward" pricing defers to this value, while periods covered by actual
+   * revision history keep their historically accurate timeline amount.
+   */
+  currentRentAmount: string | number;
   revisions?: LedgerRevision[];
   /**
    * Escalation terms from the lease agreement. When `rentEscalation` is true,
@@ -328,7 +338,7 @@ export function findBillablePeriodForMonth(
   lease: LeaseContext,
   month: number,
   year: number,
-  _today: string
+  today: string
 ): { start: string; end: string; dueDate: string; amount: number } | null {
   const MAX_PERIODS = lease.billingCycle === "weekly" ? 780 : 600;
   let periodStart: string = lease.leaseStart;
@@ -342,7 +352,7 @@ export function findBillablePeriodForMonth(
         start: periodStart,
         end: periodEnd,
         dueDate: computeDueDate({ start: periodStart, end: periodEnd }, lease.rentCollectionType, lease.gracePeriodDays),
-        amount: getActiveRent(lease, periodStart),
+        amount: getBillableRent(lease, periodStart, today),
       };
     }
     if (d.getUTCFullYear() > year || (d.getUTCFullYear() === year && d.getUTCMonth() + 1 > month)) break;
@@ -383,6 +393,39 @@ export function getActiveRent(lease: LeaseContext, date: string): number {
 }
 
 /**
+ * THE amount to actually BILL for a period starting on `periodStart`, given
+ * everything that has genuinely happened by `today`. Two regions:
+ *
+ * - On/before the last revision or escalation anniversary that has occurred
+ *   by `today`: historically accurate, exactly like `getActiveRent` — walks
+ *   the timeline so a catch-up period generated late still gets the rate
+ *   that actually applied back then.
+ * - After that last event (the "current" window with no more specific
+ *   history to consult, including "today" itself when nothing has ever
+ *   happened): `lease.currentRentAmount` — the tenant's Current Rent column
+ *   — applies. This is what lets Edit Tenant correct the rent for
+ *   ongoing/new periods without ever touching rent_revisions: the correction
+ *   is picked up here, not via the timeline.
+ *
+ * Revision/renewal workflows keep tenant.rentAmount in sync with the
+ * timeline at the moment an event becomes effective (see
+ * rent-generator.ts), so the two regions never disagree at the boundary.
+ */
+export function getBillableRent(lease: LeaseContext, periodStart: string, today: string): number {
+  const events = buildRevisionEvents(lease, today);
+  const lastEventDate = events.length > 0 ? events[events.length - 1].effectiveFrom : null;
+  if (lastEventDate === null || periodStart > lastEventDate) {
+    return toNum(lease.currentRentAmount);
+  }
+  let amount = toNum(lease.baseRentAmount);
+  for (const rev of events) {
+    if (rev.effectiveFrom <= periodStart) amount = rev.newRent;
+    else break;
+  }
+  return amount;
+}
+
+/**
  * Reconstruct every billable period from lease start through today, purely
  * for display/summary purposes. Returns one entry per period with the rent
  * amount that was actually in effect for that period (per rent-revision
@@ -405,17 +448,6 @@ function synthesizeBillablePeriods(
   lease: LeaseContext,
   today: string
 ): Array<{ billingPeriodStart: string; dueDate: string; amount: number }> {
-  const revisionEvents = buildRevisionEvents(lease, today);
-
-  const rentAt = (periodStart: string): number => {
-    let amount = toNum(lease.baseRentAmount);
-    for (const rev of revisionEvents) {
-      if (rev.effectiveFrom <= periodStart) amount = rev.newRent;
-      else break;
-    }
-    return amount;
-  };
-
   // Lifetime cap for synthesis (vs the generator's small per-run catch-up cap).
   const MAX_PERIODS = lease.billingCycle === "weekly" ? 780 : 600;
   return computePeriods(
@@ -428,7 +460,7 @@ function synthesizeBillablePeriods(
   ).map(period => ({
     billingPeriodStart: period.start,
     dueDate: computeDueDate(period, lease.rentCollectionType, lease.gracePeriodDays),
-    amount: rentAt(period.start),
+    amount: getBillableRent(lease, period.start, today),
   }));
 }
 
@@ -476,6 +508,7 @@ export function buildLeaseContext(
     rentCollectionType: t.rentCollectionType,
     gracePeriodDays: t.gracePeriodDays,
     baseRentAmount,
+    currentRentAmount: t.rentAmount,
     revisions: sorted,
     rentEscalation: t.rentEscalation ?? false,
     escalationFrequencyYears: t.escalationFrequencyYears ?? 1,
@@ -542,7 +575,8 @@ export function computeLedgerCorrections(
     billingPeriodStart: string;
     billingPeriodEnd?: string;
     dueDate?: string;
-  }>
+  }>,
+  today: string
 ): Array<{ id: number; correctAmount?: number; correctDueDate?: string }> {
   const corrections: Array<{ id: number; correctAmount?: number; correctDueDate?: string }> = [];
   for (const row of unsettledRows) {
@@ -551,7 +585,7 @@ export function computeLedgerCorrections(
     // untouched rather than rewriting pre-renewal history.
     if (row.billingPeriodStart < lease.leaseStart) continue;
     const entry: { id: number; correctAmount?: number; correctDueDate?: string } = { id: row.id };
-    const correctAmount = getActiveRent(lease, row.billingPeriodStart);
+    const correctAmount = getBillableRent(lease, row.billingPeriodStart, today);
     if (Math.abs(correctAmount - toNum(row.amount)) > 0.005) {
       entry.correctAmount = correctAmount;
     }

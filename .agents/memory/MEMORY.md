@@ -10,3 +10,4 @@
 - [Billing settings single source of truth](billing-settings-truth.md) — business defaults materialize into tenant columns at write time; never resolve useBusinessDefault at read time
 - [Unified billing engine invariants](billing-engine.md) — rent timeline is a chronological walk; rent_amount is base anchor only with zero revisions; consumers must SELECT escalationApply; renewals must always write a revision
 - [Edit vs Revise separation](edit-vs-revise-separation.md) — plain field edits must never mutate revision history; full-rebuild-on-edit is only safe when zero revisions exist
+- [Current-value column vs event timeline promotion](current-value-timeline-promotion.md) — denormalized "current" column always wins for now/future periods; timeline only owns the past; future-dated events need an idempotent applied-flag promotion step

@@ -2,7 +2,7 @@ import { and, eq, desc, sql } from "drizzle-orm";
 import { db, tenantsTable, propertiesTable, generatedRentsTable, rentRevisionsTable, paymentsTable } from "@workspace/db";
 import {
   buildLeaseContext,
-  getActiveRent,
+  getBillableRent,
   buildEscalationSchedule,
   computePeriods,
   computeDueDate,
@@ -92,7 +92,7 @@ export async function resyncTenantLedger(dbClient: DbLike, tenantId: number): Pr
   // overdue, so without this a due date pushed into the future would leave
   // the row stuck on a stale "overdue".
   const today2 = new Date().toISOString().split("T")[0];
-  const corrections = computeLedgerCorrections(lease, unsettled);
+  const corrections = computeLedgerCorrections(lease, unsettled, today2);
   for (const c of corrections) {
     const patch: Record<string, string> = {};
     if (c.correctAmount !== undefined) patch.amount = String(c.correctAmount);
@@ -105,26 +105,71 @@ export async function resyncTenantLedger(dbClient: DbLike, tenantId: number): Pr
       .where(eq(generatedRentsTable.id, c.id));
   }
 
-  // tenant.rentAmount is a denormalized snapshot of "today's active rent";
-  // keep it aligned with the timeline so list screens and previews agree.
-  // ONLY when at least one revision row exists: with zero revisions,
-  // rentAmount IS the timeline's base-rent anchor (see buildLeaseContext),
-  // and overwriting it with an escalated value would destroy the base
-  // forever and double-escalate every subsequent read. Auto-apply tenants
-  // without anchor rows self-heal at the next generation run, where
-  // recordAutomaticEscalations writes the anchor rows before this resync.
-  const today = new Date().toISOString().split("T")[0];
-  const activeRent = getActiveRent(lease, today);
-  if (revisions.length > 0 && Math.abs(activeRent - parseFloat(String(tenant.rentAmount))) > 0.005) {
-    await dbClient.update(tenantsTable)
-      .set({ rentAmount: String(activeRent) })
-      .where(eq(tenantsTable.id, tenantId));
-  }
-
+  // tenant.rentAmount is the tenant's Current Rent — the single source of
+  // truth column, always directly editable via Edit Tenant. It is NEVER
+  // synced back from the timeline here: doing so would silently override a
+  // landlord's Edit Tenant correction with a value derived from Rent
+  // Revision History, re-coupling the two workflows this resync must keep
+  // separate. Only the Revise/Renew endpoints and automatic-escalation
+  // recording (which represent the rent revision itself becoming effective)
+  // are allowed to update tenant.rentAmount.
   if (corrections.length > 0) {
     logger.info({ tenantId, corrections: corrections.length }, "Resynced unsettled generated_rents to billing timeline");
   }
   return corrections.length;
+}
+
+/**
+ * Promote tenant.rentAmount for manual revisions whose effective date has
+ * arrived since they were created. Immediate revisions are already promoted
+ * (and marked appliedToCurrentRent) synchronously by the Revise endpoint —
+ * this only handles the future-dated case: a revision created with a
+ * future effectiveFrom must still flip Current Rent over once "today"
+ * reaches it, even though no one calls Revise again on that date.
+ *
+ * appliedToCurrentRent (not just effectiveFrom <= today) is the guard: once
+ * a revision has promoted Current Rent, it must never do so again, or a
+ * landlord's later Edit Tenant correction would be silently clobbered on
+ * the next cron/generation run — exactly the coupling bug this redesign
+ * removed. Skipped entirely on the Edit Tenant path (skipAutomaticEscalationRecording),
+ * same as recordAutomaticEscalations, since Edit Tenant must never write
+ * rent_revisions state.
+ */
+async function promoteEffectiveManualRevisions(
+  tenant: typeof tenantsTable.$inferSelect,
+  today: string,
+  dbClient: DbClient = db
+): Promise<number | null> {
+  const pending = await dbClient
+    .select({ id: rentRevisionsTable.id, newRent: rentRevisionsTable.newRent, effectiveFrom: rentRevisionsTable.effectiveFrom })
+    .from(rentRevisionsTable)
+    .where(and(
+      eq(rentRevisionsTable.tenantId, tenant.id),
+      eq(rentRevisionsTable.changedBy, "manual"),
+      eq(rentRevisionsTable.status, "active"),
+      eq(rentRevisionsTable.appliedToCurrentRent, false),
+      sql`${rentRevisionsTable.effectiveFrom} <= ${today}`
+    ))
+    .orderBy(desc(rentRevisionsTable.effectiveFrom));
+
+  if (pending.length === 0) return null;
+
+  // Multiple could theoretically have become effective since the last run
+  // (e.g. server was down); only the latest one's newRent should win.
+  const latest = pending[0];
+  await dbClient.update(tenantsTable)
+    .set({ rentAmount: String(latest.newRent) })
+    .where(eq(tenantsTable.id, tenant.id));
+  await dbClient.update(rentRevisionsTable)
+    .set({ appliedToCurrentRent: true })
+    .where(sql`${rentRevisionsTable.id} IN (${sql.join(pending.map((p) => sql`${p.id}`), sql`, `)})`);
+
+  logger.info(
+    { tenantId: tenant.id, revisionId: latest.id, effectiveFrom: latest.effectiveFrom, newRent: latest.newRent },
+    "Promoted tenant.rentAmount for manual revision that became effective"
+  );
+
+  return parseFloat(String(latest.newRent));
 }
 
 /**
@@ -147,11 +192,11 @@ async function recordAutomaticEscalations(
   lease: LeaseContext,
   today: string,
   dbClient: DbClient = db
-): Promise<void> {
-  if (!tenant.rentEscalation || tenant.escalationApply !== "automatic") return;
+): Promise<number | null> {
+  if (!tenant.rentEscalation || tenant.escalationApply !== "automatic") return null;
 
   const schedule = buildEscalationSchedule(lease, today);
-  if (schedule.length === 0) return;
+  if (schedule.length === 0) return null;
 
   const automaticRows = await dbClient.select()
     .from(rentRevisionsTable)
@@ -164,6 +209,20 @@ async function recordAutomaticEscalations(
   const escalationType = tenant.escalationType ?? "percentage";
   const escalationValue = parseFloat(String(tenant.escalationValue ?? 0));
   const escalationLabel = escalationType === "percentage" ? `${escalationValue}%` : `+₹${escalationValue}`;
+
+  // Automatic-apply mode means the tenant's Current Rent is intentionally
+  // schedule-driven: once an anniversary has genuinely occurred (schedule
+  // entries only include events with effectiveFrom <= today), promote
+  // tenant.rentAmount to that event's newRent so Current Rent reflects it.
+  // This is the ONE place besides Revise/Renew allowed to write
+  // tenant.rentAmount — it is the schedule event becoming effective, not a
+  // timeline-derived resync.
+  const latestScheduleRent = schedule[schedule.length - 1].newRent;
+  if (Math.abs(latestScheduleRent - parseFloat(String(tenant.rentAmount))) > 0.005) {
+    await dbClient.update(tenantsTable)
+      .set({ rentAmount: String(latestScheduleRent) })
+      .where(eq(tenantsTable.id, tenant.id));
+  }
 
   for (let i = 0; i < schedule.length; i++) {
     const event = schedule[i];
@@ -205,6 +264,8 @@ async function recordAutomaticEscalations(
       );
     }
   }
+
+  return latestScheduleRent;
 }
 
 // Generates any missing rent periods for a single tenant, up to and
@@ -237,7 +298,18 @@ async function generateForOneTenant(
   // rows, even automatic ones — only the cron generator, Revise, and Renew
   // workflows own that table.
   if (!skipAutomaticEscalationRecording) {
-    await recordAutomaticEscalations(tenant, lease, today, dbClient);
+    const promotedRent = await recordAutomaticEscalations(tenant, lease, today, dbClient);
+    // Keep the in-memory lease's Current Rent in sync with the DB write
+    // above so period amounts generated later in THIS run already reflect
+    // the anniversary that just became effective, instead of lagging one
+    // run behind.
+    if (promotedRent !== null) lease.currentRentAmount = promotedRent;
+
+    // Same idea for manual revisions created with a future effectiveFrom:
+    // once that date arrives, promote Current Rent so it doesn't lag behind
+    // the revision that already governs the timeline.
+    const manualPromotedRent = await promoteEffectiveManualRevisions(tenant, today, dbClient);
+    if (manualPromotedRent !== null) lease.currentRentAmount = manualPromotedRent;
   }
 
   const [lastRent] = await dbClient
@@ -265,7 +337,7 @@ async function generateForOneTenant(
       // Per-period amount from the shared timeline — a period that starts
       // after an escalation anniversary or revision gets that period's
       // correct rent, even within a single catch-up run.
-      amount: String(getActiveRent(lease, period.start)),
+      amount: String(getBillableRent(lease, period.start, today)),
       billingPeriodStart: period.start,
       billingPeriodEnd: period.end,
       dueDate,

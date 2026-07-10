@@ -42,11 +42,12 @@ function formatTenant(
   const nextEscalation = nextEscalationEvent(lease, today);
   return {
     ...t,
-    // The "Current Rent" shown must always be today's active rent per the
-    // lease's escalation schedule (leaseStart + frequency + value),
-    // recomputed here rather than read from the last stored revision row —
-    // that row may lag behind the true anniversary date or not exist yet.
-    rentAmount: getActiveRent(lease, today),
+    // "Current Rent" is tenant.rentAmount itself — the single source of
+    // truth, always directly editable via Edit Tenant. It is intentionally
+    // NOT recomputed from the revision timeline here: Rent Revision History
+    // is an audit log for display, and must never override what the
+    // landlord has set as the current rent.
+    rentAmount: parseFloat(String(t.rentAmount)),
     securityDeposit: t.securityDeposit != null ? parseFloat(String(t.securityDeposit)) : null,
     depositStatus: t.depositStatus ?? "held",
     propertyName: propertyName ?? null,
@@ -556,9 +557,15 @@ router.post("/tenants/:id/renew", requireAuth, async (req: AuthRequest, res): Pr
           eq(rentRevisionsTable.status, "active"),
           eq(rentRevisionsTable.changedBy, "manual")
         ));
+      // Renewal always writes tenant.rentAmount immediately above (line
+      // ~543), even for early renewals whose newLeaseStart is still in the
+      // future — so these revisions must be marked applied right away too,
+      // or promoteEffectiveManualRevisions would try to "promote" them again
+      // once effectiveFrom arrives and clobber any Edit Tenant correction
+      // made in the meantime.
       if (sameDate) {
         await tx.update(rentRevisionsTable)
-          .set({ newRent: String(next), previousRent: String(prev), reason })
+          .set({ newRent: String(next), previousRent: String(prev), reason, appliedToCurrentRent: true })
           .where(eq(rentRevisionsTable.id, sameDate.id));
       } else {
         await tx.insert(rentRevisionsTable).values({
@@ -568,6 +575,7 @@ router.post("/tenants/:id/renew", requireAuth, async (req: AuthRequest, res): Pr
           effectiveFrom,
           reason,
           changedBy: "manual",
+          appliedToCurrentRent: true,
         });
       }
     };
@@ -714,9 +722,24 @@ router.post("/tenants/:id/revise", requireAuth, async (req: AuthRequest, res): P
         changedBy: "manual",
       }).returning();
 
+      // Immediate (already-effective) revisions promote tenant.rentAmount —
+      // the single source of truth for Current Rent — the moment the
+      // revision itself takes effect, and are marked applied so later
+      // promotion runs don't re-touch them. Future-dated revisions are left
+      // unpromoted/unmarked; promoteEffectiveManualRevisions (run as part of
+      // period generation) promotes them once their effective date arrives.
+      const today = new Date().toISOString().split("T")[0];
+      if (body.effectiveFrom <= today) {
+        await tx.update(tenantsTable)
+          .set({ rentAmount: String(body.newRent) })
+          .where(eq(tenantsTable.id, id));
+        await tx.update(rentRevisionsTable)
+          .set({ appliedToCurrentRent: true })
+          .where(eq(rentRevisionsTable.id, rev.id));
+      }
+
       // Single shared ledger-sync path: recomputes every unsettled row from
-      // the merged revision + escalation timeline and keeps
-      // tenant.rentAmount aligned with today's active rent.
+      // the merged revision + escalation timeline.
       const updatedRentRows = await resyncTenantLedger(tx, id);
 
       logger.info(
@@ -778,6 +801,15 @@ router.put("/tenants/:id/revisions/:revId", requireAuth, async (req: AuthRequest
       }
       if (revision.changedBy !== "manual") {
         throw Object.assign(new Error("Automatic escalation entries cannot be edited manually."), { code: "CONFLICT" });
+      }
+      // A future-dated row can still be marked applied ahead of its date —
+      // e.g. an early lease renewal writes tenant.rentAmount immediately
+      // even though effectiveFrom is the (future) newLeaseStart. Editing it
+      // here would desync tenant.rentAmount from what this row claims to
+      // represent, so it must be blocked the same as an already-effective
+      // revision.
+      if (revision.appliedToCurrentRent) {
+        throw Object.assign(new Error("This revision has already been applied to Current Rent and cannot be edited."), { code: "CONFLICT" });
       }
 
       const newEffectiveFrom = body.effectiveFrom ?? revision.effectiveFrom;
@@ -877,6 +909,13 @@ router.delete("/tenants/:id/revisions/:revId", requireAuth, async (req: AuthRequ
       }
       if (revision.changedBy !== "manual") {
         throw Object.assign(new Error("Automatic escalation entries cannot be cancelled manually."), { code: "CONFLICT" });
+      }
+      // See matching guard in the edit route above: a renewal-originated row
+      // can be future-dated yet already applied to tenant.rentAmount.
+      // Cancelling it here would silently desync Current Rent with no
+      // compensating rollback.
+      if (revision.appliedToCurrentRent) {
+        throw Object.assign(new Error("This revision has already been applied to Current Rent and cannot be cancelled."), { code: "CONFLICT" });
       }
 
       // Soft-cancel: preserve the audit trail. The shared ledger-sync then

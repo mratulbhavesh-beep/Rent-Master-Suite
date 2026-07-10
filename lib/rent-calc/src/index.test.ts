@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeLedgerSummary,
   getActiveRent,
+  getBillableRent,
   buildDisplayRevisionHistory,
   buildLeaseContext,
   nextEscalationEvent,
@@ -18,13 +19,14 @@ import {
  * Lease Start 2024-01-01, Rent ₹10,000, Fixed ₹750/year, Auto Apply enabled.
  * Expected: 2024 @ 10000, 2025 @ 10750, 2026 @ 11500 (2027 not yet reached).
  */
-function mehulLease(revisions: LedgerRevision[] = []): LeaseContext {
+function mehulLease(revisions: LedgerRevision[] = [], currentRentAmount: number = 11500): LeaseContext {
   return {
     leaseStart: "2024-01-01",
     billingCycle: "monthly",
     rentCollectionType: "post_paid",
     gracePeriodDays: 5,
     baseRentAmount: 10000,
+    currentRentAmount,
     revisions,
     rentEscalation: true,
     escalationFrequencyYears: 1,
@@ -91,6 +93,7 @@ describe("yearly fixed escalation — active rent by date", () => {
       rentCollectionType: "advance",
       gracePeriodDays: 0,
       baseRentAmount: 10000,
+      currentRentAmount: 10000,
       rentEscalation: true,
       escalationFrequencyYears: 1,
       escalationType: "percentage",
@@ -218,6 +221,7 @@ describe("Advance vs Post-paid billing generation gating", () => {
     rentCollectionType: "advance",
     gracePeriodDays: 0,
     baseRentAmount: 5000,
+    currentRentAmount: 5000,
     revisions: [],
     rentEscalation: false,
     escalationFrequencyYears: 1,
@@ -480,13 +484,47 @@ describe("nextEscalationEvent — future anniversary + engine-computed new rent"
   });
 });
 
+describe("getBillableRent — Current Rent tail vs historical timeline walk", () => {
+  it("prices a period on/before the last event via the historical timeline, ignoring currentRentAmount", () => {
+    const lease = mehulLease([], 99999); // wildly wrong currentRentAmount
+    expect(getBillableRent(lease, "2024-06-01", "2026-07-09")).toBe(10000);
+    expect(getBillableRent(lease, "2025-06-01", "2026-07-09")).toBe(10750);
+    expect(getBillableRent(lease, "2026-01-01", "2026-07-09")).toBe(11500);
+  });
+
+  it("prices a period after the last event using currentRentAmount, not the timeline extrapolation", () => {
+    // Edit Tenant corrected Current Rent to 12000 without touching revisions.
+    const lease = mehulLease([], 12000);
+    expect(getBillableRent(lease, "2026-06-01", "2026-07-09")).toBe(12000);
+    expect(getBillableRent(lease, "2026-07-01", "2026-07-09")).toBe(12000);
+  });
+
+  it("uses currentRentAmount for every period when no event has ever occurred by today", () => {
+    const lease: LeaseContext = {
+      leaseStart: "2026-01-01",
+      billingCycle: "monthly",
+      rentCollectionType: "post_paid",
+      gracePeriodDays: 0,
+      baseRentAmount: 8000,
+      currentRentAmount: 8500,
+      revisions: [],
+      rentEscalation: false,
+      escalationFrequencyYears: 1,
+      escalationType: "percentage",
+      escalationValue: 0,
+    };
+    expect(getBillableRent(lease, "2026-01-01", "2026-07-09")).toBe(8500);
+    expect(getBillableRent(lease, "2026-06-01", "2026-07-09")).toBe(8500);
+  });
+});
+
 describe("computeLedgerCorrections — the ONE ledger-sync computation", () => {
   it("corrects unsettled rows to the timeline amount for their own period", () => {
     const corrections = computeLedgerCorrections(mehulLease(), [
       { id: 1, amount: "10000.00", billingPeriodStart: "2024-06-01" }, // correct already
       { id: 2, amount: "10000.00", billingPeriodStart: "2025-06-01" }, // stale, should be 10750
       { id: 3, amount: "10750.00", billingPeriodStart: "2026-06-01" }, // stale, should be 11500
-    ]);
+    ], "2026-07-09");
     expect(corrections).toEqual([
       { id: 2, correctAmount: 10750 },
       { id: 3, correctAmount: 11500 },
@@ -496,12 +534,12 @@ describe("computeLedgerCorrections — the ONE ledger-sync computation", () => {
   it("tolerates sub-paisa float noise (0.005)", () => {
     const corrections = computeLedgerCorrections(mehulLease(), [
       { id: 1, amount: 10750.004, billingPeriodStart: "2025-06-01" },
-    ]);
+    ], "2026-07-09");
     expect(corrections).toEqual([]);
   });
 
   it("returns no corrections for an empty row set", () => {
-    expect(computeLedgerCorrections(mehulLease(), [])).toEqual([]);
+    expect(computeLedgerCorrections(mehulLease(), [], "2026-07-09")).toEqual([]);
   });
 
   it("corrects a stale due date after a collection-type flip (advance -> post_paid)", () => {
@@ -515,7 +553,7 @@ describe("computeLedgerCorrections — the ONE ledger-sync computation", () => {
         billingPeriodEnd: "2024-06-30",
         dueDate: "2024-06-06",
       },
-    ]);
+    ], "2026-07-09");
     expect(corrections).toEqual([{ id: 1, correctDueDate: "2024-07-05" }]);
   });
 
@@ -528,7 +566,7 @@ describe("computeLedgerCorrections — the ONE ledger-sync computation", () => {
         billingPeriodEnd: "2025-06-30",
         dueDate: "2025-06-06", // stale advance-style due date
       },
-    ]);
+    ], "2026-07-09");
     expect(corrections).toEqual([
       { id: 1, correctAmount: 10750, correctDueDate: "2025-07-05" },
     ]);
@@ -543,18 +581,18 @@ describe("computeLedgerCorrections — the ONE ledger-sync computation", () => {
         billingPeriodEnd: "2024-06-30",
         dueDate: "2024-07-05",
       },
-    ]);
+    ], "2026-07-09");
     expect(corrections).toEqual([]);
   });
 
   it("never touches rows from periods before the (re-anchored) leaseStart", () => {
     // Post-renewal, leaseStart moves forward; pre-renewal unsettled rows
     // cannot be priced by the current timeline and must be left alone.
-    const lease = { ...mehulLease(), leaseStart: "2026-01-01" };
+    const lease = { ...mehulLease(), leaseStart: "2026-01-01", currentRentAmount: 10000 };
     const corrections = computeLedgerCorrections(lease, [
       { id: 1, amount: "9000.00", billingPeriodStart: "2025-06-01" }, // pre-leaseStart: skipped
       { id: 2, amount: "9000.00", billingPeriodStart: "2026-06-01" }, // in-lease: corrected
-    ]);
+    ], "2026-07-09");
     expect(corrections).toEqual([{ id: 2, correctAmount: getActiveRent(lease, "2026-06-01") }]);
   });
 });
@@ -569,7 +607,7 @@ describe("findBillablePeriodForMonth — payment-allocation period lookup", () =
       start: "2026-07-01",
       end: "2026-07-31",
       dueDate: "2026-08-05",
-      amount: getActiveRent(mehulLease(), "2026-07-01"),
+      amount: 11500,
     });
   });
 
@@ -581,7 +619,7 @@ describe("findBillablePeriodForMonth — payment-allocation period lookup", () =
       start: "2026-08-01",
       end: "2026-08-31",
       dueDate: "2026-09-05",
-      amount: getActiveRent(mehulLease(), "2026-08-01"),
+      amount: 11500,
     });
   });
 
