@@ -66,10 +66,9 @@ export type LedgerRevision = {
  * history and every rent revision even when the ledger hasn't (yet) been
  * generated/backfilled for every past period.
  *
- * NOTE: this mirrors (does not replace) the canonical period/due-date
- * arithmetic in artifacts/api-server/src/lib/rent-generator.ts. It is used
- * ONLY to compute display totals here — it never writes to the database and
- * must never be treated as a substitute for real ledger generation.
+ * The period/due-date arithmetic used here (computePeriods/computePeriodEnd/
+ * computeDueDate) is the canonical, ONLY implementation in the app — the
+ * rent generator imports it from this module too.
  */
 export type LeaseContext = {
   leaseStart: string;
@@ -94,80 +93,156 @@ export type LeaseContext = {
   /** "percentage" | "fixed" */
   escalationType?: string;
   escalationValue?: string | number;
+  /**
+   * Whether escalation anniversaries auto-apply to the rent timeline
+   * (tenant.escalationApply === "automatic"). When false ("manual" apply
+   * mode), the schedule is NEVER applied automatically — the timeline is
+   * base rent + manual revisions only, and the anniversary merely drives
+   * reminders/previews (see nextEscalationEvent). Defaults to true when
+   * omitted for backward compatibility with contexts built before this
+   * field existed.
+   */
+  escalationAutoApply?: boolean;
 };
 
 function toNum(v: string | number): number {
   return parseFloat(String(v));
 }
 
-function addMonthsUTC(dateStr: string, months: number): string {
+/** Canonical UTC date arithmetic used by every billing computation in the app. */
+export function addMonthsUTC(dateStr: string, months: number): string {
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCMonth(d.getUTCMonth() + months);
   return d.toISOString().split("T")[0];
 }
 
-function addDaysUTC(dateStr: string, days: number): string {
+export function addDaysUTC(dateStr: string, days: number): string {
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().split("T")[0];
 }
 
-function addYearsUTC(dateStr: string, years: number): string {
+export function addYearsUTC(dateStr: string, years: number): string {
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCFullYear(d.getUTCFullYear() + years);
   return d.toISOString().split("T")[0];
 }
 
 /**
- * Recompute the escalation schedule directly from the lease agreement's
- * terms (frequency, type, value), anchored to `leaseStart` — NOT from
- * whatever automatic `rent_revisions` rows happen to exist. Automatic
- * revisions are stamped with the date the escalation job ran, which can lag
- * (or predate cron enablement) far behind the lease's true anniversary
- * dates, so they are not reliable for historical reconstruction. This
- * produces one event per anniversary up to (and including) `today`, each
- * compounding on the previous computed amount, exactly mirroring what
- * should have happened had the lease agreement been followed to the letter.
+ * Apply ONE escalation step (per the lease's type/value) to a running rent
+ * amount. The single place the +fixed / +percentage arithmetic lives.
  */
-function buildEscalationSchedule(
-  lease: LeaseContext,
-  today: string
-): Array<{ effectiveFrom: string; newRent: number }> {
-  const frequencyYears = lease.escalationFrequencyYears ?? 1;
+export function applyEscalationStep(amount: number, lease: LeaseContext): number {
   const escalationType = lease.escalationType ?? "percentage";
   const escalationValue = toNum(lease.escalationValue ?? 0);
-  if (frequencyYears <= 0 || escalationValue === 0) return [];
+  return escalationType === "fixed" ? amount + escalationValue : amount * (1 + escalationValue / 100);
+}
 
-  const events: Array<{ effectiveFrom: string; newRent: number }> = [];
-  let amount = toNum(lease.baseRentAmount);
-  let anniversary = addYearsUTC(lease.leaseStart, frequencyYears);
-  const MAX_ANNIVERSARIES = 100; // generous cap; a lease running 100+ escalation cycles is not realistic
-  let count = 0;
+type TimelineEvent = {
+  effectiveFrom: string;
+  newRent: number;
+  previousRent: number;
+  source: "manual" | "escalation";
+};
 
-  while (anniversary <= today && count < MAX_ANNIVERSARIES) {
-    amount = escalationType === "fixed" ? amount + escalationValue : amount * (1 + escalationValue / 100);
-    events.push({ effectiveFrom: anniversary, newRent: amount });
-    anniversary = addYearsUTC(anniversary, frequencyYears);
-    count++;
+/**
+ * THE canonical rent timeline: a single chronological walk that starts at
+ * `baseRentAmount` and processes every event in date order —
+ *
+ * - a MANUAL revision (explicit landlord decision) sets the running amount
+ *   to its recorded newRent, honored at its recorded date;
+ * - an escalation ANNIVERSARY (true lease anniversary, recomputed from the
+ *   lease terms — never from automatic rent_revisions rows, whose stamped
+ *   dates lag the anniversary) applies one escalation step to the RUNNING
+ *   amount. Anniversaries are only walked when escalation is enabled AND
+ *   auto-apply mode is on ("manual" apply mode never changes the timeline).
+ *
+ * Because anniversaries step the running amount (not an independent
+ * compounding from base), an escalation after a manual raise or a lease
+ * renewal escalates ON TOP of that raise — rent can never silently drop
+ * back at the next anniversary. When both land on the same date, the
+ * escalation step is applied first so the manual revision wins.
+ */
+function walkTimeline(lease: LeaseContext, today: string): TimelineEvent[] {
+  const raw: Array<{ effectiveFrom: string; newRent?: number; source: "manual" | "escalation" }> = [];
+
+  for (const r of lease.revisions ?? []) {
+    if ((r.status ?? "active") === "active" && (r.changedBy ?? "manual") !== "automatic" && r.effectiveFrom <= today) {
+      raw.push({ effectiveFrom: r.effectiveFrom, newRent: toNum(r.newRent), source: "manual" });
+    }
   }
 
+  const frequencyYears = lease.escalationFrequencyYears ?? 1;
+  const escalationValue = toNum(lease.escalationValue ?? 0);
+  const autoApply = lease.escalationAutoApply ?? true;
+  if (lease.rentEscalation && autoApply && frequencyYears > 0 && escalationValue !== 0) {
+    let anniversary = addYearsUTC(lease.leaseStart, frequencyYears);
+    const MAX_ANNIVERSARIES = 100; // generous cap; a lease running 100+ escalation cycles is not realistic
+    let count = 0;
+    while (anniversary <= today && count < MAX_ANNIVERSARIES) {
+      raw.push({ effectiveFrom: anniversary, source: "escalation" });
+      anniversary = addYearsUTC(anniversary, frequencyYears);
+      count++;
+    }
+  }
+
+  raw.sort((a, b) =>
+    a.effectiveFrom.localeCompare(b.effectiveFrom) ||
+    (a.source === b.source ? 0 : a.source === "escalation" ? -1 : 1)
+  );
+
+  let amount = toNum(lease.baseRentAmount);
+  const events: TimelineEvent[] = [];
+  for (const e of raw) {
+    const previousRent = amount;
+    amount = e.source === "manual" ? e.newRent! : applyEscalationStep(amount, lease);
+    events.push({ effectiveFrom: e.effectiveFrom, newRent: amount, previousRent, source: e.source });
+  }
   return events;
 }
 
-function getCycleMonths(billingCycle: string): number {
+/**
+ * The escalation anniversaries that have occurred up to (and including)
+ * `today`, with timeline-consistent amounts: each event's newRent is the
+ * running timeline amount after that anniversary's step (so an anniversary
+ * following a manual raise compounds on the raised amount), and
+ * previousRent is the running amount just before it. Derived from the same
+ * canonical walk as getActiveRent — never diverges from the ledger.
+ * Empty when escalation is off, in "manual" apply mode, or terms are inert.
+ */
+export function buildEscalationSchedule(
+  lease: LeaseContext,
+  today: string
+): Array<{ effectiveFrom: string; newRent: number; previousRent: number }> {
+  return walkTimeline(lease, today)
+    .filter(e => e.source === "escalation")
+    .map(e => ({ effectiveFrom: e.effectiveFrom, newRent: e.newRent, previousRent: e.previousRent }));
+}
+
+export function getCycleMonths(billingCycle: string): number {
   if (billingCycle === "quarterly") return 3;
   if (billingCycle === "yearly") return 12;
   return 1; // monthly
 }
 
-function computePeriodEndForSummary(periodStart: string, billingCycle: string): string {
+/**
+ * Canonical billing-cycle engine: the ONE implementation of "when does a
+ * billing period end" for the whole app. Weekly periods span 7 days (day 0
+ * through day 6); monthly/quarterly/yearly span whole calendar cycles.
+ */
+export function computePeriodEnd(periodStart: string, billingCycle: string): string {
   if (billingCycle === "weekly") {
-    return addDaysUTC(periodStart, 6);
+    return addDaysUTC(periodStart, 6); // 7-day period: day 0 to day 6
   }
   return addDaysUTC(addMonthsUTC(periodStart, getCycleMonths(billingCycle)), -1);
 }
 
-function computeDueDateForSummary(
+/**
+ * Canonical due-date engine: ADVANCE billing anchors the due date to the
+ * period's first day (rent owed up front); POST-PAID anchors to the last day
+ * (billed in arrears). Grace days are added on top in both cases.
+ */
+export function computeDueDate(
   period: { start: string; end: string },
   rentCollectionType: string,
   gracePeriodDays: number
@@ -177,29 +252,54 @@ function computeDueDateForSummary(
 }
 
 /**
- * Merge manual revisions (honored at their recorded date) with the
- * recomputed escalation schedule (honored at the true lease anniversary,
- * never the automatic job's stamped date) into one ascending list of
- * `{ effectiveFrom, newRent }` events. This is the single source of truth
- * for "what rent applied on date X" used by both `getActiveRent` and
- * `synthesizeBillablePeriods`.
+ * Canonical period walker: enumerate billing periods from `leaseStart` (or
+ * the day after `lastPeriodEnd` when the ledger already has rows) whose
+ * generation date has been reached:
+ *
+ * - ADVANCE billing: a period exists once its first day has arrived
+ *   (`periodStart <= today`) — rent is billed up front.
+ * - POST-PAID billing: a period does NOT exist until its LAST day has been
+ *   reached (`periodEnd <= today`) — rent is billed in arrears.
+ *
+ * `maxPeriods` bounds the walk: the rent generator passes a small per-run
+ * catch-up cap, while lifetime synthesis uses a generous lifetime cap.
+ */
+export function computePeriods(
+  leaseStart: string,
+  lastPeriodEnd: string | null,
+  billingCycle: string,
+  rentCollectionType: string,
+  today: string,
+  maxPeriods: number
+): Array<{ start: string; end: string }> {
+  const periods: Array<{ start: string; end: string }> = [];
+  let periodStart: string = lastPeriodEnd ? addDaysUTC(lastPeriodEnd, 1) : leaseStart;
+  let count = 0;
+
+  while (count < maxPeriods) {
+    const periodEnd = computePeriodEnd(periodStart, billingCycle);
+    const isGenerationDateReached =
+      rentCollectionType === "advance" ? periodStart <= today : periodEnd <= today;
+    if (!isGenerationDateReached) break;
+    periods.push({ start: periodStart, end: periodEnd });
+    periodStart = addDaysUTC(periodEnd, 1);
+    count++;
+  }
+
+  return periods;
+}
+
+/**
+ * The ascending `{ effectiveFrom, newRent }` event list from the canonical
+ * timeline walk (manual revisions + auto-applied escalation anniversaries).
+ * This is the single source of truth for "what rent applied on date X" used
+ * by both `getActiveRent` and `synthesizeBillablePeriods`.
  */
 function buildRevisionEvents(
   lease: LeaseContext,
   today: string
 ): Array<{ effectiveFrom: string; newRent: number }> {
-  // Manual revisions are explicit landlord decisions and are always honored
-  // at their recorded date. Automatic revisions already in the DB are NOT
-  // used here — they're superseded by `buildEscalationSchedule`, which
-  // recomputes the true lease-agreement anniversaries below.
-  const manualRevisionEvents = [...(lease.revisions ?? [])]
-    .filter(r => (r.status ?? "active") === "active" && (r.changedBy ?? "manual") !== "automatic")
-    .map(r => ({ effectiveFrom: r.effectiveFrom, newRent: toNum(r.newRent) }));
-
-  const escalationEvents = lease.rentEscalation ? buildEscalationSchedule(lease, today) : [];
-
-  return [...manualRevisionEvents, ...escalationEvents]
-    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  return walkTimeline(lease, today).map(e => ({ effectiveFrom: e.effectiveFrom, newRent: e.newRent }));
 }
 
 /**
@@ -253,23 +353,140 @@ function synthesizeBillablePeriods(
     return amount;
   };
 
-  const periods: Array<{ billingPeriodStart: string; dueDate: string; amount: number }> = [];
-  let periodStart = lease.leaseStart;
-  const MAX_PERIODS = lease.billingCycle === "weekly" ? 780 : 600; // generous cap, mirrors rent-generator's catch-up guard
-  let count = 0;
+  // Lifetime cap for synthesis (vs the generator's small per-run catch-up cap).
+  const MAX_PERIODS = lease.billingCycle === "weekly" ? 780 : 600;
+  return computePeriods(
+    lease.leaseStart,
+    null,
+    lease.billingCycle,
+    lease.rentCollectionType,
+    today,
+    MAX_PERIODS
+  ).map(period => ({
+    billingPeriodStart: period.start,
+    dueDate: computeDueDate(period, lease.rentCollectionType, lease.gracePeriodDays),
+    amount: rentAt(period.start),
+  }));
+}
 
-  while (count < MAX_PERIODS) {
-    const periodEnd = computePeriodEndForSummary(periodStart, lease.billingCycle);
-    const isGenerationDateReached =
-      lease.rentCollectionType === "advance" ? periodStart <= today : periodEnd <= today;
-    if (!isGenerationDateReached) break;
-    const dueDate = computeDueDateForSummary({ start: periodStart, end: periodEnd }, lease.rentCollectionType, lease.gracePeriodDays);
-    periods.push({ billingPeriodStart: periodStart, dueDate, amount: rentAt(periodStart) });
-    periodStart = addDaysUTC(periodEnd, 1);
+/**
+ * Tenant-row shape (DB or API) from which a LeaseContext can be built.
+ * Matches the tenants table columns without depending on the DB package.
+ */
+export type TenantLeaseFields = {
+  leaseStart: string;
+  billingCycle: string;
+  rentCollectionType: string;
+  gracePeriodDays: number;
+  rentAmount: string | number;
+  rentEscalation?: boolean | null;
+  escalationFrequencyYears?: number | null;
+  escalationType?: string | null;
+  escalationValue?: string | number | null;
+  /** "automatic" | "manual" — whether anniversaries auto-apply to the timeline. */
+  escalationApply?: string | null;
+};
+
+/**
+ * The ONE shared LeaseContext builder. Every server module (tenants,
+ * dashboard, reports, generator, cron) must build its LeaseContext here —
+ * never inline — so baseRentAmount derivation stays identical everywhere.
+ *
+ * baseRentAmount is the rent in effect at lease inception — i.e. before ANY
+ * revision (manual or automatic). The CHRONOLOGICALLY EARLIEST revision's
+ * previousRent is the anchor: whatever kind of event came first, its
+ * previousRent is by definition the rent before anything changed. (An
+ * earlier automatic row must never be skipped in favor of a later manual
+ * one — a manual revision recorded after escalations carries a
+ * schedule-inclusive previousRent, which would recompound the schedule.)
+ * Absent any revisions, the tenant's current rentAmount IS the base.
+ */
+export function buildLeaseContext(
+  t: TenantLeaseFields,
+  revisions: LedgerRevision[] = []
+): LeaseContext {
+  const sorted = [...revisions].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  const baseRentAmount = sorted[0]?.previousRent != null ? sorted[0].previousRent : t.rentAmount;
+  return {
+    leaseStart: t.leaseStart,
+    billingCycle: t.billingCycle,
+    rentCollectionType: t.rentCollectionType,
+    gracePeriodDays: t.gracePeriodDays,
+    baseRentAmount,
+    revisions: sorted,
+    rentEscalation: t.rentEscalation ?? false,
+    escalationFrequencyYears: t.escalationFrequencyYears ?? 1,
+    escalationType: t.escalationType ?? "percentage",
+    escalationValue: t.escalationValue ?? 0,
+    // Absent field (legacy/partial callers) = auto-apply, matching contexts
+    // built before apply-mode awareness existed.
+    escalationAutoApply: t.escalationApply == null ? true : t.escalationApply === "automatic",
+  };
+}
+
+/**
+ * The next FUTURE escalation anniversary for this lease (strictly after
+ * `today`), with the rent tied to that date. Gated only on escalation being
+ * enabled with non-inert terms — NOT on apply mode, because "manual" apply
+ * landlords need the reminder/preview most:
+ *
+ * - auto-apply mode: newRent is the rent that WILL be active on that date
+ *   per the canonical timeline walk (the anniversary's step included);
+ * - manual apply mode: nothing auto-applies, so newRent is the SUGGESTED
+ *   amount — one escalation step on top of the rent active on that date.
+ *
+ * Used by cron notifications and the mobile renewal preview — never
+ * re-derive anniversaries or escalation formulas locally.
+ */
+export function nextEscalationEvent(
+  lease: LeaseContext,
+  today: string
+): { effectiveFrom: string; newRent: number } | null {
+  if (!lease.rentEscalation) return null;
+  const frequencyYears = lease.escalationFrequencyYears ?? 1;
+  const escalationValue = toNum(lease.escalationValue ?? 0);
+  if (frequencyYears <= 0 || escalationValue === 0) return null;
+
+  let anniversary = addYearsUTC(lease.leaseStart, frequencyYears);
+  const MAX_ANNIVERSARIES = 100;
+  let count = 0;
+  while (anniversary <= today && count < MAX_ANNIVERSARIES) {
+    anniversary = addYearsUTC(anniversary, frequencyYears);
     count++;
   }
+  if (count >= MAX_ANNIVERSARIES) return null;
 
-  return periods;
+  const rentAtEvent = getActiveRent(lease, anniversary);
+  const autoApply = lease.escalationAutoApply ?? true;
+  return {
+    effectiveFrom: anniversary,
+    newRent: autoApply ? rentAtEvent : applyEscalationStep(rentAtEvent, lease),
+  };
+}
+
+/**
+ * The ONE shared ledger-sync computation: given the lease timeline and the
+ * tenant's unsettled (not paid/partial) generated_rents rows, return the
+ * corrections needed so every unsettled row carries the escalation- and
+ * revision-correct amount for its own billing period. Pure function — the
+ * caller applies the updates. Settled rows must never be passed in.
+ */
+export function computeLedgerCorrections(
+  lease: LeaseContext,
+  unsettledRows: Array<{ id: number; amount: string | number; billingPeriodStart: string }>
+): Array<{ id: number; correctAmount: number }> {
+  const corrections: Array<{ id: number; correctAmount: number }> = [];
+  for (const row of unsettledRows) {
+    // Periods that predate the (possibly re-anchored, post-renewal)
+    // leaseStart cannot be priced by the current timeline — leave them
+    // untouched rather than rewriting pre-renewal history.
+    if (row.billingPeriodStart < lease.leaseStart) continue;
+    const correctAmount = getActiveRent(lease, row.billingPeriodStart);
+    if (Math.abs(correctAmount - toNum(row.amount)) > 0.005) {
+      corrections.push({ id: row.id, correctAmount });
+    }
+  }
+  return corrections;
 }
 
 /**
@@ -323,7 +540,9 @@ export function buildDisplayRevisionHistory<T extends DisplayRevision>(
     .sort((a, b) => (a.createdAt ?? a.effectiveFrom).localeCompare(b.createdAt ?? b.effectiveFrom));
 
   const correctedAutomatic: T[] = escalationEvents.map((event, i) => {
-    const previousAmount = i === 0 ? toNum(lease.baseRentAmount) : escalationEvents[i - 1].newRent;
+    // previousRent comes from the canonical walk — after a manual raise it
+    // is the raised amount, not the prior schedule event's value.
+    const previousAmount = event.previousRent;
     const stored = automatic[i];
     if (stored) {
       return { ...stored, effectiveFrom: event.effectiveFrom, newRent: event.newRent, previousRent: previousAmount };
@@ -395,36 +614,7 @@ export function computeLedgerSummary(
     return { monthsElapsed, totalExpected, dueExpected, totalPaid, balanceDue, advanceBalance, currentMonthDue };
   }
 
-  const actualByStart = new Map<string, LedgerEntry>();
-  for (const r of generatedRents) actualByStart.set(r.billingPeriodStart, r);
-
-  const synthesized = synthesizeBillablePeriods(lease, today);
-  const synthesizedStarts = new Set(synthesized.map(p => p.billingPeriodStart));
-
-  const merged = synthesized.map(period => {
-    const actual = actualByStart.get(period.billingPeriodStart);
-    if (!actual) {
-      return { billingPeriodStart: period.billingPeriodStart, dueDate: period.dueDate, amount: period.amount, status: undefined as string | undefined };
-    }
-    const isSettled = actual.status === "paid" || actual.status === "partial";
-    return {
-      billingPeriodStart: actual.billingPeriodStart,
-      dueDate: actual.dueDate,
-      amount: isSettled ? toNum(actual.amount) : period.amount,
-      status: actual.status,
-    };
-  });
-
-  // Any real generated_rents row is authoritative even if the lease-derived
-  // synthesis window wouldn't (yet) project that period — e.g. a row created
-  // before this gating existed, or a period whose lease context changed.
-  // generated_rents is always the single source of truth; synthesis only
-  // fills gaps, it never hides a period that has actually been generated.
-  for (const r of generatedRents) {
-    if (!synthesizedStarts.has(r.billingPeriodStart)) {
-      merged.push({ billingPeriodStart: r.billingPeriodStart, dueDate: r.dueDate, amount: toNum(r.amount), status: r.status });
-    }
-  }
+  const merged = computeEffectivePeriods(generatedRents, lease, today);
 
   const monthsElapsed = merged.length;
   const totalExpected = merged.reduce((s, r) => s + r.amount, 0);
@@ -442,6 +632,59 @@ export function computeLedgerSummary(
     latest && latest.status !== "paid" && latest.dueDate <= today ? latest.amount : 0;
 
   return { monthsElapsed, totalExpected, dueExpected, totalPaid, balanceDue, advanceBalance, currentMonthDue };
+}
+
+export type EffectivePeriod = {
+  billingPeriodStart: string;
+  dueDate: string;
+  amount: number;
+  /** Status of the real generated_rents row for this period, if one exists. */
+  status?: string;
+};
+
+/**
+ * The ONE merged view of a tenant's billable periods: every period from
+ * lease start through today (per the canonical period walker), overlaid
+ * with any real `generated_rents` rows. A real row's `dueDate` and `status`
+ * are always authoritative; its `amount` is authoritative only once settled
+ * (paid/partial) — unsettled rows use the timeline-correct amount. Real rows
+ * outside the synthesis window are always included: generated_rents is the
+ * single source of truth; synthesis only fills gaps, it never hides a period
+ * that has actually been generated. Used by computeLedgerSummary and by
+ * Reports for expected-income breakdowns.
+ */
+export function computeEffectivePeriods(
+  generatedRents: LedgerEntry[],
+  lease: LeaseContext,
+  today: string
+): EffectivePeriod[] {
+  const actualByStart = new Map<string, LedgerEntry>();
+  for (const r of generatedRents) actualByStart.set(r.billingPeriodStart, r);
+
+  const synthesized = synthesizeBillablePeriods(lease, today);
+  const synthesizedStarts = new Set(synthesized.map(p => p.billingPeriodStart));
+
+  const merged: EffectivePeriod[] = synthesized.map(period => {
+    const actual = actualByStart.get(period.billingPeriodStart);
+    if (!actual) {
+      return { billingPeriodStart: period.billingPeriodStart, dueDate: period.dueDate, amount: period.amount, status: undefined };
+    }
+    const isSettled = actual.status === "paid" || actual.status === "partial";
+    return {
+      billingPeriodStart: actual.billingPeriodStart,
+      dueDate: actual.dueDate,
+      amount: isSettled ? toNum(actual.amount) : period.amount,
+      status: actual.status,
+    };
+  });
+
+  for (const r of generatedRents) {
+    if (!synthesizedStarts.has(r.billingPeriodStart)) {
+      merged.push({ billingPeriodStart: r.billingPeriodStart, dueDate: r.dueDate, amount: toNum(r.amount), status: r.status });
+    }
+  }
+
+  return merged;
 }
 
 export type MonthHistoryRow = {

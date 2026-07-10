@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, paymentsTable, tenantsTable, propertiesTable, generatedRentsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
+import { getUserPropertyIds } from "../lib/ownership";
 import { logActivity } from "./activity-logs";
 import { sendPushToUser, NOTIF_TYPES, formatAmount } from "../lib/push";
 
@@ -20,12 +21,6 @@ function formatPayment(p: typeof paymentsTable.$inferSelect, tenantName?: string
 
 function generateReceiptNumber(): string {
   return `RCP-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-}
-
-async function getUserPropertyIds(userId: number): Promise<number[]> {
-  const props = await db.select({ id: propertiesTable.id }).from(propertiesTable)
-    .where(eq(propertiesTable.userId, userId));
-  return props.map(p => p.id);
 }
 
 router.get("/payments", requireAuth, async (req: AuthRequest, res): Promise<void> => {

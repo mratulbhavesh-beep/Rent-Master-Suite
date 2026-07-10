@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq, inArray, sql } from "drizzle-orm";
 import { db, propertiesTable, tenantsTable, paymentsTable, maintenanceRequestsTable, generatedRentsTable, rentRevisionsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
-import { computeLedgerSummary, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
+import { computeLedgerSummary, buildLeaseContext, type LedgerRevision } from "@workspace/rent-calc";
 
 const router: IRouter = Router();
 
@@ -41,6 +41,7 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
           escalationFrequencyYears: tenantsTable.escalationFrequencyYears,
           escalationType: tenantsTable.escalationType,
           escalationValue: tenantsTable.escalationValue,
+          escalationApply: tenantsTable.escalationApply,
         })
         .from(tenantsTable)
         .where(sql`${tenantsTable.status} = 'active' AND ${tenantsTable.propertyId} = ANY(${sql.raw(`ARRAY[${userPropertyIds.join(",")}]::int[]`)})`)
@@ -123,30 +124,9 @@ router.get("/dashboard/summary", requireAuth, async (req: AuthRequest, res): Pro
   for (const t of activeTenants) {
     const entries = rentsByTenant.get(t.id) ?? [];
     const tenantPayments = paymentsForLedgerByTenant.get(t.id) ?? [];
-    const revisions = [...(revisionsByTenant.get(t.id) ?? [])].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
-    // baseRentAmount is the rent at lease inception, before ANY revision.
-    // Automatic escalation revisions are recomputed from the lease
-    // agreement's terms (see buildEscalationSchedule in @workspace/rent-calc),
-    // so only the earliest MANUAL revision's previousRent can override the
-    // tenant's current rentAmount here.
-    const earliestManual = revisions.find(r => (r.changedBy ?? "manual") !== "automatic");
-    const baseRentAmount = earliestManual?.previousRent != null
-      ? earliestManual.previousRent
-      : revisions[0]?.previousRent != null
-        ? revisions[0].previousRent
-        : t.rentAmount;
-    const lease: LeaseContext = {
-      leaseStart: t.leaseStart,
-      billingCycle: t.billingCycle,
-      rentCollectionType: t.rentCollectionType,
-      gracePeriodDays: t.gracePeriodDays,
-      baseRentAmount,
-      revisions,
-      rentEscalation: t.rentEscalation ?? false,
-      escalationFrequencyYears: t.escalationFrequencyYears ?? 1,
-      escalationType: t.escalationType ?? "percentage",
-      escalationValue: t.escalationValue ?? 0,
-    };
+    // The ONE shared LeaseContext builder from @workspace/rent-calc —
+    // identical derivation to tenant detail, ledger, and reports.
+    const lease = buildLeaseContext(t, revisionsByTenant.get(t.id) ?? []);
     const ledgerSummary = computeLedgerSummary(entries, tenantPayments, todayStr, lease);
     totalDue += ledgerSummary.balanceDue;
     // Sourced entirely from generated_rents-backed periods (via

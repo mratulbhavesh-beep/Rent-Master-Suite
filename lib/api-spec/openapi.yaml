@@ -1882,6 +1882,12 @@ components:
         activeAgreementStatus:
           type: ["string", "null"]
           enum: [active, expired, null]
+        nextEscalationDate:
+          type: ["string", "null"]
+          description: Next escalation anniversary (YYYY-MM-DD) per the shared billing engine, null when escalation is off or no future event exists
+        escalatedRentPreview:
+          type: ["number", "null"]
+          description: Rent that will apply from nextEscalationDate, computed by the shared billing engine
 
     TenantInput:
       type: object

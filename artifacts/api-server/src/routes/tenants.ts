@@ -1,18 +1,13 @@
 import { Router, type IRouter } from "express";
-import { and, eq, inArray, desc, gte, lte, lt, gt, asc, sql, ne } from "drizzle-orm";
+import { and, eq, inArray, desc, lt, sql } from "drizzle-orm";
 import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTable, rentAgreementsTable, tenantDocumentsTable, leaseRenewalsTable, rentRevisionsTable, generatedRentsTable } from "@workspace/db";
-import { computeLedgerSummary, computeMonthHistory, getActiveRent, buildDisplayRevisionHistory, type LedgerEntry, type LedgerPayment, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
+import { computeLedgerSummary, computeMonthHistory, getActiveRent, buildDisplayRevisionHistory, buildLeaseContext, nextEscalationEvent, type LedgerEntry, type LedgerPayment, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { logger } from "../lib/logger";
-import { runRentGenerationForTenant, syncFutureLedgerForRevision } from "../lib/rent-generator";
+import { runRentGenerationForTenant, resyncTenantLedger } from "../lib/rent-generator";
+import { getUserPropertyIds } from "../lib/ownership";
 
 const router: IRouter = Router();
-
-function nextDayAfter(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + 1);
-  return d.toISOString().split("T")[0];
-}
 
 /**
  * Balance figures (Total Expected / Total Paid / Balance Due / Advance Balance)
@@ -30,43 +25,8 @@ function computeBalanceFromLedger(
   return computeLedgerSummary(generatedRents, payments, today, lease);
 }
 
-/**
- * Builds the LeaseContext the summary layer needs to reconstruct the full
- * billable-period history since lease start (honoring rent revisions), so
- * Total Expected / Months Active / Balance Due are correct even when
- * `generated_rents` hasn't (yet) been backfilled for every past period.
- */
-function buildLeaseContext(
-  t: typeof tenantsTable.$inferSelect,
-  revisions: LedgerRevision[]
-): LeaseContext {
-  const sorted = [...revisions].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
-  // baseRentAmount is the rent in effect at lease inception — i.e. before ANY
-  // revision (manual or automatic). Automatic escalation revisions are
-  // recomputed from the lease agreement's terms (see buildEscalationSchedule
-  // in @workspace/rent-calc), so only the earliest MANUAL revision's
-  // previousRent can override the tenant's current rentAmount here; absent
-  // that, we fall back to the earliest revision of any kind for backward
-  // compatibility with tenants that predate this distinction.
-  const earliestManual = sorted.find(r => (r.changedBy ?? "manual") !== "automatic");
-  const baseRentAmount = earliestManual?.previousRent != null
-    ? earliestManual.previousRent
-    : sorted[0]?.previousRent != null
-      ? sorted[0].previousRent
-      : t.rentAmount;
-  return {
-    leaseStart: t.leaseStart,
-    billingCycle: t.billingCycle,
-    rentCollectionType: t.rentCollectionType,
-    gracePeriodDays: t.gracePeriodDays,
-    baseRentAmount,
-    revisions: sorted,
-    rentEscalation: t.rentEscalation ?? false,
-    escalationFrequencyYears: t.escalationFrequencyYears ?? 1,
-    escalationType: t.escalationType ?? "percentage",
-    escalationValue: t.escalationValue ?? 0,
-  };
-}
+// LeaseContext construction lives in @workspace/rent-calc (buildLeaseContext)
+// — the ONE shared builder used by every server module. Never inline it.
 
 function formatTenant(
   t: typeof tenantsTable.$inferSelect,
@@ -78,6 +38,7 @@ function formatTenant(
 ) {
   const today = new Date().toISOString().split("T")[0];
   const lease = buildLeaseContext(t, revisions);
+  const nextEscalation = nextEscalationEvent(lease, today);
   return {
     ...t,
     // The "Current Rent" shown must always be today's active rent per the
@@ -89,18 +50,16 @@ function formatTenant(
     depositStatus: t.depositStatus ?? "held",
     propertyName: propertyName ?? null,
     createdAt: t.createdAt.toISOString(),
+    // Escalation preview comes from the shared engine — the mobile app must
+    // display these, never recompute its own escalation formula.
+    nextEscalationDate: nextEscalation?.effectiveFrom ?? null,
+    escalatedRentPreview: nextEscalation?.newRent ?? null,
     ...computeBalanceFromLedger(generatedRents, payments, today, lease),
     activeAgreementEndDate: latestAgreement?.endDate ?? null,
     activeAgreementStatus: latestAgreement
       ? (latestAgreement.endDate >= today ? "active" : "expired")
       : null,
   };
-}
-
-async function getUserPropertyIds(userId: number): Promise<number[]> {
-  const props = await db.select({ id: propertiesTable.id }).from(propertiesTable)
-    .where(eq(propertiesTable.userId, userId));
-  return props.map(p => p.id);
 }
 
 router.get("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void> => {
@@ -351,7 +310,7 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   const [existing] = await db
-    .select({ propertyUserId: propertiesTable.userId })
+    .select({ tenant: tenantsTable, propertyUserId: propertiesTable.userId })
     .from(tenantsTable)
     .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
     .where(eq(tenantsTable.id, id));
@@ -372,21 +331,54 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
   const [tenant] = await db.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
 
-  // If the rent amount changed, propagate the new amount onto every
-  // not-yet-paid ledger entry (pending/overdue), for BOTH collection types
-  // identically. `generated_rents.amount` is a per-entry snapshot (needed so
-  // historical/paid periods keep the amount that was actually due at the
-  // time), so a plain tenant.rentAmount update alone never reaches entries
-  // already generated — this is the root cause of stale Total
-  // Expected/Balance Due figures after an edit. Paid entries are left
-  // untouched so payment history stays accurate.
+  // A bare rent-amount edit MUST enter the revision timeline — the shared
+  // engine (@workspace/rent-calc) derives every screen's figures from
+  // lease terms + rent_revisions, so a tenant.rentAmount change that isn't
+  // recorded as a revision would be invisible to it (and silently undone by
+  // the next ledger resync). We record it as a manual revision effective
+  // today; historical periods keep their timeline-correct amounts.
   if ("rentAmount" in updates) {
-    await db.update(generatedRentsTable)
-      .set({ amount: String(updates.rentAmount) })
-      .where(and(
-        eq(generatedRentsTable.tenantId, tenant.id),
-        ne(generatedRentsTable.status, "paid")
-      ));
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const newRent = parseFloat(String(updates.rentAmount));
+      const revisionRows = await db.select({
+        effectiveFrom: rentRevisionsTable.effectiveFrom,
+        newRent: rentRevisionsTable.newRent,
+        previousRent: rentRevisionsTable.previousRent,
+        status: rentRevisionsTable.status,
+        changedBy: rentRevisionsTable.changedBy,
+      }).from(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, tenant.id));
+      const previousRent = getActiveRent(buildLeaseContext(existing.tenant, revisionRows), today);
+
+      if (Math.abs(newRent - previousRent) > 0.005) {
+        // Same-day repeat edits update the existing revision row instead of
+        // stacking multiple same-date events.
+        const [sameDay] = await db.select({ id: rentRevisionsTable.id, previousRent: rentRevisionsTable.previousRent })
+          .from(rentRevisionsTable)
+          .where(and(
+            eq(rentRevisionsTable.tenantId, tenant.id),
+            eq(rentRevisionsTable.effectiveFrom, today),
+            eq(rentRevisionsTable.status, "active"),
+            eq(rentRevisionsTable.changedBy, "manual")
+          ));
+        if (sameDay) {
+          await db.update(rentRevisionsTable)
+            .set({ newRent: String(newRent) })
+            .where(eq(rentRevisionsTable.id, sameDay.id));
+        } else {
+          await db.insert(rentRevisionsTable).values({
+            tenantId: tenant.id,
+            previousRent: String(previousRent),
+            newRent: String(newRent),
+            effectiveFrom: today,
+            reason: "Rent amount edited",
+            changedBy: "manual",
+          });
+        }
+      }
+    } catch (err) {
+      logger.error({ err, tenantId: tenant.id }, "Failed to record manual revision for rent edit");
+    }
   }
 
   // If billing settings changed (e.g. lease start, billing cycle, collection
@@ -401,56 +393,17 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
     }
   }
 
-  // If any escalation setting changed (enable/disable, frequency, type,
-  // value, or auto/manual apply mode), every ALREADY-GENERATED but unsettled
-  // (pending/overdue) `generated_rents` row must be recomputed to the new
-  // escalation-correct amount for its own billing period — otherwise those
-  // rows keep the stale amount forever, and any screen reading them directly
-  // (Rent Ledger / Month History, payment-due validation) disagrees with the
-  // live-recomputed screens (Current Rent, Outstanding Balance, Total
-  // Expected, Dashboard, Reports), which already derive from
-  // tenant.escalationValue etc. on every read via getActiveRent /
-  // computeLedgerSummary and so are correct immediately. Settled (paid /
-  // partial) rows are historical and must never be touched — they keep the
-  // amount that was actually charged/collected at the time. Truly future,
-  // not-yet-generated periods need no action here: the generator will use
-  // the new escalation settings automatically the next time it runs for
-  // them.
-  if (["rentEscalation", "escalationFrequencyYears", "escalationType", "escalationValue", "escalationApply"].some(k => k in updates)) {
+  // Any change that affects what rent applies to any period (rent edit or
+  // escalation settings) goes through the ONE shared ledger-sync path:
+  // unsettled generated_rents rows are recomputed from the merged
+  // revision + escalation timeline; settled (paid/partial) rows are never
+  // touched. (The billing-settings branch above already resyncs inside
+  // runRentGenerationForTenant.)
+  if (["rentAmount", "rentEscalation", "escalationFrequencyYears", "escalationType", "escalationValue", "escalationApply"].some(k => k in updates)) {
     try {
-      const revisionRows = await db.select({
-        effectiveFrom: rentRevisionsTable.effectiveFrom,
-        newRent: rentRevisionsTable.newRent,
-        previousRent: rentRevisionsTable.previousRent,
-        status: rentRevisionsTable.status,
-        changedBy: rentRevisionsTable.changedBy,
-      }).from(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, tenant.id));
-      const lease = buildLeaseContext(tenant, revisionRows);
-
-      const unsettled = await db.select({
-        id: generatedRentsTable.id,
-        amount: generatedRentsTable.amount,
-        billingPeriodStart: generatedRentsTable.billingPeriodStart,
-      }).from(generatedRentsTable).where(and(
-        eq(generatedRentsTable.tenantId, tenant.id),
-        sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
-      ));
-
-      let resynced = 0;
-      for (const row of unsettled) {
-        const correctAmount = getActiveRent(lease, row.billingPeriodStart);
-        if (Math.abs(correctAmount - parseFloat(String(row.amount))) > 0.005) {
-          await db.update(generatedRentsTable)
-            .set({ amount: String(correctAmount) })
-            .where(eq(generatedRentsTable.id, row.id));
-          resynced++;
-        }
-      }
-      if (resynced > 0) {
-        logger.info({ tenantId: tenant.id, resynced }, "Resynced unsettled generated_rents after escalation settings change");
-      }
+      await resyncTenantLedger(db, tenant.id);
     } catch (err) {
-      logger.error({ err, tenantId: tenant.id }, "Failed to resync generated rents after escalation settings change");
+      logger.error({ err, tenantId: tenant.id }, "Failed to resync ledger after tenant update");
     }
   }
 
@@ -541,47 +494,27 @@ router.post("/tenants/:id/renew", requireAuth, async (req: AuthRequest, res): Pr
   const newLeaseStart = newStart.toISOString().split("T")[0];
   const newLeaseEnd = newEnd.toISOString().split("T")[0];
 
-  // Determine if rent escalation is due based on frequency
-  const freqYears = t.escalationFrequencyYears ?? 1;
-  const allRenewals = await db.select().from(leaseRenewalsTable)
-    .where(eq(leaseRenewalsTable.tenantId, id))
-    .orderBy(desc(leaseRenewalsTable.createdAt));
-
-  // Find most recent escalation date; fall back to tenant's original leaseStart
-  let lastEscalationDate: string | null = null;
-  for (const r of allRenewals) {
-    if (parseFloat(String(r.increaseAmount)) > 0) { lastEscalationDate = r.renewalDate; break; }
-  }
-  const originalLeaseStart = allRenewals.length > 0
-    ? allRenewals[allRenewals.length - 1].previousLeaseStart
-    : t.leaseStart;
-  const referenceDate = lastEscalationDate ?? originalLeaseStart;
-  const refMs = new Date(referenceDate + "T00:00:00").getTime();
-  const todayMs = Date.now();
-  const yearsSinceLastEscalation = (todayMs - refMs) / (1000 * 60 * 60 * 24 * 365.25);
-  const escalationDue = yearsSinceLastEscalation >= freqYears;
+  // Renewal rent comes from the SHARED billing timeline, not a local
+  // elapsed-years heuristic: the rent active on the renewed lease's first
+  // day — with escalation anniversaries still anchored to the pre-renewal
+  // leaseStart — already accounts for every escalation and manual revision.
+  const renewalRevisionRows = await db.select({
+    effectiveFrom: rentRevisionsTable.effectiveFrom,
+    newRent: rentRevisionsTable.newRent,
+    previousRent: rentRevisionsTable.previousRent,
+    status: rentRevisionsTable.status,
+    changedBy: rentRevisionsTable.changedBy,
+  }).from(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, id));
+  const preRenewalLease = buildLeaseContext(t, renewalRevisionRows);
 
   let newRent = previousRent;
-  let increaseAmount = 0;
-  let increasePercent = 0;
-
   if (body.newRentAmount != null && body.newRentAmount > 0) {
     newRent = body.newRentAmount;
-    increaseAmount = newRent - previousRent;
-    increasePercent = previousRent > 0 ? (increaseAmount / previousRent) * 100 : 0;
-  } else if (t.rentEscalation && t.escalationApply === "automatic" && escalationDue) {
-    const escalationType = t.escalationType ?? "percentage";
-    const escalationValue = parseFloat(String(t.escalationValue ?? 0));
-    if (escalationType === "percentage") {
-      increaseAmount = previousRent * (escalationValue / 100);
-      increasePercent = escalationValue;
-      newRent = previousRent + increaseAmount;
-    } else {
-      increaseAmount = escalationValue;
-      increasePercent = previousRent > 0 ? (escalationValue / previousRent) * 100 : 0;
-      newRent = previousRent + increaseAmount;
-    }
+  } else if (t.rentEscalation && t.escalationApply === "automatic") {
+    newRent = getActiveRent(preRenewalLease, newLeaseStart);
   }
+  const increaseAmount = newRent - previousRent;
+  const increasePercent = previousRent > 0 ? (increaseAmount / previousRent) * 100 : 0;
 
   const renewalDate = new Date().toISOString().split("T")[0];
   const renewedBy = body.newRentAmount != null ? "manual" : (t.escalationApply ?? "manual");
@@ -608,17 +541,49 @@ router.post("/tenants/:id/renew", requireAuth, async (req: AuthRequest, res): Pr
       rentAmount: String(newRent),
     }).where(eq(tenantsTable.id, id));
 
-    // Update future unpaid generated rents to the new rent amount
-    if (newRent !== previousRent) {
-      const today = renewalDate;
-      await tx.update(generatedRentsTable)
-        .set({ amount: String(newRent) })
+    // The renewal revision is ALWAYS recorded — even when the rent amount is
+    // unchanged. Once leaseStart moves, the shared timeline re-anchors to the
+    // new lease, so a same-amount revision is what carries the pre-renewal
+    // (possibly escalated) rent forward; without it the next resync would
+    // collapse the rent back to base.
+    const upsertRevision = async (effectiveFrom: string, prev: number, next: number, reason: string) => {
+      const [sameDate] = await tx.select({ id: rentRevisionsTable.id })
+        .from(rentRevisionsTable)
         .where(and(
-          eq(generatedRentsTable.tenantId, id),
-          gte(generatedRentsTable.billingPeriodStart, today),
-          sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
+          eq(rentRevisionsTable.tenantId, id),
+          eq(rentRevisionsTable.effectiveFrom, effectiveFrom),
+          eq(rentRevisionsTable.status, "active"),
+          eq(rentRevisionsTable.changedBy, "manual")
         ));
+      if (sameDate) {
+        await tx.update(rentRevisionsTable)
+          .set({ newRent: String(next), previousRent: String(prev), reason })
+          .where(eq(rentRevisionsTable.id, sameDate.id));
+      } else {
+        await tx.insert(rentRevisionsTable).values({
+          tenantId: id,
+          previousRent: String(prev),
+          newRent: String(next),
+          effectiveFrom,
+          reason,
+          changedBy: "manual",
+        });
+      }
+    };
+
+    // Early renewal (executed before the new lease begins): freeze the
+    // pre-renewal active rent from the renewal date so the gap window and
+    // the tenant.rentAmount snapshot keep the carried rent until the new
+    // lease actually starts.
+    if (renewalDate < newLeaseStart) {
+      const carriedRent = getActiveRent(preRenewalLease, renewalDate);
+      await upsertRevision(renewalDate, carriedRent, carriedRent, "Lease renewal carry-over");
     }
+    await upsertRevision(newLeaseStart, previousRent, newRent, "Lease renewal");
+
+    // Single shared ledger-sync path — runs AFTER leaseStart has moved so
+    // the resync sees the renewed lease's timeline.
+    await resyncTenantLedger(tx, id);
 
     return ren;
   });
@@ -748,21 +713,14 @@ router.post("/tenants/:id/revise", requireAuth, async (req: AuthRequest, res): P
         changedBy: "manual",
       }).returning();
 
-      const today = new Date().toISOString().split("T")[0];
-
-      // Sync tenant.rentAmount if revision is effective today or in the past
-      if (body.effectiveFrom <= today) {
-        await tx.update(tenantsTable).set({ rentAmount: String(body.newRent) }).where(eq(tenantsTable.id, id));
-      }
-
-      // Update unpaid future generated rents only — never touches paid or
-      // partial entries. Shared with automatic escalation so both flows
-      // sync the ledger identically.
-      const updatedRentRows = await syncFutureLedgerForRevision(tx, id, body.effectiveFrom, String(body.newRent));
+      // Single shared ledger-sync path: recomputes every unsettled row from
+      // the merged revision + escalation timeline and keeps
+      // tenant.rentAmount aligned with today's active rent.
+      const updatedRentRows = await resyncTenantLedger(tx, id);
 
       logger.info(
         { tenantId: id, effectiveFrom: body.effectiveFrom, newRent: body.newRent, updatedRentRows },
-        "Manual revision applied — unpaid future rents updated"
+        "Manual revision applied — ledger resynced"
       );
 
       return rev;
@@ -854,74 +812,9 @@ router.put("/tenants/:id/revisions/:revId", requireAuth, async (req: AuthRequest
         }
       }
 
-      // Revert old effect: roll back unpaid rents in the gap this revision covered
-      const [nextAfterOld] = await tx
-        .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
-        .from(rentRevisionsTable)
-        .where(and(
-          eq(rentRevisionsTable.tenantId, id),
-          eq(rentRevisionsTable.status, "active"),
-          gt(rentRevisionsTable.effectiveFrom, revision.effectiveFrom),
-          sql`${rentRevisionsTable.id} != ${revId}`
-        ))
-        .orderBy(asc(rentRevisionsTable.effectiveFrom))
-        .limit(1);
-
-      const [oldOverlap] = await tx
-        .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
-        .from(generatedRentsTable)
-        .where(and(
-          eq(generatedRentsTable.tenantId, id),
-          lte(generatedRentsTable.billingPeriodStart, revision.effectiveFrom),
-          gte(generatedRentsTable.billingPeriodEnd, revision.effectiveFrom)
-        ))
-        .limit(1);
-
-      const oldUpdateFrom = oldOverlap ? nextDayAfter(oldOverlap.billingPeriodEnd) : revision.effectiveFrom;
-
-      await tx.update(generatedRentsTable)
-        .set({ amount: String(revision.previousRent) })
-        .where(and(
-          eq(generatedRentsTable.tenantId, id),
-          gte(generatedRentsTable.billingPeriodStart, oldUpdateFrom),
-          nextAfterOld ? lt(generatedRentsTable.billingPeriodStart, nextAfterOld.effectiveFrom) : undefined,
-          sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
-        ));
-
-      // Apply new effect with period boundary detection
-      const [nextAfterNew] = await tx
-        .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
-        .from(rentRevisionsTable)
-        .where(and(
-          eq(rentRevisionsTable.tenantId, id),
-          eq(rentRevisionsTable.status, "active"),
-          gt(rentRevisionsTable.effectiveFrom, newEffectiveFrom),
-          sql`${rentRevisionsTable.id} != ${revId}`
-        ))
-        .orderBy(asc(rentRevisionsTable.effectiveFrom))
-        .limit(1);
-
-      const [newOverlap] = await tx
-        .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
-        .from(generatedRentsTable)
-        .where(and(
-          eq(generatedRentsTable.tenantId, id),
-          lte(generatedRentsTable.billingPeriodStart, newEffectiveFrom),
-          gte(generatedRentsTable.billingPeriodEnd, newEffectiveFrom)
-        ))
-        .limit(1);
-
-      const newUpdateFrom = newOverlap ? nextDayAfter(newOverlap.billingPeriodEnd) : newEffectiveFrom;
-
-      await tx.update(generatedRentsTable)
-        .set({ amount: String(newRentAmount) })
-        .where(and(
-          eq(generatedRentsTable.tenantId, id),
-          gte(generatedRentsTable.billingPeriodStart, newUpdateFrom),
-          nextAfterNew ? lt(generatedRentsTable.billingPeriodStart, nextAfterNew.effectiveFrom) : undefined,
-          sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
-        ));
-
+      // Update the revision row, then run the single shared ledger-sync —
+      // it recomputes every unsettled row from the full merged timeline, so
+      // no hand-rolled revert/apply range SQL is needed here.
       const [upd] = await tx.update(rentRevisionsTable)
         .set({
           newRent: String(newRentAmount),
@@ -931,7 +824,9 @@ router.put("/tenants/:id/revisions/:revId", requireAuth, async (req: AuthRequest
         .where(eq(rentRevisionsTable.id, revId))
         .returning();
 
-      logger.info({ tenantId: id, revId, newRentAmount, newEffectiveFrom }, "Rent revision edited");
+      await resyncTenantLedger(tx, id);
+
+      logger.info({ tenantId: id, revId, newRentAmount, newEffectiveFrom }, "Rent revision edited — ledger resynced");
       return upd;
     });
   } catch (err: any) {
@@ -983,48 +878,17 @@ router.delete("/tenants/:id/revisions/:revId", requireAuth, async (req: AuthRequ
         throw Object.assign(new Error("Automatic escalation entries cannot be cancelled manually."), { code: "CONFLICT" });
       }
 
-      // Find the next active revision to bound the revert range
-      const [nextRevision] = await tx
-        .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
-        .from(rentRevisionsTable)
-        .where(and(
-          eq(rentRevisionsTable.tenantId, id),
-          eq(rentRevisionsTable.status, "active"),
-          gt(rentRevisionsTable.effectiveFrom, revision.effectiveFrom)
-        ))
-        .orderBy(asc(rentRevisionsTable.effectiveFrom))
-        .limit(1);
-
-      // Period boundary: if effectiveFrom falls inside a generated period, revert starts at next period
-      const [overlapPeriod] = await tx
-        .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
-        .from(generatedRentsTable)
-        .where(and(
-          eq(generatedRentsTable.tenantId, id),
-          lte(generatedRentsTable.billingPeriodStart, revision.effectiveFrom),
-          gte(generatedRentsTable.billingPeriodEnd, revision.effectiveFrom)
-        ))
-        .limit(1);
-
-      const revertFromDate = overlapPeriod ? nextDayAfter(overlapPeriod.billingPeriodEnd) : revision.effectiveFrom;
-
-      // Revert unpaid rents back to previousRent — never touches paid or partial entries
-      await tx.update(generatedRentsTable)
-        .set({ amount: String(revision.previousRent) })
-        .where(and(
-          eq(generatedRentsTable.tenantId, id),
-          gte(generatedRentsTable.billingPeriodStart, revertFromDate),
-          nextRevision ? lt(generatedRentsTable.billingPeriodStart, nextRevision.effectiveFrom) : undefined,
-          sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
-        ));
-
-      // Soft-cancel: preserve the audit trail
+      // Soft-cancel: preserve the audit trail. The shared ledger-sync then
+      // recomputes every unsettled row from the timeline (which now skips
+      // this cancelled revision) — no hand-rolled revert-range SQL needed.
       const [can] = await tx.update(rentRevisionsTable)
         .set({ status: "cancelled" })
         .where(eq(rentRevisionsTable.id, revId))
         .returning();
 
-      logger.info({ tenantId: id, revId, revertFromDate }, "Rent revision cancelled — unpaid rents reverted to previousRent");
+      await resyncTenantLedger(tx, id);
+
+      logger.info({ tenantId: id, revId }, "Rent revision cancelled — ledger resynced");
       return can;
     });
   } catch (err: any) {

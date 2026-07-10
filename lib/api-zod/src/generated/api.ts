@@ -482,7 +482,9 @@ export const ListTenantsResponseItem = zod.object({
   "advanceBalance": zod.number().optional(),
   "currentMonthDue": zod.number().optional(),
   "activeAgreementEndDate": zod.string().nullish(),
-  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
+  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish(),
+  "nextEscalationDate": zod.string().nullish().describe('Next escalation anniversary (YYYY-MM-DD) per the shared billing engine, null when escalation is off or no future event exists'),
+  "escalatedRentPreview": zod.number().nullish().describe('Rent that will apply from nextEscalationDate, computed by the shared billing engine')
 })
 export const ListTenantsResponse = zod.array(ListTenantsResponseItem)
 
@@ -561,7 +563,9 @@ export const CreateTenantResponse = zod.object({
   "advanceBalance": zod.number().optional(),
   "currentMonthDue": zod.number().optional(),
   "activeAgreementEndDate": zod.string().nullish(),
-  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
+  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish(),
+  "nextEscalationDate": zod.string().nullish().describe('Next escalation anniversary (YYYY-MM-DD) per the shared billing engine, null when escalation is off or no future event exists'),
+  "escalatedRentPreview": zod.number().nullish().describe('Rent that will apply from nextEscalationDate, computed by the shared billing engine')
 })
 
 
@@ -612,7 +616,9 @@ export const GetTenantResponse = zod.object({
   "advanceBalance": zod.number().optional(),
   "currentMonthDue": zod.number().optional(),
   "activeAgreementEndDate": zod.string().nullish(),
-  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
+  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish(),
+  "nextEscalationDate": zod.string().nullish().describe('Next escalation anniversary (YYYY-MM-DD) per the shared billing engine, null when escalation is off or no future event exists'),
+  "escalatedRentPreview": zod.number().nullish().describe('Rent that will apply from nextEscalationDate, computed by the shared billing engine')
 })
 
 
@@ -694,7 +700,9 @@ export const UpdateTenantResponse = zod.object({
   "advanceBalance": zod.number().optional(),
   "currentMonthDue": zod.number().optional(),
   "activeAgreementEndDate": zod.string().nullish(),
-  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish()
+  "activeAgreementStatus": zod.union([zod.literal('active'),zod.literal('expired'),zod.literal(null)]).nullish(),
+  "nextEscalationDate": zod.string().nullish().describe('Next escalation anniversary (YYYY-MM-DD) per the shared billing engine, null when escalation is off or no future event exists'),
+  "escalatedRentPreview": zod.number().nullish().describe('Rent that will apply from nextEscalationDate, computed by the shared billing engine')
 })
 
 

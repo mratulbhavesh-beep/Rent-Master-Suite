@@ -40,6 +40,10 @@ A complete Android-first property management app for landlords and property mana
 - Role-based access: admin vs employee roles stored in JWT
 - Receipt numbers auto-generated on payment creation (RCP-timestamp-random)
 - Loan progress tracked by paidMonths counter, auto-set to "completed" when totalMonths reached
+- Single billing source of truth: `lib/rent-calc` owns escalation/billing-cycle/due-date math as a chronological timeline walk; all server modules (rent generation, ledger resync, dashboard, cron, renewals) and the mobile preview consume it — never re-implement rent math locally
+- `tenants.rentAmount` is the base-rent anchor when a tenant has zero revision rows; ledger resync only overwrites it once revisions exist
+- `escalationApply` ('manual' default vs 'automatic') gates whether anniversaries auto-apply; manual mode gets reminder suggestions only
+- Lease renewal always records a rent revision at the new lease start (plus a carry-over revision when renewing early) so the re-anchored timeline keeps the carried rent
 
 ## Product
 

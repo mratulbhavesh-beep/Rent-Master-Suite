@@ -794,13 +794,10 @@ export default function TenantDetailScreen() {
                   {(() => {
                     const t = tenant as any;
                     const prevRent = tenant.rentAmount;
-                    const escalationVal = parseFloat(String(t.escalationValue ?? 0));
                     const freqYrs = t.escalationFrequencyYears ?? 1;
-                    let escalatedRent = prevRent;
-                    if (t.rentEscalation) {
-                      if (t.escalationType === "percentage") escalatedRent = prevRent * (1 + escalationVal / 100);
-                      else escalatedRent = prevRent + escalationVal;
-                    }
+                    // Escalation preview comes from the API (shared billing
+                    // engine) — never recomputed with a local formula.
+                    const escalatedRent = t.escalatedRentPreview ?? prevRent;
                     return (
                       <>
                         <View style={{ flexDirection: "row", gap: 12, marginBottom: 6 }}>

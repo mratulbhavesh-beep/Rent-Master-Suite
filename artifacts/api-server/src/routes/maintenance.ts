@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, maintenanceRequestsTable, propertiesTable, tenantsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
+import { getUserPropertyIds } from "../lib/ownership";
 
 const router: IRouter = Router();
 
@@ -13,12 +14,6 @@ function formatRequest(m: typeof maintenanceRequestsTable.$inferSelect, property
     resolvedAt: m.resolvedAt ? m.resolvedAt.toISOString() : null,
     createdAt: m.createdAt.toISOString(),
   };
-}
-
-async function getUserPropertyIds(userId: number): Promise<number[]> {
-  const props = await db.select({ id: propertiesTable.id }).from(propertiesTable)
-    .where(eq(propertiesTable.userId, userId));
-  return props.map(p => p.id);
 }
 
 router.get("/maintenance", requireAuth, async (req: AuthRequest, res): Promise<void> => {

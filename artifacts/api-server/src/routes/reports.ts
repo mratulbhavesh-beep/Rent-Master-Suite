@@ -2,14 +2,9 @@ import { Router, type IRouter } from "express";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, paymentsTable, expensesTable, tenantsTable, propertiesTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
+import { getUserPropertyIds } from "../lib/ownership";
 
 const router: IRouter = Router();
-
-async function getUserPropertyIds(userId: number): Promise<number[]> {
-  const props = await db.select({ id: propertiesTable.id }).from(propertiesTable)
-    .where(eq(propertiesTable.userId, userId));
-  return props.map(p => p.id);
-}
 
 router.get("/reports/monthly", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const userId = req.user!.id;

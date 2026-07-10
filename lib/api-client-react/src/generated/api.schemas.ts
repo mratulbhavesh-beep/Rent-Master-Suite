@@ -342,6 +342,16 @@ export interface Tenant {
   activeAgreementEndDate?: string | null;
   /** @nullable */
   activeAgreementStatus?: TenantActiveAgreementStatus;
+  /**
+     * Next escalation anniversary (YYYY-MM-DD) per the shared billing engine, null when escalation is off or no future event exists
+     * @nullable
+     */
+  nextEscalationDate?: string | null;
+  /**
+     * Rent that will apply from nextEscalationDate, computed by the shared billing engine
+     * @nullable
+     */
+  escalatedRentPreview?: number | null;
 }
 
 export type TenantInputStatus = typeof TenantInputStatus[keyof typeof TenantInputStatus];

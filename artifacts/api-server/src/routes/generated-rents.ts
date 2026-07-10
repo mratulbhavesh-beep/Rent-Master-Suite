@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq, and, lt, inArray } from "drizzle-orm";
 import { db, generatedRentsTable, tenantsTable, propertiesTable, paymentsTable } from "@workspace/db";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
+import { getUserPropertyIds } from "../lib/ownership";
 import { runRentGeneration } from "../lib/rent-generator";
 
 const router: IRouter = Router();
@@ -21,12 +22,6 @@ function formatRent(
     generatedAt: r.generatedAt.toISOString(),
     createdAt: r.createdAt.toISOString(),
   };
-}
-
-async function getUserPropertyIds(userId: number): Promise<number[]> {
-  const props = await db.select({ id: propertiesTable.id }).from(propertiesTable)
-    .where(eq(propertiesTable.userId, userId));
-  return props.map(p => p.id);
 }
 
 router.get("/generated-rents", requireAuth, async (req: AuthRequest, res): Promise<void> => {

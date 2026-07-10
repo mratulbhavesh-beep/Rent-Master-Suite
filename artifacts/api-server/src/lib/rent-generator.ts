@@ -1,230 +1,196 @@
-import { and, eq, desc, lte, gte, gt, lt, asc, sql } from "drizzle-orm";
+import { and, eq, desc, sql } from "drizzle-orm";
 import { db, tenantsTable, propertiesTable, generatedRentsTable, businessSettingsTable, rentRevisionsTable } from "@workspace/db";
+import {
+  buildLeaseContext,
+  getActiveRent,
+  buildEscalationSchedule,
+  computePeriods,
+  computeDueDate,
+  computeLedgerCorrections,
+  type LedgerRevision,
+  type LeaseContext,
+} from "@workspace/rent-calc";
 import { logger } from "./logger";
 
-function addMonths(dateStr: string, months: number): string {
-  const d = new Date(dateStr + "T00:00:00Z");
-  d.setUTCMonth(d.getUTCMonth() + months);
-  return d.toISOString().split("T")[0];
-}
+/**
+ * ALL billing math (escalation, billing cycles, due dates, period walking,
+ * ledger corrections) lives in @workspace/rent-calc — the single source of
+ * truth. This module only orchestrates DB reads/writes around that engine:
+ * it generates missing generated_rents rows, records automatic-escalation
+ * audit rows, and resyncs unsettled ledger rows to the timeline.
+ */
 
-function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().split("T")[0];
-}
-
-function getCycleMonths(billingCycle: string): number {
-  if (billingCycle === "quarterly") return 3;
-  if (billingCycle === "yearly") return 12;
-  return 1; // monthly
-}
-
-function computePeriodEnd(periodStart: string, billingCycle: string): string {
-  if (billingCycle === "weekly") {
-    return addDays(periodStart, 6); // 7-day period: day 0 to day 6
-  }
-  return addDays(addMonths(periodStart, getCycleMonths(billingCycle)), -1);
-}
-
-function computeDueDate(
-  period: { start: string; end: string },
-  rentCollectionType: string,
-  gracePeriodDays: number
-): string {
-  const anchor = rentCollectionType === "advance" ? period.start : period.end;
-  return addDays(anchor, gracePeriodDays);
-}
-
-// Two independent, deliberately different generation systems:
-//
-// ADVANCE billing — the entry (and its due date) is generated on the FIRST
-// day of the billing period, since the tenant owes rent up front for the
-// period they're about to occupy.
-//
-// POST-PAID billing — the entry must NOT be generated until the LAST day of
-// the billing period has been reached (`periodEnd <= today`), since the
-// tenant is being billed in arrears for a period they've already lived
-// through. Generating it early would make that month's rent appear in
-// Outstanding Balance / Total Expected / dashboards before it's actually
-// due, which is exactly what post-paid billing must not do.
-//
-// This gating is the single root-cause control for "when does this period
-// exist at all" — everything downstream (ledger, dashboard, reports) reads
-// generated_rents rows, so gating creation here is sufficient; no display
-// layer needs to re-filter by collection type.
-function computePeriods(
-  leaseStart: string,
-  lastPeriodEnd: string | null,
-  billingCycle: string,
-  rentCollectionType: string,
-  today: string
-): Array<{ start: string; end: string }> {
-  const periods: Array<{ start: string; end: string }> = [];
-  let periodStart: string = lastPeriodEnd ? addDays(lastPeriodEnd, 1) : leaseStart;
-
-  // Weekly billing can generate up to ~3 years of weekly entries as catch-up
-  const MAX_PERIODS = billingCycle === "weekly" ? 156 : 48;
-  let count = 0;
-
-  while (count < MAX_PERIODS) {
-    const periodEnd = computePeriodEnd(periodStart, billingCycle);
-
-    const isGenerationDateReached =
-      rentCollectionType === "advance" ? periodStart <= today : periodEnd <= today;
-    if (!isGenerationDateReached) break;
-
-    periods.push({ start: periodStart, end: periodEnd });
-    periodStart = addDays(periodEnd, 1);
-    count++;
-  }
-
-  return periods;
-}
-
-// Shared ledger-sync logic used by BOTH the manual rent-edit/revision flow
-// (routes/tenants.ts) and automatic escalation (below). Updates only
-// unpaid/future generated_rents entries from `effectiveFrom` onward, up to
-// (but not including) the next active revision's effective date. Paid and
-// partial entries are never touched, matching the manual-edit behavior.
 type DbLike = Pick<typeof db, "select" | "update">;
 
-export async function syncFutureLedgerForRevision(
-  dbClient: DbLike,
-  tenantId: number,
-  effectiveFrom: string,
-  newRent: string
-): Promise<number> {
-  // Don't split an already-generated billing period: if effectiveFrom falls
-  // inside an existing period, start updating from the next period instead.
-  const [overlappingPeriod] = await dbClient
-    .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
+// Per-run catch-up caps for generation (small by design — the cron runs
+// daily). Lifetime synthesis inside rent-calc uses its own generous cap.
+function maxCatchUpPeriods(billingCycle: string): number {
+  return billingCycle === "weekly" ? 156 : 48;
+}
+
+async function loadRevisions(dbClient: DbLike, tenantId: number): Promise<LedgerRevision[]> {
+  return dbClient
+    .select({
+      effectiveFrom: rentRevisionsTable.effectiveFrom,
+      newRent: rentRevisionsTable.newRent,
+      previousRent: rentRevisionsTable.previousRent,
+      status: rentRevisionsTable.status,
+      changedBy: rentRevisionsTable.changedBy,
+    })
+    .from(rentRevisionsTable)
+    .where(eq(rentRevisionsTable.tenantId, tenantId));
+}
+
+/**
+ * THE single ledger-sync function. Recomputes every unsettled (not
+ * paid/partial) generated_rents row for the tenant from the full merged
+ * revision + escalation timeline and updates any row whose amount is stale.
+ * Also keeps tenant.rentAmount synced to today's timeline-active rent.
+ *
+ * Every mutation that can change what rent applies to any period — rent
+ * edit, escalation-settings change, manual revision create/edit/cancel,
+ * lease renewal, automatic escalation — must call this instead of
+ * hand-rolling its own generated_rents UPDATE. Settled (paid/partial) rows
+ * are historical fact and are never touched.
+ */
+export async function resyncTenantLedger(dbClient: DbLike, tenantId: number): Promise<number> {
+  const [tenant] = await dbClient.select().from(tenantsTable).where(eq(tenantsTable.id, tenantId));
+  if (!tenant) return 0;
+
+  const revisions = await loadRevisions(dbClient, tenantId);
+  const lease = buildLeaseContext(tenant, revisions);
+
+  const unsettled = await dbClient
+    .select({
+      id: generatedRentsTable.id,
+      amount: generatedRentsTable.amount,
+      billingPeriodStart: generatedRentsTable.billingPeriodStart,
+    })
     .from(generatedRentsTable)
     .where(and(
       eq(generatedRentsTable.tenantId, tenantId),
-      lte(generatedRentsTable.billingPeriodStart, effectiveFrom),
-      gte(generatedRentsTable.billingPeriodEnd, effectiveFrom)
-    ))
-    .limit(1);
-
-  const updateFromDate = overlappingPeriod
-    ? addDays(overlappingPeriod.billingPeriodEnd, 1)
-    : effectiveFrom;
-
-  // Limit updates to the gap before the next active revision, if any.
-  const [nextActiveRevision] = await dbClient
-    .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
-    .from(rentRevisionsTable)
-    .where(and(
-      eq(rentRevisionsTable.tenantId, tenantId),
-      eq(rentRevisionsTable.status, "active"),
-      gt(rentRevisionsTable.effectiveFrom, effectiveFrom)
-    ))
-    .orderBy(asc(rentRevisionsTable.effectiveFrom))
-    .limit(1);
-
-  const updatedRents = await dbClient.update(generatedRentsTable)
-    .set({ amount: newRent })
-    .where(and(
-      eq(generatedRentsTable.tenantId, tenantId),
-      gte(generatedRentsTable.billingPeriodStart, updateFromDate),
-      nextActiveRevision ? lt(generatedRentsTable.billingPeriodStart, nextActiveRevision.effectiveFrom) : undefined,
       sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
-    ))
-    .returning({ id: generatedRentsTable.id });
+    ));
 
-  return updatedRents.length;
-}
-
-// effectiveBaseRent: the current base rent to escalate from.
-// This is passed explicitly so that if a manual revision fired on the same date,
-// its newRent becomes the base before escalation is calculated (requirement: manual > escalation priority).
-async function applyAutoEscalationIfDue(
-  tenant: typeof tenantsTable.$inferSelect,
-  today: string,
-  effectiveBaseRent: string
-): Promise<string> {
-  if (!tenant.rentEscalation || tenant.escalationApply !== "automatic") {
-    return effectiveBaseRent;
+  const corrections = computeLedgerCorrections(lease, unsettled);
+  for (const c of corrections) {
+    await dbClient.update(generatedRentsTable)
+      .set({ amount: String(c.correctAmount) })
+      .where(eq(generatedRentsTable.id, c.id));
   }
 
-  const freqYears = tenant.escalationFrequencyYears ?? 1;
+  // tenant.rentAmount is a denormalized snapshot of "today's active rent";
+  // keep it aligned with the timeline so list screens and previews agree.
+  // ONLY when at least one revision row exists: with zero revisions,
+  // rentAmount IS the timeline's base-rent anchor (see buildLeaseContext),
+  // and overwriting it with an escalated value would destroy the base
+  // forever and double-escalate every subsequent read. Auto-apply tenants
+  // without anchor rows self-heal at the next generation run, where
+  // recordAutomaticEscalations writes the anchor rows before this resync.
+  const today = new Date().toISOString().split("T")[0];
+  const activeRent = getActiveRent(lease, today);
+  if (revisions.length > 0 && Math.abs(activeRent - parseFloat(String(tenant.rentAmount))) > 0.005) {
+    await dbClient.update(tenantsTable)
+      .set({ rentAmount: String(activeRent) })
+      .where(eq(tenantsTable.id, tenantId));
+  }
 
-  const [lastAutoRevision] = await db
-    .select({ effectiveFrom: rentRevisionsTable.effectiveFrom })
+  if (corrections.length > 0) {
+    logger.info({ tenantId, corrections: corrections.length }, "Resynced unsettled generated_rents to billing timeline");
+  }
+  return corrections.length;
+}
+
+/**
+ * Record automatic-escalation audit rows in rent_revisions, anniversary-
+ * accurate. The balance/ledger timeline NEVER reads automatic rows (it
+ * recomputes the schedule from the lease terms — see buildRevisionEvents in
+ * @workspace/rent-calc), so these rows are audit/history only. This
+ * function:
+ *
+ * 1. Normalizes legacy automatic rows (stamped with old cron run dates /
+ *    one-step amounts) to the true anniversary dates and compounding
+ *    amounts, matching positionally exactly like buildDisplayRevisionHistory.
+ * 2. Inserts a row for any anniversary that has occurred but has no row yet
+ *    (effectiveFrom = the TRUE anniversary date, never "today").
+ *
+ * Idempotent: once rows match the schedule, subsequent runs are no-ops.
+ */
+async function recordAutomaticEscalations(
+  tenant: typeof tenantsTable.$inferSelect,
+  lease: LeaseContext,
+  today: string
+): Promise<void> {
+  if (!tenant.rentEscalation || tenant.escalationApply !== "automatic") return;
+
+  const schedule = buildEscalationSchedule(lease, today);
+  if (schedule.length === 0) return;
+
+  const automaticRows = await db.select()
     .from(rentRevisionsTable)
     .where(and(
       eq(rentRevisionsTable.tenantId, tenant.id),
       eq(rentRevisionsTable.changedBy, "automatic")
     ))
-    .orderBy(desc(rentRevisionsTable.effectiveFrom))
-    .limit(1);
+    .orderBy(rentRevisionsTable.createdAt, rentRevisionsTable.id);
 
-  // Guard: don't double-apply if an automatic escalation already ran today
-  if (lastAutoRevision?.effectiveFrom === today) {
-    return effectiveBaseRent;
-  }
-
-  const referenceDate = lastAutoRevision?.effectiveFrom ?? tenant.leaseStart;
-  const refMs = new Date(referenceDate + "T00:00:00Z").getTime();
-  const yearsSince = (Date.now() - refMs) / (1000 * 60 * 60 * 24 * 365.25);
-
-  if (yearsSince < freqYears) {
-    return effectiveBaseRent;
-  }
-
-  // Escalate from the effective base rent (not tenant.rentAmount snapshot —
-  // a manual revision on the same date takes priority as the base)
-  const previousBaseRent = parseFloat(effectiveBaseRent);
   const escalationType = tenant.escalationType ?? "percentage";
   const escalationValue = parseFloat(String(tenant.escalationValue ?? 0));
+  const escalationLabel = escalationType === "percentage" ? `${escalationValue}%` : `+₹${escalationValue}`;
 
-  let newRent: number;
-  if (escalationType === "percentage") {
-    newRent = previousBaseRent * (1 + escalationValue / 100);
-  } else {
-    newRent = previousBaseRent + escalationValue;
+  for (let i = 0; i < schedule.length; i++) {
+    const event = schedule[i];
+    // previousRent comes from the canonical timeline walk — after a manual
+    // raise it is the raised amount, not the prior schedule event's value.
+    const previousAmount = event.previousRent;
+    const stored = automaticRows[i];
+
+    if (stored) {
+      const needsFix =
+        stored.effectiveFrom !== event.effectiveFrom ||
+        Math.abs(parseFloat(String(stored.newRent)) - event.newRent) > 0.005 ||
+        Math.abs(parseFloat(String(stored.previousRent)) - previousAmount) > 0.005;
+      if (needsFix) {
+        await db.update(rentRevisionsTable)
+          .set({
+            effectiveFrom: event.effectiveFrom,
+            newRent: String(event.newRent),
+            previousRent: String(previousAmount),
+          })
+          .where(eq(rentRevisionsTable.id, stored.id));
+        logger.info(
+          { tenantId: tenant.id, revisionId: stored.id, effectiveFrom: event.effectiveFrom },
+          "Normalized legacy automatic escalation row to true anniversary"
+        );
+      }
+    } else {
+      await db.insert(rentRevisionsTable).values({
+        tenantId: tenant.id,
+        previousRent: String(previousAmount),
+        newRent: String(event.newRent),
+        effectiveFrom: event.effectiveFrom,
+        reason: `Auto-escalation: ${escalationLabel} applied on lease anniversary`,
+        changedBy: "automatic",
+      });
+      logger.info(
+        { tenantId: tenant.id, effectiveFrom: event.effectiveFrom, newRent: event.newRent },
+        "Automatic rent escalation recorded at lease anniversary"
+      );
+    }
   }
-
-  await db.update(tenantsTable)
-    .set({ rentAmount: String(newRent) })
-    .where(eq(tenantsTable.id, tenant.id));
-
-  const usedManualBase = parseFloat(String(tenant.rentAmount)) !== previousBaseRent;
-  await db.insert(rentRevisionsTable).values({
-    tenantId: tenant.id,
-    previousRent: String(previousBaseRent),
-    newRent: String(newRent),
-    effectiveFrom: today,
-    reason: `Auto-escalation: ${escalationType === "percentage" ? `${escalationValue}%` : `+₹${escalationValue}`} applied${usedManualBase ? " (base from manual revision)" : ""}`,
-    changedBy: "automatic",
-  });
-
-  // Reuse the exact same ledger-sync path as the manual rent-edit flow:
-  // only unpaid/future generated rents from today onward are updated so
-  // Total Expected, Balance Due, Dashboard, Reports and Ledger reflect the
-  // new rent. Paid/partial entries and past history are never touched.
-  const updatedRentRows = await syncFutureLedgerForRevision(db, tenant.id, today, String(newRent));
-
-  logger.info(
-    { tenantId: tenant.id, previousBaseRent, newRent, usedManualBase, updatedRentRows },
-    "Automatic rent escalation applied mid-lease"
-  );
-  return String(newRent);
 }
 
-// Generates any missing rent periods (Jan..today) for a single tenant, up to
-// and including the period whose start date is today or earlier. Used both
-// by the batch cron (runRentGeneration) and immediately after tenant
-// creation, so a brand-new tenant (advance or post-paid) doesn't have to wait
-// for the next scheduled run to see their ledger populated.
+// Generates any missing rent periods for a single tenant, up to and
+// including the period whose generation date has been reached. Used both by
+// the batch cron (runRentGeneration) and immediately after tenant
+// creation/update, so the ledger is populated without waiting for the next
+// scheduled run. Advance and post-paid tenants go through the exact same
+// canonical period walker in @workspace/rent-calc.
 async function generateForOneTenant(
   tenant: typeof tenantsTable.$inferSelect,
   propertyUserId: number | null,
   today: string
 ): Promise<number> {
-  let generated = 0;
-
   let billingCycle = tenant.billingCycle;
   let rentCollectionType = tenant.rentCollectionType;
   let gracePeriodDays = tenant.gracePeriodDays;
@@ -241,37 +207,14 @@ async function generateForOneTenant(
     }
   }
 
-  // ── Determine effective base rent ─────────────────────────────────────
-  // Always use the latest active revision (effectiveFrom <= today) as the
-  // authoritative rent, regardless of what tenant.rentAmount currently holds.
-  // This handles: future-dated revisions that have now become active, and
-  // cases where tenant.rentAmount was never synced after a revision.
-  const [latestActiveRevision] = await db
-    .select({ newRent: rentRevisionsTable.newRent })
-    .from(rentRevisionsTable)
-    .where(and(
-      eq(rentRevisionsTable.tenantId, tenant.id),
-      lte(rentRevisionsTable.effectiveFrom, today),
-      eq(rentRevisionsTable.status, "active")
-    ))
-    .orderBy(desc(rentRevisionsTable.effectiveFrom), desc(rentRevisionsTable.id))
-    .limit(1);
+  const revisions = await loadRevisions(db, tenant.id);
+  const lease = buildLeaseContext(
+    { ...tenant, billingCycle, rentCollectionType, gracePeriodDays },
+    revisions
+  );
 
-  const effectiveBaseRent = latestActiveRevision
-    ? String(latestActiveRevision.newRent)
-    : tenant.rentAmount;
-
-  // Keep tenant.rentAmount in sync with the latest active revision
-  if (latestActiveRevision &&
-      parseFloat(String(latestActiveRevision.newRent)) !== parseFloat(String(tenant.rentAmount))) {
-    await db.update(tenantsTable)
-      .set({ rentAmount: String(latestActiveRevision.newRent) })
-      .where(eq(tenantsTable.id, tenant.id));
-  }
-
-  // Apply automatic escalation if due, passing effective base so manual
-  // revisions on the same date are honoured as the escalation base.
-  const rentAmountForGeneration = await applyAutoEscalationIfDue(tenant, today, effectiveBaseRent);
+  // Audit rows for automatic escalation (timeline itself never reads them).
+  await recordAutomaticEscalations(tenant, lease, today);
 
   const [lastRent] = await db
     .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
@@ -280,22 +223,25 @@ async function generateForOneTenant(
     .orderBy(desc(generatedRentsTable.billingPeriodEnd))
     .limit(1);
 
-  const lastPeriodEnd = lastRent?.billingPeriodEnd ?? null;
-
   const periods = computePeriods(
     tenant.leaseStart,
-    lastPeriodEnd,
+    lastRent?.billingPeriodEnd ?? null,
     billingCycle,
     rentCollectionType,
-    today
+    today,
+    maxCatchUpPeriods(billingCycle)
   );
 
+  let generated = 0;
   for (const period of periods) {
     const dueDate = computeDueDate(period, rentCollectionType, gracePeriodDays);
     await db.insert(generatedRentsTable).values({
       tenantId: tenant.id,
       propertyId: tenant.propertyId,
-      amount: rentAmountForGeneration,
+      // Per-period amount from the shared timeline — a period that starts
+      // after an escalation anniversary or revision gets that period's
+      // correct rent, even within a single catch-up run.
+      amount: String(getActiveRent(lease, period.start)),
       billingPeriodStart: period.start,
       billingPeriodEnd: period.end,
       dueDate,
@@ -305,6 +251,9 @@ async function generateForOneTenant(
     }).onConflictDoNothing();
     generated++;
   }
+
+  // Heal any stale unsettled rows + keep tenant.rentAmount timeline-synced.
+  await resyncTenantLedger(db, tenant.id);
 
   return generated;
 }
@@ -333,8 +282,6 @@ export async function runRentGeneration(): Promise<number> {
 
 // Immediately backfills rent periods for a single freshly-created (or
 // updated) tenant, instead of waiting for the next scheduled batch run.
-// Collection-type-agnostic: advance and post-paid tenants both go through
-// the exact same period/due-date logic as the batch path above.
 export async function runRentGenerationForTenant(tenantId: number): Promise<number> {
   const today = new Date().toISOString().split("T")[0];
 
@@ -348,7 +295,7 @@ export async function runRentGenerationForTenant(tenantId: number): Promise<numb
 
   try {
     const generated = await generateForOneTenant(row.tenant, row.propertyUserId, today);
-    logger.info({ tenantId, generated }, "Rent generation complete for new tenant");
+    logger.info({ tenantId, generated }, "Rent generation complete for tenant");
     return generated;
   } catch (err) {
     logger.error({ err, tenantId }, "Rent generation failed for tenant");

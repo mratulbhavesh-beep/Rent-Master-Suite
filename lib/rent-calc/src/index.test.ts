@@ -3,6 +3,10 @@ import {
   computeLedgerSummary,
   getActiveRent,
   buildDisplayRevisionHistory,
+  buildLeaseContext,
+  nextEscalationEvent,
+  computeLedgerCorrections,
+  computeEffectivePeriods,
   type LeaseContext,
   type LedgerRevision,
   type DisplayRevision,
@@ -72,11 +76,11 @@ describe("yearly fixed escalation — active rent by date", () => {
     const lease = mehulLease([manualRevision]);
     expect(getActiveRent(lease, "2025-05-31")).toBe(10750);
     expect(getActiveRent(lease, "2025-06-01")).toBe(11000);
-    // The escalation schedule is computed from the lease's base terms
-    // independently of manual revisions; whichever event is chronologically
-    // latest as of `date` wins. The 2026-01-01 escalation (11500) therefore
-    // supersedes the earlier manual bump rather than stacking on top of it.
-    expect(getActiveRent(lease, "2026-01-01")).toBe(11500);
+    // The timeline is a single chronological walk: the 2026-01-01
+    // anniversary applies one +750 step to the RUNNING amount (the manual
+    // 11000), so rent moves to 11750 — it never drops back to a
+    // base-compounded value below the landlord's explicit raise.
+    expect(getActiveRent(lease, "2026-01-01")).toBe(11750);
   });
 
   it("fixed vs percentage escalation types compound correctly across 3 years", () => {
@@ -276,5 +280,296 @@ describe("Rent Revision History display correction", () => {
     expect(sortedAsc[0].newRent).toBe(10750);
     expect(sortedAsc[1].effectiveFrom).toBe("2026-01-01");
     expect(sortedAsc[1].newRent).toBe(11500);
+  });
+});
+
+describe("buildLeaseContext — the ONE shared LeaseContext builder", () => {
+  const tenant = {
+    leaseStart: "2024-01-01",
+    billingCycle: "monthly",
+    rentCollectionType: "post_paid",
+    gracePeriodDays: 5,
+    rentAmount: "11500.00", // current (already escalated) rent snapshot
+    rentEscalation: true,
+    escalationFrequencyYears: 1,
+    escalationType: "fixed",
+    escalationValue: "750.00",
+  };
+
+  it("uses tenant.rentAmount as base when there are no revisions", () => {
+    const lease = buildLeaseContext({ ...tenant, rentAmount: "10000.00" });
+    expect(lease.baseRentAmount).toBe("10000.00");
+    expect(lease.revisions).toEqual([]);
+    expect(lease.rentEscalation).toBe(true);
+  });
+
+  it("derives base rent from the chronologically earliest revision's previousRent", () => {
+    const lease = buildLeaseContext(tenant, [
+      { effectiveFrom: "2026-03-01", newRent: "13000.00", previousRent: "11500.00", status: "active", changedBy: "manual" },
+      { effectiveFrom: "2025-01-05", newRent: "10750.00", previousRent: "10000.00", status: "active", changedBy: "manual" },
+    ]);
+    expect(lease.baseRentAmount).toBe("10000.00");
+    // Revisions come back sorted ascending by effectiveFrom
+    expect(lease.revisions!.map(r => r.effectiveFrom)).toEqual(["2025-01-05", "2026-03-01"]);
+  });
+
+  it("anchors base on an earlier AUTOMATIC row over a later manual one", () => {
+    // A manual revision recorded after escalations carries a
+    // schedule-inclusive previousRent (11500) — using it as base would
+    // recompound the schedule. The earliest row of ANY kind is the anchor.
+    const lease = buildLeaseContext(tenant, [
+      { effectiveFrom: "2025-02-10", newRent: "10750.00", previousRent: "10000.00", status: "active", changedBy: "automatic" },
+      { effectiveFrom: "2026-05-01", newRent: "12500.00", previousRent: "11500.00", status: "active", changedBy: "manual" },
+    ]);
+    expect(lease.baseRentAmount).toBe("10000.00");
+  });
+
+  it("maps escalationApply to escalationAutoApply (default true when absent)", () => {
+    expect(buildLeaseContext({ ...tenant, escalationApply: "manual" }).escalationAutoApply).toBe(false);
+    expect(buildLeaseContext({ ...tenant, escalationApply: "automatic" }).escalationAutoApply).toBe(true);
+    expect(buildLeaseContext({ ...tenant, escalationApply: null }).escalationAutoApply).toBe(true);
+    expect(buildLeaseContext(tenant).escalationAutoApply).toBe(true);
+  });
+
+  it("falls back to the earliest revision of any kind when no manual exists", () => {
+    const lease = buildLeaseContext(tenant, [
+      { effectiveFrom: "2025-02-10", newRent: "10750.00", previousRent: "10000.00", status: "active", changedBy: "automatic" },
+    ]);
+    expect(lease.baseRentAmount).toBe("10000.00");
+  });
+
+  it("normalizes null escalation fields to safe defaults", () => {
+    const lease = buildLeaseContext({
+      ...tenant,
+      rentEscalation: null,
+      escalationFrequencyYears: null,
+      escalationType: null,
+      escalationValue: null,
+    });
+    expect(lease.rentEscalation).toBe(false);
+    expect(lease.escalationFrequencyYears).toBe(1);
+    expect(lease.escalationType).toBe("percentage");
+    expect(lease.escalationValue).toBe(0);
+  });
+});
+
+describe("nextEscalationEvent — future anniversary + engine-computed new rent", () => {
+  it("returns the first anniversary strictly after today with the escalated rent", () => {
+    const evt = nextEscalationEvent(mehulLease(), "2026-07-09");
+    expect(evt).toEqual({ effectiveFrom: "2027-01-01", newRent: 12250 });
+  });
+
+  it("treats an anniversary landing ON today as already applied (strictly after)", () => {
+    const evt = nextEscalationEvent(mehulLease(), "2026-01-01");
+    expect(evt).toEqual({ effectiveFrom: "2027-01-01", newRent: 12250 });
+  });
+
+  it("returns null when escalation is disabled or value is zero", () => {
+    expect(nextEscalationEvent({ ...mehulLease(), rentEscalation: false }, "2026-07-09")).toBeNull();
+    expect(nextEscalationEvent({ ...mehulLease(), escalationValue: 0 }, "2026-07-09")).toBeNull();
+    expect(nextEscalationEvent({ ...mehulLease(), escalationFrequencyYears: 0 }, "2026-07-09")).toBeNull();
+  });
+
+  it("respects multi-year frequency", () => {
+    const evt = nextEscalationEvent({ ...mehulLease(), escalationFrequencyYears: 2 }, "2026-07-09");
+    expect(evt?.effectiveFrom).toBe("2028-01-01");
+    expect(evt?.newRent).toBe(11500); // two 2-year steps: 2026 @ +750, 2028 @ +750
+  });
+
+  it("escalates ON TOP of a manual raise — rent never drops back at the next anniversary", () => {
+    const lease = mehulLease([
+      { effectiveFrom: "2026-06-01", newRent: 15000, previousRent: 11500, status: "active", changedBy: "manual" },
+    ]);
+    // Timeline walk: 2025 → 10750, 2026 → 11500, manual 2026-06-01 → 15000,
+    // then the 2027 anniversary steps the RUNNING amount: 15000 + 750.
+    expect(getActiveRent(lease, "2026-12-31")).toBe(15000);
+    expect(getActiveRent(lease, "2027-01-01")).toBe(15750);
+    const evt = nextEscalationEvent(lease, "2026-07-09");
+    expect(evt).toEqual({ effectiveFrom: "2027-01-01", newRent: 15750 });
+  });
+
+  it("manual revision wins when it lands exactly on an anniversary", () => {
+    const lease = mehulLease([
+      { effectiveFrom: "2026-01-01", newRent: 20000, previousRent: 11500, status: "active", changedBy: "manual" },
+    ]);
+    // Same-date tie: escalation step first, then the manual decision overrides.
+    expect(getActiveRent(lease, "2026-01-01")).toBe(20000);
+    expect(getActiveRent(lease, "2027-01-01")).toBe(20750);
+  });
+
+  it("manual apply mode: schedule never auto-applies; next event is a suggestion", () => {
+    const lease = { ...mehulLease(), escalationAutoApply: false };
+    // Timeline stays flat at base — anniversaries do not apply automatically.
+    expect(getActiveRent(lease, "2025-06-15")).toBe(10000);
+    expect(getActiveRent(lease, "2026-07-09")).toBe(10000);
+    // But the reminder/preview still fires, suggesting one step on top.
+    const evt = nextEscalationEvent(lease, "2026-07-09");
+    expect(evt).toEqual({ effectiveFrom: "2027-01-01", newRent: 10750 });
+  });
+
+  it("manual apply mode: manual revisions still shape the timeline and the suggestion", () => {
+    const lease = {
+      ...mehulLease([
+        { effectiveFrom: "2025-03-01", newRent: 12000, previousRent: 10000, status: "active", changedBy: "manual" },
+      ]),
+      escalationAutoApply: false,
+    };
+    expect(getActiveRent(lease, "2026-07-09")).toBe(12000);
+    const evt = nextEscalationEvent(lease, "2026-07-09");
+    expect(evt).toEqual({ effectiveFrom: "2027-01-01", newRent: 12750 });
+  });
+});
+
+describe("computeLedgerCorrections — the ONE ledger-sync computation", () => {
+  it("corrects unsettled rows to the timeline amount for their own period", () => {
+    const corrections = computeLedgerCorrections(mehulLease(), [
+      { id: 1, amount: "10000.00", billingPeriodStart: "2024-06-01" }, // correct already
+      { id: 2, amount: "10000.00", billingPeriodStart: "2025-06-01" }, // stale, should be 10750
+      { id: 3, amount: "10750.00", billingPeriodStart: "2026-06-01" }, // stale, should be 11500
+    ]);
+    expect(corrections).toEqual([
+      { id: 2, correctAmount: 10750 },
+      { id: 3, correctAmount: 11500 },
+    ]);
+  });
+
+  it("tolerates sub-paisa float noise (0.005)", () => {
+    const corrections = computeLedgerCorrections(mehulLease(), [
+      { id: 1, amount: 10750.004, billingPeriodStart: "2025-06-01" },
+    ]);
+    expect(corrections).toEqual([]);
+  });
+
+  it("returns no corrections for an empty row set", () => {
+    expect(computeLedgerCorrections(mehulLease(), [])).toEqual([]);
+  });
+
+  it("never touches rows from periods before the (re-anchored) leaseStart", () => {
+    // Post-renewal, leaseStart moves forward; pre-renewal unsettled rows
+    // cannot be priced by the current timeline and must be left alone.
+    const lease = { ...mehulLease(), leaseStart: "2026-01-01" };
+    const corrections = computeLedgerCorrections(lease, [
+      { id: 1, amount: "9000.00", billingPeriodStart: "2025-06-01" }, // pre-leaseStart: skipped
+      { id: 2, amount: "9000.00", billingPeriodStart: "2026-06-01" }, // in-lease: corrected
+    ]);
+    expect(corrections).toEqual([{ id: 2, correctAmount: getActiveRent(lease, "2026-06-01") }]);
+  });
+});
+
+describe("computeEffectivePeriods — merged synthesized + real periods", () => {
+  it("overlays real rows: settled amount authoritative, unsettled recomputed", () => {
+    const periods = computeEffectivePeriods(
+      [
+        // Settled at the old (pre-escalation) amount — must be preserved
+        { billingPeriodStart: "2024-12-01", dueDate: "2025-01-05", amount: "10000.00", status: "paid" },
+        // Unsettled with a stale amount — must be recomputed to 10750
+        { billingPeriodStart: "2025-01-01", dueDate: "2025-02-05", amount: "10000.00", status: "pending" },
+      ],
+      mehulLease(),
+      "2025-02-15"
+    );
+    const byStart = new Map(periods.map(p => [p.billingPeriodStart, p]));
+    expect(byStart.get("2024-12-01")?.amount).toBe(10000);
+    expect(byStart.get("2024-12-01")?.status).toBe("paid");
+    expect(byStart.get("2025-01-01")?.amount).toBe(10750);
+    // Synthesized gap periods carry timeline amounts
+    expect(byStart.get("2024-06-01")?.amount).toBe(10000);
+  });
+
+  it("never hides a real row outside the synthesis window", () => {
+    const periods = computeEffectivePeriods(
+      [
+        // A future-period row that synthesis (through today) would not produce
+        { billingPeriodStart: "2025-06-01", dueDate: "2025-07-05", amount: "10750.00", status: "pending" },
+      ],
+      mehulLease(),
+      "2025-02-15"
+    );
+    expect(periods.some(p => p.billingPeriodStart === "2025-06-01")).toBe(true);
+  });
+
+  it("summary totals equal the sum of effective periods (engine self-consistency)", () => {
+    const rents = [
+      { billingPeriodStart: "2024-12-01", dueDate: "2025-01-05", amount: "10000.00", status: "paid" },
+      { billingPeriodStart: "2025-01-01", dueDate: "2025-02-05", amount: "10000.00", status: "pending" },
+    ];
+    const today = "2025-02-15";
+    const periods = computeEffectivePeriods(rents, mehulLease(), today);
+    const summary = computeLedgerSummary(rents, [], today, mehulLease());
+    expect(summary.totalExpected).toBeCloseTo(periods.reduce((s, p) => s + p.amount, 0), 6);
+    expect(summary.monthsElapsed).toBe(periods.length);
+  });
+});
+
+describe("lease renewal re-anchoring — carried rent must survive the leaseStart move", () => {
+  // Bug regression: renewing an auto-apply tenant whose rent had escalated
+  // (base 10000 → anchor rows → 11500) moves leaseStart to the new lease's
+  // first day. The walk then has no anniversaries yet, so WITHOUT a renewal
+  // revision the active rent collapses back to base. The renew route now
+  // ALWAYS records the renewal revision (even when the amount is unchanged),
+  // plus a carry-over revision when renewal happens before newLeaseStart.
+  const anchorRows: LedgerRevision[] = [
+    { effectiveFrom: "2025-01-01", newRent: 10750, previousRent: 10000, status: "active", changedBy: "automatic" },
+    { effectiveFrom: "2026-01-01", newRent: 11500, previousRent: 10750, status: "active", changedBy: "automatic" },
+  ];
+
+  function renewedLease(extraRevisions: LedgerRevision[]): LeaseContext {
+    // leaseStart re-anchored to the renewed lease's first day (2026-09-01);
+    // anchor rows from the previous lease are still in the table.
+    return { ...mehulLease([...anchorRows, ...extraRevisions]), leaseStart: "2026-09-01" };
+  }
+
+  it("same-amount renewal revision carries the escalated rent across the re-anchor", () => {
+    const lease = renewedLease([
+      { effectiveFrom: "2026-09-01", newRent: 11500, previousRent: 11500, status: "active", changedBy: "manual" },
+    ]);
+    expect(getActiveRent(lease, "2026-09-01")).toBe(11500);
+    expect(getActiveRent(lease, "2026-12-31")).toBe(11500);
+    // Next anniversary is anchored to the NEW leaseStart and steps the carried rent
+    expect(nextEscalationEvent(lease, "2026-09-02")).toEqual({ effectiveFrom: "2027-09-01", newRent: 12250 });
+  });
+
+  it("documents the failure mode: without the renewal revision the rent collapses to base", () => {
+    const lease = renewedLease([]);
+    // Automatic rows are excluded from the walk and no anniversary of the
+    // new lease has passed — this is exactly why the route must always
+    // record the renewal revision.
+    expect(getActiveRent(lease, "2026-09-01")).toBe(10000);
+  });
+
+  it("early renewal: carry-over revision at the renewal date keeps the gap window at the carried rent", () => {
+    // Renewal executed 2026-07-10, new lease starts 2026-09-01.
+    const lease = renewedLease([
+      { effectiveFrom: "2026-07-10", newRent: 11500, previousRent: 11500, status: "active", changedBy: "manual" },
+      { effectiveFrom: "2026-09-01", newRent: 11500, previousRent: 11500, status: "active", changedBy: "manual" },
+    ]);
+    // Gap window between renewal date and new lease start
+    expect(getActiveRent(lease, "2026-07-10")).toBe(11500);
+    expect(getActiveRent(lease, "2026-08-15")).toBe(11500);
+    // And after the new lease begins
+    expect(getActiveRent(lease, "2026-10-01")).toBe(11500);
+    // Base anchor unchanged: earliest revision previousRent is still 10000
+    expect(buildLeaseContext({
+      leaseStart: "2026-09-01",
+      billingCycle: "monthly",
+      rentCollectionType: "post_paid",
+      gracePeriodDays: 5,
+      rentAmount: "11500.00",
+      rentEscalation: true,
+      escalationFrequencyYears: 1,
+      escalationType: "fixed",
+      escalationValue: "750.00",
+    }, [
+      { effectiveFrom: "2025-01-01", newRent: "10750.00", previousRent: "10000.00", status: "active", changedBy: "automatic" },
+      { effectiveFrom: "2026-07-10", newRent: "11500.00", previousRent: "11500.00", status: "active", changedBy: "manual" },
+    ]).baseRentAmount).toBe("10000.00");
+  });
+
+  it("renewal WITH a rent change records the new amount from the new lease start", () => {
+    const lease = renewedLease([
+      { effectiveFrom: "2026-09-01", newRent: 13000, previousRent: 11500, status: "active", changedBy: "manual" },
+    ]);
+    expect(getActiveRent(lease, "2026-08-31")).toBe(10000); // pre-start, no carry-over in this scenario
+    expect(getActiveRent(lease, "2026-09-01")).toBe(13000);
   });
 });

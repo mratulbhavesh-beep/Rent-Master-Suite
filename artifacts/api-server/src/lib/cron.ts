@@ -1,7 +1,8 @@
 import cron from "node-cron";
 import { logger } from "./logger";
-import { db, generatedRentsTable, tenantsTable, propertiesTable, googleDriveConnectionsTable } from "@workspace/db";
+import { db, generatedRentsTable, tenantsTable, propertiesTable, googleDriveConnectionsTable, rentRevisionsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
+import { buildLeaseContext, nextEscalationEvent, type LedgerRevision } from "@workspace/rent-calc";
 import { NOTIF_TYPES, sendPushToUser, formatAmount, formatDate, daysFromToday } from "./push";
 import {
   encryptString,
@@ -88,23 +89,6 @@ async function runRentReminders(): Promise<void> {
 
 // ─── Lease expiry / renewal / escalation reminders ────────────────────────────
 
-function nextEscalationDate(leaseStart: string, frequencyYears: number): string | null {
-  try {
-    const start = new Date(leaseStart + "T00:00:00Z");
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    let y = start.getFullYear();
-    for (let i = 0; i < 50; i++) {
-      y += frequencyYears;
-      const candidate = new Date(Date.UTC(y, start.getMonth(), start.getDate()));
-      if (candidate > today) return candidate.toISOString().split("T")[0];
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 async function runLeaseAndEscalationReminders(): Promise<void> {
   const tenants = await db
     .select({
@@ -116,6 +100,27 @@ async function runLeaseAndEscalationReminders(): Promise<void> {
     .innerJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
     .where(eq(tenantsTable.status, "active"));
 
+  // Revisions are needed so the escalation reminder reflects the SAME
+  // timeline (via @workspace/rent-calc) every other screen uses.
+  const tenantIds = tenants.map(r => r.tenant.id);
+  const allRevisions = tenantIds.length > 0
+    ? await db.select({
+        tenantId: rentRevisionsTable.tenantId,
+        effectiveFrom: rentRevisionsTable.effectiveFrom,
+        newRent: rentRevisionsTable.newRent,
+        previousRent: rentRevisionsTable.previousRent,
+        status: rentRevisionsTable.status,
+        changedBy: rentRevisionsTable.changedBy,
+      }).from(rentRevisionsTable).where(inArray(rentRevisionsTable.tenantId, tenantIds))
+    : [];
+  const revisionsByTenant = new Map<number, LedgerRevision[]>();
+  for (const r of allRevisions) {
+    const list = revisionsByTenant.get(r.tenantId) ?? [];
+    list.push(r);
+    revisionsByTenant.set(r.tenantId, list);
+  }
+
+  const todayStr = new Date().toISOString().split("T")[0];
   let sent = 0;
   for (const row of tenants) {
     const { tenant, propertyName, ownerId } = row;
@@ -162,18 +167,21 @@ async function runLeaseAndEscalationReminders(): Promise<void> {
       if (r.sent > 0) sent++;
     }
 
-    // Rent escalation reminder — 30 days before the next escalation anniversary
-    if (tenant.rentEscalation && tenant.escalationFrequencyYears > 0) {
-      const nextEsc = nextEscalationDate(tenant.leaseStart, tenant.escalationFrequencyYears);
-      if (nextEsc && daysFromToday(nextEsc) === 30) {
-        const escYear = nextEsc.split("-")[0];
+    // Rent escalation reminder — 30 days before the next escalation
+    // anniversary, computed by the shared engine (never re-derived locally)
+    // so the date AND the new amount match what every screen shows.
+    if (tenant.rentEscalation) {
+      const lease = buildLeaseContext(tenant, revisionsByTenant.get(tenant.id) ?? []);
+      const nextEsc = nextEscalationEvent(lease, todayStr);
+      if (nextEsc && daysFromToday(nextEsc.effectiveFrom) === 30) {
+        const escYear = nextEsc.effectiveFrom.split("-")[0];
         const r = await sendPushToUser({
           userId: ownerId,
           tenantId: tenant.id,
           type: NOTIF_TYPES.RENT_ESCALATION,
           billingPeriod: `esc-${escYear}`,
           title: "Rent Escalation Due",
-          body: `${tenant.name} • ${tenant.unitNumber}\nRent escalation due in 30 days\nCurrent: ${amount}`,
+          body: `${tenant.name} • ${tenant.unitNumber}\nRent escalation due in 30 days (${formatDate(nextEsc.effectiveFrom)})\nCurrent: ${amount} → New: ${formatAmount(nextEsc.newRent)}`,
           data: baseData,
         });
         if (r.sent > 0) sent++;
