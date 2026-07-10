@@ -1,5 +1,5 @@
 import { and, eq, desc, sql } from "drizzle-orm";
-import { db, tenantsTable, propertiesTable, generatedRentsTable, rentRevisionsTable } from "@workspace/db";
+import { db, tenantsTable, propertiesTable, generatedRentsTable, rentRevisionsTable, paymentsTable } from "@workspace/db";
 import {
   buildLeaseContext,
   getActiveRent,
@@ -7,6 +7,7 @@ import {
   computePeriods,
   computeDueDate,
   computeLedgerCorrections,
+  findBillablePeriodForMonth,
   type LedgerRevision,
   type LeaseContext,
 } from "@workspace/rent-calc";
@@ -237,7 +238,7 @@ async function generateForOneTenant(
   let generated = 0;
   for (const period of periods) {
     const dueDate = computeDueDate(period, rentCollectionType, gracePeriodDays);
-    await db.insert(generatedRentsTable).values({
+    const [inserted] = await db.insert(generatedRentsTable).values({
       tenantId: tenant.id,
       propertyId: tenant.propertyId,
       // Per-period amount from the shared timeline — a period that starts
@@ -250,14 +251,135 @@ async function generateForOneTenant(
       billingCycle,
       status: "pending",
       paymentId: null,
-    }).onConflictDoNothing();
+    }).onConflictDoNothing().returning({ id: generatedRentsTable.id });
     generated++;
+
+    // Adopt any still-unlinked payments recorded for this period's month
+    // (e.g. rent paid in advance of a future period, before its row could
+    // exist) so every payment ends up on exactly one ledger row.
+    if (inserted) {
+      const startDate = new Date(period.start + "T00:00:00Z");
+      const adopted = await db.update(paymentsTable)
+        .set({ generatedRentId: inserted.id })
+        .where(and(
+          eq(paymentsTable.tenantId, tenant.id),
+          sql`${paymentsTable.generatedRentId} IS NULL`,
+          eq(paymentsTable.month, startDate.getUTCMonth() + 1),
+          eq(paymentsTable.year, startDate.getUTCFullYear())
+        ))
+        .returning({ id: paymentsTable.id });
+      if (adopted.length > 0) {
+        await recomputeGeneratedRentStatus(inserted.id);
+        logger.info({ tenantId: tenant.id, periodStart: period.start, payments: adopted.length }, "Adopted unlinked payments into newly generated period row");
+      }
+    }
   }
 
   // Heal any stale unsettled rows + keep tenant.rentAmount timeline-synced.
   await resyncTenantLedger(db, tenant.id);
 
   return generated;
+}
+
+/**
+ * Ensure a generated_rents row exists for the billing period a payment for
+ * `month`/`year` belongs to, and return its id. Uses the SAME shared billing
+ * engine as generation/synthesis (findBillablePeriodForMonth) — never a
+ * separate allocation computation.
+ *
+ * This exists because POST-PAID periods are (correctly) not generated until
+ * the period ends, but a tenant may pay for the in-progress period early.
+ * That payment must land on a real ledger row so Month History, Ledger,
+ * Timeline, Receipts and Summary all read the same rows. Returns null when
+ * no started period matches (e.g. a future month).
+ */
+export async function ensureGeneratedRentForPeriod(
+  tenantId: number,
+  month: number,
+  year: number
+): Promise<number | null> {
+  const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, tenantId));
+  if (!tenant) return null;
+
+  const monthPrefix = `${year}-${String(month).padStart(2, "0")}`;
+
+  // An existing row for a period starting in that month always wins — this
+  // mirrors computeMonthHistory's month/year fallback matching exactly.
+  const existing = await db
+    .select({ id: generatedRentsTable.id, billingPeriodStart: generatedRentsTable.billingPeriodStart })
+    .from(generatedRentsTable)
+    .where(and(
+      eq(generatedRentsTable.tenantId, tenantId),
+      sql`${generatedRentsTable.billingPeriodStart} >= ${monthPrefix + "-01"}::date`,
+      sql`${generatedRentsTable.billingPeriodStart} < (${monthPrefix + "-01"}::date + interval '1 month')`
+    ))
+    .orderBy(generatedRentsTable.billingPeriodStart)
+    .limit(1);
+  if (existing.length > 0) return existing[0].id;
+
+  const revisions = await loadRevisions(db, tenantId);
+  const lease = buildLeaseContext(tenant, revisions);
+  const today = new Date().toISOString().split("T")[0];
+  const period = findBillablePeriodForMonth(lease, month, year, today);
+  if (!period) return null;
+
+  const [inserted] = await db.insert(generatedRentsTable).values({
+    tenantId,
+    propertyId: tenant.propertyId,
+    amount: String(period.amount),
+    billingPeriodStart: period.start,
+    billingPeriodEnd: period.end,
+    dueDate: period.dueDate,
+    billingCycle: tenant.billingCycle,
+    status: "pending",
+    paymentId: null,
+  }).onConflictDoNothing().returning({ id: generatedRentsTable.id });
+
+  if (inserted) {
+    logger.info({ tenantId, periodStart: period.start }, "Generated in-progress period row for payment allocation");
+    return inserted.id;
+  }
+
+  // Lost a race to a concurrent insert — fetch the winner.
+  const [row] = await db
+    .select({ id: generatedRentsTable.id })
+    .from(generatedRentsTable)
+    .where(and(
+      eq(generatedRentsTable.tenantId, tenantId),
+      eq(generatedRentsTable.billingPeriodStart, period.start)
+    ));
+  return row?.id ?? null;
+}
+
+/**
+ * Recompute a generated_rents row's status from the payments actually
+ * linked to it (the single source of truth for allocation). Used after a
+ * payment is created, deleted, or re-allocated so the ledger row never
+ * carries a stale paid/partial marker.
+ */
+export async function recomputeGeneratedRentStatus(generatedRentId: number): Promise<void> {
+  const [rent] = await db
+    .select({ id: generatedRentsTable.id, amount: generatedRentsTable.amount, dueDate: generatedRentsTable.dueDate })
+    .from(generatedRentsTable)
+    .where(eq(generatedRentsTable.id, generatedRentId));
+  if (!rent) return;
+
+  const linked = await db
+    .select({ id: paymentsTable.id, amount: paymentsTable.amount })
+    .from(paymentsTable)
+    .where(eq(paymentsTable.generatedRentId, generatedRentId));
+
+  const today = new Date().toISOString().split("T")[0];
+  let status: string;
+  if (linked.length === 0) {
+    status = rent.dueDate < today ? "overdue" : "pending";
+  } else {
+    const paid = linked.reduce((s, p) => s + parseFloat(String(p.amount)), 0);
+    status = paid >= parseFloat(String(rent.amount)) - 0.005 ? "paid" : "partial";
+  }
+  await db.update(generatedRentsTable)
+    .set({ status, paymentId: linked[0]?.id ?? null })
+    .where(eq(generatedRentsTable.id, generatedRentId));
 }
 
 export async function runRentGeneration(): Promise<number> {

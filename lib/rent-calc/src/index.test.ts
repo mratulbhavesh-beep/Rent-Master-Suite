@@ -7,6 +7,7 @@ import {
   nextEscalationEvent,
   computeLedgerCorrections,
   computeEffectivePeriods,
+  findBillablePeriodForMonth,
   type LeaseContext,
   type LedgerRevision,
   type DisplayRevision,
@@ -148,6 +149,25 @@ describe("yearly fixed escalation — Total Expected / Balance Due (Mehul scenar
     const overpaid = computeLedgerSummary([], [{ amount: 400000 }], "2026-07-09", lease);
     expect(overpaid.balanceDue).toBe(0);
     expect(overpaid.advanceBalance).toBe(400000 - overpaid.totalExpected);
+  });
+
+  it("excludes strictly-future generated rows from expected-side totals (advance payment to a coming month)", () => {
+    const lease = mehulLease();
+    // Baseline: no rows at all.
+    const baseline = computeLedgerSummary([], [{ amount: 11500 }], "2026-07-09", lease);
+    // An advance payment allocated to August created a real future row.
+    const withFutureRow = computeLedgerSummary(
+      [{ amount: "11500.00", dueDate: "2026-09-05", status: "paid", billingPeriodStart: "2026-08-01" }],
+      [{ amount: 11500 }],
+      "2026-07-09",
+      lease
+    );
+    // The future row must not change any expected-side total: the payment
+    // already nets against balanceDue via totalPaid.
+    expect(withFutureRow.totalExpected).toBe(baseline.totalExpected);
+    expect(withFutureRow.monthsElapsed).toBe(baseline.monthsElapsed);
+    expect(withFutureRow.dueExpected).toBe(baseline.dueExpected);
+    expect(withFutureRow.balanceDue).toBe(baseline.balanceDue);
   });
 });
 
@@ -496,6 +516,51 @@ describe("computeLedgerCorrections — the ONE ledger-sync computation", () => {
       { id: 2, amount: "9000.00", billingPeriodStart: "2026-06-01" }, // in-lease: corrected
     ]);
     expect(corrections).toEqual([{ id: 2, correctAmount: getActiveRent(lease, "2026-06-01") }]);
+  });
+});
+
+describe("findBillablePeriodForMonth — payment-allocation period lookup", () => {
+  it("returns the in-progress period for a post-paid tenant (before period end)", () => {
+    // mehulLease is post_paid; July 2026 period runs 07-01..07-31 and would
+    // NOT be generated until 07-31 — but a payment made mid-month must
+    // still find it.
+    const p = findBillablePeriodForMonth(mehulLease(), 7, 2026, "2026-07-10");
+    expect(p).toEqual({
+      start: "2026-07-01",
+      end: "2026-07-31",
+      dueDate: "2026-08-05",
+      amount: getActiveRent(mehulLease(), "2026-07-01"),
+    });
+  });
+
+  it("returns the future period for an advance payment targeting a coming month", () => {
+    // Advance payments may target months whose period hasn't started yet;
+    // they must still land on a real ledger row (one payment, one row).
+    const p = findBillablePeriodForMonth(mehulLease(), 8, 2026, "2026-07-10");
+    expect(p).toEqual({
+      start: "2026-08-01",
+      end: "2026-08-31",
+      dueDate: "2026-09-05",
+      amount: getActiveRent(mehulLease(), "2026-08-01"),
+    });
+  });
+
+  it("returns null for a month before lease start", () => {
+    expect(findBillablePeriodForMonth(mehulLease(), 12, 2023, "2026-07-10")).toBeNull();
+  });
+
+  it("uses the timeline-correct escalated amount for past periods", () => {
+    // 2025-06 period: after the 2025-01-01 anniversary (+750) => 10750
+    const p = findBillablePeriodForMonth(mehulLease(), 6, 2025, "2026-07-10");
+    expect(p?.start).toBe("2025-06-01");
+    expect(p?.amount).toBe(10750);
+    expect(p?.dueDate).toBe("2025-07-05"); // post_paid: period end + 5 grace days
+  });
+
+  it("anchors the due date to period start for advance tenants", () => {
+    const lease = { ...mehulLease(), rentCollectionType: "advance" };
+    const p = findBillablePeriodForMonth(lease, 7, 2026, "2026-07-10");
+    expect(p?.dueDate).toBe("2026-07-06"); // period start + 5 grace days
   });
 });
 

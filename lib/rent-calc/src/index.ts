@@ -290,6 +290,49 @@ export function computePeriods(
 }
 
 /**
+ * Locate the billing period a payment for `month`/`year` belongs to, using
+ * the same canonical period walker as generation/synthesis. Returns the
+ * period (with its timeline-correct amount and due date) whose START falls
+ * in that calendar month.
+ *
+ * Allocation gate: any period on the lease timeline for the requested
+ * month/year is allocatable — past, in-progress, or future. This is
+ * deliberately looser than the generation gate: a post-paid tenant may pay
+ * for the in-progress period before it ends, and an advance payment may
+ * target a future month; either way the payment must land on a real ledger
+ * row rather than float unallocated (invariant: every payment belongs to
+ * exactly one ledger row). Returns null only when the lease timeline has no
+ * period in that month (e.g. before lease start).
+ */
+export function findBillablePeriodForMonth(
+  lease: LeaseContext,
+  month: number,
+  year: number,
+  _today: string
+): { start: string; end: string; dueDate: string; amount: number } | null {
+  const MAX_PERIODS = lease.billingCycle === "weekly" ? 780 : 600;
+  let periodStart: string = lease.leaseStart;
+  let count = 0;
+
+  while (count < MAX_PERIODS) {
+    const periodEnd = computePeriodEnd(periodStart, lease.billingCycle);
+    const d = new Date(periodStart + "T00:00:00Z");
+    if (d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month) {
+      return {
+        start: periodStart,
+        end: periodEnd,
+        dueDate: computeDueDate({ start: periodStart, end: periodEnd }, lease.rentCollectionType, lease.gracePeriodDays),
+        amount: getActiveRent(lease, periodStart),
+      };
+    }
+    if (d.getUTCFullYear() > year || (d.getUTCFullYear() === year && d.getUTCMonth() + 1 > month)) break;
+    periodStart = addDaysUTC(periodEnd, 1);
+    count++;
+  }
+  return null;
+}
+
+/**
  * The ascending `{ effectiveFrom, newRent }` event list from the canonical
  * timeline walk (manual revisions + auto-applied escalation anniversaries).
  * This is the single source of truth for "what rent applied on date X" used
@@ -639,7 +682,15 @@ export function computeLedgerSummary(
     return { monthsElapsed, totalExpected, dueExpected, totalPaid, balanceDue, advanceBalance, currentMonthDue };
   }
 
-  const merged = computeEffectivePeriods(generatedRents, lease, today);
+  const mergedAll = computeEffectivePeriods(generatedRents, lease, today);
+
+  // Strictly-future periods (start after today) are excluded from the
+  // summary's expected-side totals. Such rows only exist when an advance
+  // payment was allocated to a coming month — the payment itself already
+  // counts in totalPaid (netting against balanceDue exactly as it did
+  // before the row existed), so also adding the future period's expected
+  // rent would inflate Balance Due by rent that isn't owed yet.
+  const merged = mergedAll.filter(r => r.billingPeriodStart <= today);
 
   const monthsElapsed = merged.length;
   const totalExpected = merged.reduce((s, r) => s + r.amount, 0);

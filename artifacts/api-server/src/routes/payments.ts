@@ -5,6 +5,7 @@ import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { getUserPropertyIds } from "../lib/ownership";
 import { logActivity } from "./activity-logs";
 import { sendPushToUser, NOTIF_TYPES, formatAmount } from "../lib/push";
+import { ensureGeneratedRentForPeriod, recomputeGeneratedRentStatus } from "../lib/rent-generator";
 
 const router: IRouter = Router();
 
@@ -64,18 +65,44 @@ router.post("/payments", requireAuth, async (req: AuthRequest, res): Promise<voi
     .where(and(eq(propertiesTable.id, propertyId), eq(propertiesTable.userId, userId)));
   if (!property) { res.status(403).json({ error: "Property not found" }); return; }
 
+  // Integrity guard: a client-supplied ledger row must belong to the same
+  // tenant the payment is for — otherwise a payment could be allocated onto
+  // another tenant's ledger.
+  if (generatedRentId != null) {
+    const [rentRow] = await db
+      .select({ tenantId: generatedRentsTable.tenantId })
+      .from(generatedRentsTable)
+      .where(eq(generatedRentsTable.id, generatedRentId));
+    if (!rentRow || rentRow.tenantId !== tenantId) {
+      res.status(400).json({ error: "generatedRentId does not belong to this tenant" });
+      return;
+    }
+  }
+
+  // Every payment must land on exactly one ledger row. When the client
+  // didn't pick one explicitly, resolve (and if needed generate) the row
+  // for the payment's billing period via the ONE shared billing engine —
+  // this covers post-paid tenants paying for the in-progress period, whose
+  // row is otherwise not generated until the period ends.
+  const resolvedRentId: number | null =
+    generatedRentId ?? (await ensureGeneratedRentForPeriod(tenantId, month, year));
+  if (resolvedRentId == null) {
+    // Enforce the invariant at write time: a payment that cannot be placed
+    // on any ledger row (e.g. a month before the lease starts) must be
+    // rejected, not silently left unallocated.
+    res.status(400).json({ error: "No billable period exists for that month — check the payment's month/year against the tenant's lease" });
+    return;
+  }
+
   const receiptNumber = generateReceiptNumber();
   const [payment] = await db.insert(paymentsTable).values({
     tenantId, propertyId, amount: String(amount), paymentDate,
     month, year, method, status: status ?? "paid", notes, receiptNumber,
-    generatedRentId: generatedRentId ?? null,
+    generatedRentId: resolvedRentId,
   }).returning();
 
-  if (generatedRentId != null) {
-    const rentStatus = payment.status === "partial" ? "partial" : "paid";
-    await db.update(generatedRentsTable)
-      .set({ status: rentStatus, paymentId: payment.id })
-      .where(eq(generatedRentsTable.id, generatedRentId));
+  if (resolvedRentId != null) {
+    await recomputeGeneratedRentStatus(resolvedRentId);
   }
 
   const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, payment.tenantId));
@@ -224,7 +251,13 @@ router.put("/payments/:id", requireAuth, async (req: AuthRequest, res): Promise<
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   const [existing] = await db
-    .select({ propertyUserId: propertiesTable.userId })
+    .select({
+      propertyUserId: propertiesTable.userId,
+      tenantId: paymentsTable.tenantId,
+      month: paymentsTable.month,
+      year: paymentsTable.year,
+      generatedRentId: paymentsTable.generatedRentId,
+    })
     .from(paymentsTable)
     .leftJoin(propertiesTable, eq(paymentsTable.propertyId, propertiesTable.id))
     .where(eq(paymentsTable.id, id));
@@ -239,8 +272,34 @@ router.put("/payments/:id", requireAuth, async (req: AuthRequest, res): Promise<
   if (method !== undefined) updates.method = method;
   if (status !== undefined) updates.status = status;
   if (notes !== undefined) updates.notes = notes;
+
+  // Billing period moved — re-allocate to the correct ledger row via the
+  // same shared engine path used at creation time.
+  const newMonth = month !== undefined ? month : existing.month;
+  const newYear = year !== undefined ? year : existing.year;
+  const periodMoved = newMonth !== existing.month || newYear !== existing.year;
+  if (periodMoved) {
+    const newRentId = await ensureGeneratedRentForPeriod(existing.tenantId, newMonth, newYear);
+    if (newRentId == null) {
+      res.status(400).json({ error: "No billable period exists for that month — check the payment's month/year against the tenant's lease" });
+      return;
+    }
+    updates.generatedRentId = newRentId;
+  }
+
   const [payment] = await db.update(paymentsTable).set(updates).where(eq(paymentsTable.id, id)).returning();
   if (!payment) { res.status(404).json({ error: "Payment not found" }); return; }
+
+  // Keep ledger row statuses in sync with their linked payments: the old
+  // row (if the payment moved away from it) and the current row (amount or
+  // allocation may have changed).
+  if (periodMoved && existing.generatedRentId != null && existing.generatedRentId !== payment.generatedRentId) {
+    await recomputeGeneratedRentStatus(existing.generatedRentId);
+  }
+  if (payment.generatedRentId != null) {
+    await recomputeGeneratedRentStatus(payment.generatedRentId);
+  }
+
   const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, payment.tenantId));
   const [property] = await db.select().from(propertiesTable).where(eq(propertiesTable.id, payment.propertyId));
   res.json(formatPayment(payment, tenant?.name, property?.name, tenant?.unitNumber));
@@ -251,12 +310,17 @@ router.delete("/payments/:id", requireAuth, async (req: AuthRequest, res): Promi
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   const [existing] = await db
-    .select({ propertyUserId: propertiesTable.userId, tenantId: paymentsTable.tenantId, amount: paymentsTable.amount })
+    .select({ propertyUserId: propertiesTable.userId, tenantId: paymentsTable.tenantId, amount: paymentsTable.amount, generatedRentId: paymentsTable.generatedRentId })
     .from(paymentsTable)
     .leftJoin(propertiesTable, eq(paymentsTable.propertyId, propertiesTable.id))
     .where(eq(paymentsTable.id, id));
   if (!existing || existing.propertyUserId !== userId) { res.status(404).json({ error: "Payment not found" }); return; }
   await db.delete(paymentsTable).where(eq(paymentsTable.id, id));
+  // The ledger row must reflect its remaining linked payments — never keep
+  // a stale "paid" marker after its payment is gone.
+  if (existing.generatedRentId != null) {
+    await recomputeGeneratedRentStatus(existing.generatedRentId);
+  }
   await logActivity({
     userId, userEmail: req.user!.email,
     action: "delete", entity: "payment", entityId: id,
