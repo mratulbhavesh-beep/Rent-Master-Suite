@@ -4,7 +4,7 @@ import { db, tenantsTable, propertiesTable, paymentsTable, maintenanceRequestsTa
 import { computeLedgerSummary, computeMonthHistory, getActiveRent, buildDisplayRevisionHistory, buildLeaseContext, nextEscalationEvent, type LedgerEntry, type LedgerPayment, type LedgerRevision, type LeaseContext } from "@workspace/rent-calc";
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { logger } from "../lib/logger";
-import { runRentGenerationForTenant, resyncTenantLedger } from "../lib/rent-generator";
+import { runRentGenerationForTenant, resyncTenantLedger, rebuildTenantBilling } from "../lib/rent-generator";
 import { getBusinessDefaults } from "../lib/business-defaults";
 import { getUserPropertyIds } from "../lib/ownership";
 
@@ -366,46 +366,60 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
     updates.useBusinessDefault = false;
   }
 
-  const [tenant] = await db.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
-  if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
+  // Any edit that changes WHAT the billing timeline produces (rent amount,
+  // lease window, cycle, collection type, grace period, escalation, status)
+  // triggers a FULL from-scratch rebuild of the tenant's ledger — editing a
+  // tenant must yield the exact same ledger as creating a new tenant with
+  // these settings. The whole edit (tenant row + revision bookkeeping +
+  // rebuild) runs in ONE transaction so a failure leaves everything intact.
+  const billingDefiningKeys = [
+    "rentAmount", "leaseStart", "leaseEnd", "billingCycle", "rentCollectionType",
+    "gracePeriodDays", "useBusinessDefault", "status",
+    "rentEscalation", "escalationFrequencyYears", "escalationType", "escalationValue", "escalationApply",
+  ];
+  const billingChanged = billingDefiningKeys.some(k => k in updates);
 
-  // A bare rent-amount edit MUST enter the revision timeline — the shared
-  // engine (@workspace/rent-calc) derives every screen's figures from
-  // lease terms + rent_revisions, so a tenant.rentAmount change that isn't
-  // recorded as a revision would be invisible to it (and silently undone by
-  // the next ledger resync). We record it as a manual revision effective
-  // today; historical periods keep their timeline-correct amounts.
-  if ("rentAmount" in updates) {
-    try {
+  const tenant = await db.transaction(async (tx) => {
+    const [updated] = await tx.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
+    if (!updated) return undefined;
+
+    // A bare rent-amount edit MUST enter the revision timeline — the shared
+    // engine (@workspace/rent-calc) derives every screen's figures from
+    // lease terms + rent_revisions, so a tenant.rentAmount change that isn't
+    // recorded as a revision would be invisible to it (and silently undone
+    // by the next ledger resync). We record it as a manual revision
+    // effective today; historical periods keep their timeline-correct
+    // amounts.
+    if ("rentAmount" in updates) {
       const today = new Date().toISOString().split("T")[0];
       const newRent = parseFloat(String(updates.rentAmount));
-      const revisionRows = await db.select({
+      const revisionRows = await tx.select({
         effectiveFrom: rentRevisionsTable.effectiveFrom,
         newRent: rentRevisionsTable.newRent,
         previousRent: rentRevisionsTable.previousRent,
         status: rentRevisionsTable.status,
         changedBy: rentRevisionsTable.changedBy,
-      }).from(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, tenant.id));
+      }).from(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, updated.id));
       const previousRent = getActiveRent(buildLeaseContext(existing.tenant, revisionRows), today);
 
       if (Math.abs(newRent - previousRent) > 0.005) {
         // Same-day repeat edits update the existing revision row instead of
         // stacking multiple same-date events.
-        const [sameDay] = await db.select({ id: rentRevisionsTable.id, previousRent: rentRevisionsTable.previousRent })
+        const [sameDay] = await tx.select({ id: rentRevisionsTable.id, previousRent: rentRevisionsTable.previousRent })
           .from(rentRevisionsTable)
           .where(and(
-            eq(rentRevisionsTable.tenantId, tenant.id),
+            eq(rentRevisionsTable.tenantId, updated.id),
             eq(rentRevisionsTable.effectiveFrom, today),
             eq(rentRevisionsTable.status, "active"),
             eq(rentRevisionsTable.changedBy, "manual")
           ));
         if (sameDay) {
-          await db.update(rentRevisionsTable)
+          await tx.update(rentRevisionsTable)
             .set({ newRent: String(newRent) })
             .where(eq(rentRevisionsTable.id, sameDay.id));
         } else {
-          await db.insert(rentRevisionsTable).values({
-            tenantId: tenant.id,
+          await tx.insert(rentRevisionsTable).values({
+            tenantId: updated.id,
             previousRent: String(previousRent),
             newRent: String(newRent),
             effectiveFrom: today,
@@ -414,36 +428,18 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
           });
         }
       }
-    } catch (err) {
-      logger.error({ err, tenantId: tenant.id }, "Failed to record manual revision for rent edit");
     }
-  }
 
-  // If billing settings changed (e.g. lease start, billing cycle, collection
-  // type), backfill any newly-eligible rent periods immediately rather than
-  // waiting for the next scheduled cron run. Same collection-type-agnostic
-  // path used on tenant creation.
-  if (["leaseStart", "billingCycle", "rentCollectionType", "gracePeriodDays", "useBusinessDefault", "status"].some(k => k in updates)) {
-    try {
-      await runRentGenerationForTenant(tenant.id);
-    } catch (err) {
-      logger.error({ err, tenantId: tenant.id }, "Immediate rent generation failed after tenant update");
+    // Full rebuild: wipe generated rows + automatic escalation records,
+    // regenerate the canonical timeline under the NEW settings, re-allocate
+    // payments. Payment/receipt records themselves are never modified.
+    if (billingChanged) {
+      await rebuildTenantBilling(tx, updated.id);
     }
-  }
 
-  // Any change that affects what rent applies to any period (rent edit or
-  // escalation settings) goes through the ONE shared ledger-sync path:
-  // unsettled generated_rents rows are recomputed from the merged
-  // revision + escalation timeline; settled (paid/partial) rows are never
-  // touched. (The billing-settings branch above already resyncs inside
-  // runRentGenerationForTenant.)
-  if (["rentAmount", "rentEscalation", "escalationFrequencyYears", "escalationType", "escalationValue", "escalationApply"].some(k => k in updates)) {
-    try {
-      await resyncTenantLedger(db, tenant.id);
-    } catch (err) {
-      logger.error({ err, tenantId: tenant.id }, "Failed to resync ledger after tenant update");
-    }
-  }
+    return updated;
+  });
+  if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
 
   const [[property], payments, agreements, patchGeneratedRents, patchRevisions] = await Promise.all([
     db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId)),

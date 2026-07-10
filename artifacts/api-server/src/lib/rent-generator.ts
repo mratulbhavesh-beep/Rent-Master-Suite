@@ -23,6 +23,16 @@ import { logger } from "./logger";
 
 type DbLike = Pick<typeof db, "select" | "update">;
 
+// Full read/write client — satisfied by both the root `db` and a drizzle
+// transaction client, so rebuild paths can run atomically inside a tx.
+type DbClient = Pick<typeof db, "select" | "update" | "insert" | "delete">;
+
+// Caps for a full-history rebuild (must cover the whole lease lifetime,
+// unlike the small incremental catch-up caps below).
+function maxRebuildPeriods(billingCycle: string): number {
+  return billingCycle === "weekly" ? 1560 : 480;
+}
+
 // Per-run catch-up caps for generation (small by design — the cron runs
 // daily). Lifetime synthesis inside rent-calc uses its own generous cap.
 function maxCatchUpPeriods(billingCycle: string): number {
@@ -135,14 +145,15 @@ export async function resyncTenantLedger(dbClient: DbLike, tenantId: number): Pr
 async function recordAutomaticEscalations(
   tenant: typeof tenantsTable.$inferSelect,
   lease: LeaseContext,
-  today: string
+  today: string,
+  dbClient: DbClient = db
 ): Promise<void> {
   if (!tenant.rentEscalation || tenant.escalationApply !== "automatic") return;
 
   const schedule = buildEscalationSchedule(lease, today);
   if (schedule.length === 0) return;
 
-  const automaticRows = await db.select()
+  const automaticRows = await dbClient.select()
     .from(rentRevisionsTable)
     .where(and(
       eq(rentRevisionsTable.tenantId, tenant.id),
@@ -167,7 +178,7 @@ async function recordAutomaticEscalations(
         Math.abs(parseFloat(String(stored.newRent)) - event.newRent) > 0.005 ||
         Math.abs(parseFloat(String(stored.previousRent)) - previousAmount) > 0.005;
       if (needsFix) {
-        await db.update(rentRevisionsTable)
+        await dbClient.update(rentRevisionsTable)
           .set({
             effectiveFrom: event.effectiveFrom,
             newRent: String(event.newRent),
@@ -180,7 +191,7 @@ async function recordAutomaticEscalations(
         );
       }
     } else {
-      await db.insert(rentRevisionsTable).values({
+      await dbClient.insert(rentRevisionsTable).values({
         tenantId: tenant.id,
         previousRent: String(previousAmount),
         newRent: String(event.newRent),
@@ -204,7 +215,9 @@ async function recordAutomaticEscalations(
 // canonical period walker in @workspace/rent-calc.
 async function generateForOneTenant(
   tenant: typeof tenantsTable.$inferSelect,
-  today: string
+  today: string,
+  dbClient: DbClient = db,
+  maxPeriodsOverride?: number
 ): Promise<number> {
   // The tenant row IS the source of truth for billing settings. Business
   // defaults are materialized into these columns at write time (tenant
@@ -213,13 +226,13 @@ async function generateForOneTenant(
   const rentCollectionType = tenant.rentCollectionType;
   const gracePeriodDays = tenant.gracePeriodDays;
 
-  const revisions = await loadRevisions(db, tenant.id);
+  const revisions = await loadRevisions(dbClient, tenant.id);
   const lease = buildLeaseContext(tenant, revisions);
 
   // Audit rows for automatic escalation (timeline itself never reads them).
-  await recordAutomaticEscalations(tenant, lease, today);
+  await recordAutomaticEscalations(tenant, lease, today, dbClient);
 
-  const [lastRent] = await db
+  const [lastRent] = await dbClient
     .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
     .from(generatedRentsTable)
     .where(eq(generatedRentsTable.tenantId, tenant.id))
@@ -232,13 +245,13 @@ async function generateForOneTenant(
     billingCycle,
     rentCollectionType,
     today,
-    maxCatchUpPeriods(billingCycle)
+    maxPeriodsOverride ?? maxCatchUpPeriods(billingCycle)
   );
 
   let generated = 0;
   for (const period of periods) {
     const dueDate = computeDueDate(period, rentCollectionType, gracePeriodDays);
-    const [inserted] = await db.insert(generatedRentsTable).values({
+    const [inserted] = await dbClient.insert(generatedRentsTable).values({
       tenantId: tenant.id,
       propertyId: tenant.propertyId,
       // Per-period amount from the shared timeline — a period that starts
@@ -259,7 +272,7 @@ async function generateForOneTenant(
     // exist) so every payment ends up on exactly one ledger row.
     if (inserted) {
       const startDate = new Date(period.start + "T00:00:00Z");
-      const adopted = await db.update(paymentsTable)
+      const adopted = await dbClient.update(paymentsTable)
         .set({ generatedRentId: inserted.id })
         .where(and(
           eq(paymentsTable.tenantId, tenant.id),
@@ -269,16 +282,95 @@ async function generateForOneTenant(
         ))
         .returning({ id: paymentsTable.id });
       if (adopted.length > 0) {
-        await recomputeGeneratedRentStatus(inserted.id);
+        await recomputeGeneratedRentStatus(inserted.id, dbClient);
         logger.info({ tenantId: tenant.id, periodStart: period.start, payments: adopted.length }, "Adopted unlinked payments into newly generated period row");
       }
     }
   }
 
   // Heal any stale unsettled rows + keep tenant.rentAmount timeline-synced.
-  await resyncTenantLedger(db, tenant.id);
+  await resyncTenantLedger(dbClient, tenant.id);
 
   return generated;
+}
+
+/**
+ * FULL billing rebuild for one tenant — used after edits to billing-defining
+ * fields (rent amount, lease dates, billing cycle, collection type, grace
+ * period, escalation settings). Editing must produce the same ledger a
+ * freshly created tenant with these settings would have, so instead of
+ * patching rows in place this:
+ *
+ * 1. Unlinks every payment from its ledger row (payments/receipts are
+ *    historical fact and are NEVER modified beyond the link column).
+ * 2. Deletes ALL generated_rents rows (old period boundaries, amounts, due
+ *    dates and future schedules are obsolete under the new settings).
+ * 3. Deletes ALL automatic-escalation audit rows (rebuilt below from the
+ *    new escalation settings; manual revisions are user data and are kept).
+ * 4. Regenerates the canonical period rows over the whole lease lifetime
+ *    and re-adopts payments by month/year (same adoption path as creation).
+ * 5. Allocates any still-unlinked payments (in-progress post-paid period /
+ *    future months paid in advance) via the shared allocation engine.
+ *
+ * MUST run inside a transaction — pass the tx client — so a failure leaves
+ * the previous ledger fully intact.
+ */
+export async function rebuildTenantBilling(dbClient: DbClient, tenantId: number): Promise<void> {
+  const [tenant] = await dbClient.select().from(tenantsTable).where(eq(tenantsTable.id, tenantId));
+  if (!tenant) return;
+  const today = new Date().toISOString().split("T")[0];
+
+  await dbClient.update(paymentsTable)
+    .set({ generatedRentId: null })
+    .where(eq(paymentsTable.tenantId, tenantId));
+  await dbClient.delete(generatedRentsTable)
+    .where(eq(generatedRentsTable.tenantId, tenantId));
+  await dbClient.delete(rentRevisionsTable)
+    .where(and(
+      eq(rentRevisionsTable.tenantId, tenantId),
+      eq(rentRevisionsTable.changedBy, "automatic")
+    ));
+
+  if (tenant.status === "active") {
+    await generateForOneTenant(tenant, today, dbClient, maxRebuildPeriods(tenant.billingCycle));
+  }
+
+  // Re-allocate payments whose month/year didn't match any generated period
+  // (in-progress post-paid period, future month paid in advance) through the
+  // SAME shared allocation path used by payment creation.
+  const unlinked = await dbClient
+    .select({ id: paymentsTable.id, month: paymentsTable.month, year: paymentsTable.year })
+    .from(paymentsTable)
+    .where(and(
+      eq(paymentsTable.tenantId, tenantId),
+      sql`${paymentsTable.generatedRentId} IS NULL`
+    ));
+  const byPeriod = new Map<string, { month: number; year: number; ids: number[] }>();
+  for (const p of unlinked) {
+    const key = `${p.year}-${p.month}`;
+    const entry = byPeriod.get(key) ?? { month: p.month, year: p.year, ids: [] };
+    entry.ids.push(p.id);
+    byPeriod.set(key, entry);
+  }
+  for (const entry of byPeriod.values()) {
+    const rentId = await ensureGeneratedRentForPeriod(tenantId, entry.month, entry.year, dbClient);
+    if (rentId == null) {
+      // No billable period under the NEW settings (e.g. payment predates the
+      // moved lease start). The payment record is preserved — it still
+      // counts in Total Paid — but has no ledger row to sit on.
+      logger.warn(
+        { tenantId, month: entry.month, year: entry.year, payments: entry.ids.length },
+        "Rebuild: payments have no billable period under new settings; left unlinked"
+      );
+      continue;
+    }
+    await dbClient.update(paymentsTable)
+      .set({ generatedRentId: rentId })
+      .where(sql`${paymentsTable.id} IN (${sql.join(entry.ids.map(id => sql`${id}`), sql`, `)})`);
+    await recomputeGeneratedRentStatus(rentId, dbClient);
+  }
+
+  logger.info({ tenantId }, "Rebuilt tenant billing from scratch after settings edit");
 }
 
 /**
@@ -296,16 +388,17 @@ async function generateForOneTenant(
 export async function ensureGeneratedRentForPeriod(
   tenantId: number,
   month: number,
-  year: number
+  year: number,
+  dbClient: DbClient = db
 ): Promise<number | null> {
-  const [tenant] = await db.select().from(tenantsTable).where(eq(tenantsTable.id, tenantId));
+  const [tenant] = await dbClient.select().from(tenantsTable).where(eq(tenantsTable.id, tenantId));
   if (!tenant) return null;
 
   const monthPrefix = `${year}-${String(month).padStart(2, "0")}`;
 
   // An existing row for a period starting in that month always wins — this
   // mirrors computeMonthHistory's month/year fallback matching exactly.
-  const existing = await db
+  const existing = await dbClient
     .select({ id: generatedRentsTable.id, billingPeriodStart: generatedRentsTable.billingPeriodStart })
     .from(generatedRentsTable)
     .where(and(
@@ -317,13 +410,13 @@ export async function ensureGeneratedRentForPeriod(
     .limit(1);
   if (existing.length > 0) return existing[0].id;
 
-  const revisions = await loadRevisions(db, tenantId);
+  const revisions = await loadRevisions(dbClient, tenantId);
   const lease = buildLeaseContext(tenant, revisions);
   const today = new Date().toISOString().split("T")[0];
   const period = findBillablePeriodForMonth(lease, month, year, today);
   if (!period) return null;
 
-  const [inserted] = await db.insert(generatedRentsTable).values({
+  const [inserted] = await dbClient.insert(generatedRentsTable).values({
     tenantId,
     propertyId: tenant.propertyId,
     amount: String(period.amount),
@@ -341,7 +434,7 @@ export async function ensureGeneratedRentForPeriod(
   }
 
   // Lost a race to a concurrent insert — fetch the winner.
-  const [row] = await db
+  const [row] = await dbClient
     .select({ id: generatedRentsTable.id })
     .from(generatedRentsTable)
     .where(and(
@@ -357,14 +450,14 @@ export async function ensureGeneratedRentForPeriod(
  * payment is created, deleted, or re-allocated so the ledger row never
  * carries a stale paid/partial marker.
  */
-export async function recomputeGeneratedRentStatus(generatedRentId: number): Promise<void> {
-  const [rent] = await db
+export async function recomputeGeneratedRentStatus(generatedRentId: number, dbClient: DbClient = db): Promise<void> {
+  const [rent] = await dbClient
     .select({ id: generatedRentsTable.id, amount: generatedRentsTable.amount, dueDate: generatedRentsTable.dueDate })
     .from(generatedRentsTable)
     .where(eq(generatedRentsTable.id, generatedRentId));
   if (!rent) return;
 
-  const linked = await db
+  const linked = await dbClient
     .select({ id: paymentsTable.id, amount: paymentsTable.amount })
     .from(paymentsTable)
     .where(eq(paymentsTable.generatedRentId, generatedRentId));
@@ -377,7 +470,7 @@ export async function recomputeGeneratedRentStatus(generatedRentId: number): Pro
     const paid = linked.reduce((s, p) => s + parseFloat(String(p.amount)), 0);
     status = paid >= parseFloat(String(rent.amount)) - 0.005 ? "paid" : "partial";
   }
-  await db.update(generatedRentsTable)
+  await dbClient.update(generatedRentsTable)
     .set({ status, paymentId: linked[0]?.id ?? null })
     .where(eq(generatedRentsTable.id, generatedRentId));
 }
