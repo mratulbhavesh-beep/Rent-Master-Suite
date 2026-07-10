@@ -9,3 +9,4 @@
 - [Payment allocation invariants](payment-allocation.md) — every payment on exactly one ledger row; allocation may materialize rows early, but expected-side totals gate on isPeriodBillable (post-paid: period end; advance: period start)
 - [Billing settings single source of truth](billing-settings-truth.md) — business defaults materialize into tenant columns at write time; never resolve useBusinessDefault at read time
 - [Unified billing engine invariants](billing-engine.md) — rent timeline is a chronological walk; rent_amount is base anchor only with zero revisions; consumers must SELECT escalationApply; renewals must always write a revision
+- [Edit vs Revise separation](edit-vs-revise-separation.md) — plain field edits must never mutate revision history; full-rebuild-on-edit is only safe when zero revisions exist
