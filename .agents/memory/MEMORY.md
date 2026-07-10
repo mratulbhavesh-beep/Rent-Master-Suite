@@ -6,6 +6,6 @@
 - [Production schema / deploy debugging](prod-deploy-debug.md) — routes that exist in prod but query missing tables produce 000 (hang), not 404; JSON error handler must be in app.ts to prevent HTML 500 on mobile; fix = Publish (auto-migrates prod DB schema)
 - [Google Drive OAuth configuration](gdrive-oauth.md) — client ID prefix 910455573442; redirect URI must be registered in Google Cloud Console; OAUTH_REDIRECT_URI env var overrides auto-detected domain
 - [Ledger summary vs generated_rents rows](ledger-summary-synthesis.md) — generated_rents is lazily populated, not a full lease history; summary stats must synthesize periods from leaseStart, not just sum existing rows
-- [Payment allocation invariants](payment-allocation.md) — every payment on exactly one ledger row; allocation may generate in-progress/future rows, but summary expected-side totals must exclude future periods
+- [Payment allocation invariants](payment-allocation.md) — every payment on exactly one ledger row; allocation may materialize rows early, but expected-side totals gate on isPeriodBillable (post-paid: period end; advance: period start)
 - [Billing settings single source of truth](billing-settings-truth.md) — business defaults materialize into tenant columns at write time; never resolve useBusinessDefault at read time
 - [Unified billing engine invariants](billing-engine.md) — rent timeline is a chronological walk; rent_amount is base anchor only with zero revisions; consumers must SELECT escalationApply; renewals must always write a revision

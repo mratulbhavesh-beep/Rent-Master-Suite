@@ -151,6 +151,46 @@ describe("yearly fixed escalation — Total Expected / Balance Due (Mehul scenar
     expect(overpaid.advanceBalance).toBe(400000 - overpaid.totalExpected);
   });
 
+  it("post-paid: excludes an in-progress period row (materialized early for payment allocation) until the period ends", () => {
+    const lease = mehulLease(); // post_paid
+    // Baseline as of 2026-07-10: July hasn't ended → 30 months, 318000.
+    const baseline = computeLedgerSummary([], [{ amount: 14000 }], "2026-07-10", lease);
+    // A mid-month payment materialized the July row (status paid).
+    const withInProgressRow = computeLedgerSummary(
+      [{ amount: "11500.00", dueDate: "2026-08-05", status: "paid", billingPeriodStart: "2026-07-01" }],
+      [{ amount: 14000 }],
+      "2026-07-10",
+      lease
+    );
+    expect(withInProgressRow.monthsElapsed).toBe(30);
+    expect(withInProgressRow.totalExpected).toBe(318000);
+    expect(withInProgressRow.balanceDue).toBe(318000 - 14000);
+    expect(withInProgressRow).toEqual(baseline);
+
+    // Once the period ends, the row counts: 31 months, +11500 expected.
+    const afterPeriodEnd = computeLedgerSummary(
+      [{ amount: "11500.00", dueDate: "2026-08-05", status: "paid", billingPeriodStart: "2026-07-01" }],
+      [{ amount: 14000 }],
+      "2026-07-31",
+      lease
+    );
+    expect(afterPeriodEnd.monthsElapsed).toBe(31);
+    expect(afterPeriodEnd.totalExpected).toBe(318000 + 11500);
+  });
+
+  it("advance: an in-progress period row counts from the period's first day", () => {
+    const lease = { ...mehulLease(), rentCollectionType: "advance" };
+    const summary = computeLedgerSummary(
+      [{ amount: "11500.00", dueDate: "2026-07-06", status: "paid", billingPeriodStart: "2026-07-01" }],
+      [{ amount: 11500 }],
+      "2026-07-10",
+      lease
+    );
+    // Advance bills up front: July is included as soon as it starts.
+    expect(summary.monthsElapsed).toBe(31);
+    expect(summary.totalExpected).toBe(318000 + 11500);
+  });
+
   it("excludes strictly-future generated rows from expected-side totals (advance payment to a coming month)", () => {
     const lease = mehulLease();
     // Baseline: no rows at all.
@@ -584,16 +624,23 @@ describe("computeEffectivePeriods — merged synthesized + real periods", () => 
     expect(byStart.get("2024-06-01")?.amount).toBe(10000);
   });
 
-  it("never hides a real row outside the synthesis window", () => {
-    const periods = computeEffectivePeriods(
-      [
-        // A future-period row that synthesis (through today) would not produce
-        { billingPeriodStart: "2025-06-01", dueDate: "2025-07-05", amount: "10750.00", status: "pending" },
-      ],
-      mehulLease(),
-      "2025-02-15"
-    );
-    expect(periods.some(p => p.billingPeriodStart === "2025-06-01")).toBe(true);
+  it("excludes a not-yet-billable real row, then includes it once the generation gate passes", () => {
+    const rows = [
+      // A future-period row materialized early (e.g. by payment allocation)
+      // that synthesis (through today) would not produce.
+      { billingPeriodStart: "2025-06-01", dueDate: "2025-07-05", amount: "10750.00", status: "pending" },
+    ];
+    // Post-paid: not billable until the period ENDS — hidden before then.
+    const before = computeEffectivePeriods(rows, mehulLease(), "2025-02-15");
+    expect(before.some(p => p.billingPeriodStart === "2025-06-01")).toBe(false);
+    const stillInProgress = computeEffectivePeriods(rows, mehulLease(), "2025-06-15");
+    expect(stillInProgress.some(p => p.billingPeriodStart === "2025-06-01")).toBe(false);
+    // Once ended, the real row is authoritative and must appear.
+    const after = computeEffectivePeriods(rows, mehulLease(), "2025-06-30");
+    expect(after.some(p => p.billingPeriodStart === "2025-06-01")).toBe(true);
+    // Advance: billable from the period's first day.
+    const advance = computeEffectivePeriods(rows, { ...mehulLease(), rentCollectionType: "advance" }, "2025-06-01");
+    expect(advance.some(p => p.billingPeriodStart === "2025-06-01")).toBe(true);
   });
 
   it("summary totals equal the sum of effective periods (engine self-consistency)", () => {

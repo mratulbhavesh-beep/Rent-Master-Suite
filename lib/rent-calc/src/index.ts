@@ -290,6 +290,26 @@ export function computePeriods(
 }
 
 /**
+ * The ONE collection-type-aware billing-generation gate, identical to the
+ * rule `computePeriods` walks with:
+ * - ADVANCE: a period is billable once it has STARTED (`periodStart <= today`)
+ *   — rent is due up front.
+ * - POST-PAID: a period is billable only once it has ENDED
+ *   (`periodEnd <= today`) — rent is billed in arrears, so an in-progress
+ *   month must not count toward Months Active / Total Expected / Balance Due
+ *   until the cycle actually ends.
+ *
+ * Real `generated_rents` rows can exist ahead of this gate (payment
+ * allocation materializes the in-progress or a future period so every
+ * payment lands on exactly one ledger row) — such rows are display-only
+ * until this gate passes and must be excluded from expected-side totals.
+ */
+export function isPeriodBillable(lease: LeaseContext, periodStart: string, today: string): boolean {
+  if (lease.rentCollectionType === "advance") return periodStart <= today;
+  return computePeriodEnd(periodStart, lease.billingCycle) <= today;
+}
+
+/**
  * Locate the billing period a payment for `month`/`year` belongs to, using
  * the same canonical period walker as generation/synthesis. Returns the
  * period (with its timeline-correct amount and due date) whose START falls
@@ -682,15 +702,13 @@ export function computeLedgerSummary(
     return { monthsElapsed, totalExpected, dueExpected, totalPaid, balanceDue, advanceBalance, currentMonthDue };
   }
 
-  const mergedAll = computeEffectivePeriods(generatedRents, lease, today);
-
-  // Strictly-future periods (start after today) are excluded from the
-  // summary's expected-side totals. Such rows only exist when an advance
-  // payment was allocated to a coming month — the payment itself already
-  // counts in totalPaid (netting against balanceDue exactly as it did
-  // before the row existed), so also adding the future period's expected
-  // rent would inflate Balance Due by rent that isn't owed yet.
-  const merged = mergedAll.filter(r => r.billingPeriodStart <= today);
+  // computeEffectivePeriods already applies the collection-type
+  // billing-generation gate (isPeriodBillable): a post-paid in-progress
+  // month or a future month materialized early for payment allocation is
+  // excluded from expected-side totals — the payment itself still counts
+  // in totalPaid, netting against balanceDue exactly as before the row
+  // existed.
+  const merged = computeEffectivePeriods(generatedRents, lease, today);
 
   const monthsElapsed = merged.length;
   const totalExpected = merged.reduce((s, r) => s + r.amount, 0);
@@ -724,10 +742,13 @@ export type EffectivePeriod = {
  * with any real `generated_rents` rows. A real row's `dueDate` and `status`
  * are always authoritative; its `amount` is authoritative only once settled
  * (paid/partial) — unsettled rows use the timeline-correct amount. Real rows
- * outside the synthesis window are always included: generated_rents is the
- * single source of truth; synthesis only fills gaps, it never hides a period
- * that has actually been generated. Used by computeLedgerSummary and by
- * Reports for expected-income breakdowns.
+ * outside the synthesis window are included only when their period passes
+ * the collection-type billing-generation gate (`isPeriodBillable`): rows
+ * materialized early purely for payment allocation (a post-paid in-progress
+ * month, or a future month paid in advance) are NOT billable yet and must
+ * not enter Months Active / Total Expected / Balance Due / reports until
+ * the gate passes. Used by computeLedgerSummary and by Reports for
+ * expected-income breakdowns.
  */
 export function computeEffectivePeriods(
   generatedRents: LedgerEntry[],
@@ -755,7 +776,7 @@ export function computeEffectivePeriods(
   });
 
   for (const r of generatedRents) {
-    if (!synthesizedStarts.has(r.billingPeriodStart)) {
+    if (!synthesizedStarts.has(r.billingPeriodStart) && isPeriodBillable(lease, r.billingPeriodStart, today)) {
       merged.push({ billingPeriodStart: r.billingPeriodStart, dueDate: r.dueDate, amount: toNum(r.amount), status: r.status });
     }
   }

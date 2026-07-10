@@ -9,7 +9,7 @@ Every payment must belong to exactly one `generated_rents` row. Allocation resol
 **Why:** Post-paid tenants' rows aren't generated until the period ends, and advance payments may target future months — without allocation-time row creation, payments counted in Total Paid but vanished from Month History (the original user-reported bug).
 
 ## Totals-neutrality (critical pairing)
-`computeLedgerSummary` counts `totalPaid` from ALL payments but must filter merged effective periods to `billingPeriodStart <= today` for expected-side totals. An early-generated future row would otherwise inflate `totalExpected`/`balanceDue` by exactly that rent (payment already netted via totalPaid). Any future change that lets real rows enter summary expected-side totals must preserve this filter.
+Expected-side totals (Months Active / Total Expected / Balance Due) are gated by `isPeriodBillable` — the ONE collection-type gate identical to `computePeriods`: advance → periodStart <= today; post_paid → periodEnd <= today. `computeEffectivePeriods` applies it to real rows outside the synthesis window, so every consumer (summary, dashboard, reports) inherits it. An early-materialized row (post-paid in-progress month, or future month paid in advance) is display-only in Month History until the gate passes; its payment still counts in totalPaid, netting against balanceDue. Consequence (by design): Month History running balance can differ from summary balanceDue by the not-yet-billable expected amount.
 
 ## How to apply
 - Payment POST/PUT/DELETE all recompute affected row statuses via `recomputeGeneratedRentStatus` (status derived purely from linked payments) — never set paid/partial manually.
