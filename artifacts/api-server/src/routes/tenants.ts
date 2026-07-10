@@ -366,51 +366,22 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
     updates.useBusinessDefault = false;
   }
 
-  // Editing the tenant's Rent Amount from THIS screen is a plain settings
-  // change, not a rent revision event: it must NEVER write a rent_revisions
-  // row. Revision History (with an effective date + reason) is created
-  // exclusively by the dedicated revise/renew workflows
-  // (POST /tenants/:id/revise, POST /tenants/:id/renew).
+  // Edit Tenant and Rent Revision are two completely independent business
+  // workflows and must never be conflated:
+  //   - Edit Tenant  = correcting/updating tenant data (incl. Rent Amount,
+  //     lease dates, billing cycle, advance/postpaid, grace period, deposit).
+  //     It must ALWAYS be allowed, even when Rent Revision History already
+  //     exists, and it must NEVER create, modify, or delete a rent_revisions
+  //     row — automatic or manual.
+  //   - Rent Revision = the landlord's official, dated rent increase/decrease.
+  //     Only POST /tenants/:id/revise (and lease renewal) may write history.
   //
-  // tenant.rentAmount only acts as the timeline's BASE rent when zero
-  // revisions exist (see buildLeaseContext) — in that case a plain edit is
-  // safe and equivalent to "creating a new tenant with this rent". Once any
-  // revision exists, the current effective rent is governed by the revision
-  // timeline; silently reinterpreting a rentAmount edit as a change to the
-  // pre-revision base would retroactively rewrite escalation history the
-  // user never touched. So once revisions exist, a rentAmount edit that
-  // actually changes the active rent must go through the Revise workflow.
-  if ("rentAmount" in updates) {
-    const existingRevisions = await db.select({
-      effectiveFrom: rentRevisionsTable.effectiveFrom,
-      newRent: rentRevisionsTable.newRent,
-      previousRent: rentRevisionsTable.previousRent,
-      status: rentRevisionsTable.status,
-      changedBy: rentRevisionsTable.changedBy,
-    }).from(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, id));
-    if (existingRevisions.length > 0) {
-      const today = new Date().toISOString().split("T")[0];
-      const activeRent = getActiveRent(buildLeaseContext(existing.tenant, existingRevisions), today);
-      const newRent = parseFloat(String(updates.rentAmount));
-      if (Math.abs(newRent - activeRent) > 0.005) {
-        res.status(400).json({
-          error: "This tenant already has a rent revision history. Use the Rent Revision action (with an effective date and reason) to change the rent, not Edit Tenant.",
-        });
-        return;
-      }
-      // Value matches the current active rent (e.g. unrelated fields were
-      // edited on the same form) — drop it so the update is a no-op for
-      // billing and the revision timeline stays untouched.
-      delete updates.rentAmount;
-    }
-  }
-
-  // Any remaining edit that changes WHAT the billing timeline produces
-  // (rent amount base, lease window, cycle, collection type, grace period,
-  // escalation, status) triggers a FULL from-scratch rebuild of the
-  // tenant's ledger — editing a tenant must yield the exact same ledger as
-  // creating a new tenant with these settings. The whole edit (tenant row +
-  // rebuild) runs in ONE transaction so a failure leaves everything intact.
+  // Any edit that changes WHAT the billing timeline produces (rent amount,
+  // lease window, cycle, collection type, grace period, escalation, status)
+  // triggers a FULL from-scratch rebuild of the tenant's generated_rents —
+  // editing a tenant must yield the exact same ledger as creating a new
+  // tenant with these settings. The whole edit (tenant row + rebuild) runs
+  // in ONE transaction so a failure leaves everything intact.
   const billingDefiningKeys = [
     "rentAmount", "leaseStart", "leaseEnd", "billingCycle", "rentCollectionType",
     "gracePeriodDays", "useBusinessDefault", "status",
@@ -419,19 +390,18 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
   const billingChanged = billingDefiningKeys.some(k => k in updates);
 
   const tenant = await db.transaction(async (tx) => {
-    // The rentAmount guard above may have dropped the only field the client
-    // sent (a same-value edit alongside no other changes) — an empty SET
-    // clause is invalid SQL, so just return the tenant as-is.
-    const [updated] = Object.keys(updates).length > 0
-      ? await tx.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning()
-      : await tx.select().from(tenantsTable).where(eq(tenantsTable.id, id));
+    const [updated] = await tx.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
     if (!updated) return undefined;
 
-    // Full rebuild: wipe generated rows + automatic escalation records,
-    // regenerate the canonical timeline under the NEW settings, re-allocate
-    // payments. Payment/receipt records themselves are never modified.
+    // Full rebuild: wipe & regenerate generated_rents under the NEW
+    // settings, re-allocate payments. Payment/receipt records themselves
+    // are never modified. `preserveRevisionHistory: true` is mandatory here
+    // — Edit Tenant must never create, modify, or delete a rent_revisions
+    // row (manual OR automatic); billing amounts are still computed
+    // correctly because the timeline reads the lease + manual revisions
+    // directly, never the automatic audit rows.
     if (billingChanged) {
-      await rebuildTenantBilling(tx, updated.id);
+      await rebuildTenantBilling(tx, updated.id, true);
     }
 
     return updated;

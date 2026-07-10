@@ -217,7 +217,8 @@ async function generateForOneTenant(
   tenant: typeof tenantsTable.$inferSelect,
   today: string,
   dbClient: DbClient = db,
-  maxPeriodsOverride?: number
+  maxPeriodsOverride?: number,
+  skipAutomaticEscalationRecording = false
 ): Promise<number> {
   // The tenant row IS the source of truth for billing settings. Business
   // defaults are materialized into these columns at write time (tenant
@@ -229,8 +230,15 @@ async function generateForOneTenant(
   const revisions = await loadRevisions(dbClient, tenant.id);
   const lease = buildLeaseContext(tenant, revisions);
 
-  // Audit rows for automatic escalation (timeline itself never reads them).
-  await recordAutomaticEscalations(tenant, lease, today, dbClient);
+  // Audit rows for automatic escalation (timeline itself never reads them —
+  // amounts below come purely from the lease/revision timeline, so skipping
+  // this never affects billing correctness). Skipped when called from the
+  // Edit Tenant path: Edit Tenant must never write/normalize rent_revisions
+  // rows, even automatic ones — only the cron generator, Revise, and Renew
+  // workflows own that table.
+  if (!skipAutomaticEscalationRecording) {
+    await recordAutomaticEscalations(tenant, lease, today, dbClient);
+  }
 
   const [lastRent] = await dbClient
     .select({ billingPeriodEnd: generatedRentsTable.billingPeriodEnd })
@@ -305,8 +313,10 @@ async function generateForOneTenant(
  *    historical fact and are NEVER modified beyond the link column).
  * 2. Deletes ALL generated_rents rows (old period boundaries, amounts, due
  *    dates and future schedules are obsolete under the new settings).
- * 3. Deletes ALL automatic-escalation audit rows (rebuilt below from the
- *    new escalation settings; manual revisions are user data and are kept).
+ * 3. When `preserveRevisionHistory` is false (the cron/creation path):
+ *    deletes ALL automatic-escalation audit rows and lets them be rebuilt
+ *    below from the new escalation settings; manual revisions are user data
+ *    and are always kept regardless.
  * 4. Regenerates the canonical period rows over the whole lease lifetime
  *    and re-adopts payments by month/year (same adoption path as creation).
  * 5. Allocates any still-unlinked payments (in-progress post-paid period /
@@ -314,8 +324,21 @@ async function generateForOneTenant(
  *
  * MUST run inside a transaction — pass the tx client — so a failure leaves
  * the previous ledger fully intact.
+ *
+ * @param preserveRevisionHistory When true, rent_revisions is never
+ *   touched — no deletes, no automatic-row inserts/normalization. Billing
+ *   amounts are still computed correctly because the timeline reads the
+ *   lease + manual revisions directly, never the automatic audit rows (see
+ *   recordAutomaticEscalations). MUST be true for every Edit Tenant call:
+ *   that workflow may only correct tenant settings, never touch Rent
+ *   Revision History (manual or automatic) — history is owned exclusively
+ *   by the Revise/Renew workflows and the scheduled generator.
  */
-export async function rebuildTenantBilling(dbClient: DbClient, tenantId: number): Promise<void> {
+export async function rebuildTenantBilling(
+  dbClient: DbClient,
+  tenantId: number,
+  preserveRevisionHistory = false
+): Promise<void> {
   const [tenant] = await dbClient.select().from(tenantsTable).where(eq(tenantsTable.id, tenantId));
   if (!tenant) return;
   const today = new Date().toISOString().split("T")[0];
@@ -325,14 +348,18 @@ export async function rebuildTenantBilling(dbClient: DbClient, tenantId: number)
     .where(eq(paymentsTable.tenantId, tenantId));
   await dbClient.delete(generatedRentsTable)
     .where(eq(generatedRentsTable.tenantId, tenantId));
-  await dbClient.delete(rentRevisionsTable)
-    .where(and(
-      eq(rentRevisionsTable.tenantId, tenantId),
-      eq(rentRevisionsTable.changedBy, "automatic")
-    ));
+  if (!preserveRevisionHistory) {
+    await dbClient.delete(rentRevisionsTable)
+      .where(and(
+        eq(rentRevisionsTable.tenantId, tenantId),
+        eq(rentRevisionsTable.changedBy, "automatic")
+      ));
+  }
 
   if (tenant.status === "active") {
-    await generateForOneTenant(tenant, today, dbClient, maxRebuildPeriods(tenant.billingCycle));
+    await generateForOneTenant(
+      tenant, today, dbClient, maxRebuildPeriods(tenant.billingCycle), preserveRevisionHistory
+    );
   }
 
   // Re-allocate payments whose month/year didn't match any generated period
