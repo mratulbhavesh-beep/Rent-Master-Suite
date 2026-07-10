@@ -82,3 +82,19 @@ fix shipped) — the generated table is always authoritative and must never be s
 tightened synthesis window, even though the synthesis window itself must never manufacture premature
 periods going forward. A stale-data cleanup (deleting incorrectly early-generated pending rows) may
 be needed once when shipping such a fix, since existing rows won't retroactively fix themselves.
+
+**Editing escalation/revision *settings* on a tenant must also resync already-generated but
+unsettled ledger rows, not just rely on live recompute.** `computeLedgerSummary`/`getActiveRent`
+read `escalationValue` etc. fresh from the tenant on every call, so Current Rent/Outstanding/Total
+Expected/Dashboard are automatically correct the instant a setting changes. But `computeMonthHistory`
+(Rent Ledger / Month History) and payment-prefill UI read the raw `generated_rents.amount` column
+directly — that column is a snapshot written at generation time and does NOT update itself when
+escalation config changes later. **Why:** two parallel escalation computations exist in this codebase
+(live recompute for summaries vs. stored snapshot for per-row history); a setting edit only feeds the
+first one automatically. **How to apply:** whenever a PATCH changes any escalation-related field
+(`rentEscalation`, `escalationFrequencyYears`, `escalationType`, `escalationValue`,
+`escalationApply`), loop over that tenant's `generated_rents` rows with `status NOT IN ('paid',
+'partial')` and set each row's `amount` to `getActiveRent(lease, row.billingPeriodStart)` individually
+(not a single flat value — different pending rows can straddle different escalation anniversaries).
+Never touch paid/partial rows — they're historical. This mirrors the existing "rentAmount changed"
+propagation pattern in the tenant PATCH route; keep both in sync if one changes.

@@ -401,6 +401,59 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
     }
   }
 
+  // If any escalation setting changed (enable/disable, frequency, type,
+  // value, or auto/manual apply mode), every ALREADY-GENERATED but unsettled
+  // (pending/overdue) `generated_rents` row must be recomputed to the new
+  // escalation-correct amount for its own billing period — otherwise those
+  // rows keep the stale amount forever, and any screen reading them directly
+  // (Rent Ledger / Month History, payment-due validation) disagrees with the
+  // live-recomputed screens (Current Rent, Outstanding Balance, Total
+  // Expected, Dashboard, Reports), which already derive from
+  // tenant.escalationValue etc. on every read via getActiveRent /
+  // computeLedgerSummary and so are correct immediately. Settled (paid /
+  // partial) rows are historical and must never be touched — they keep the
+  // amount that was actually charged/collected at the time. Truly future,
+  // not-yet-generated periods need no action here: the generator will use
+  // the new escalation settings automatically the next time it runs for
+  // them.
+  if (["rentEscalation", "escalationFrequencyYears", "escalationType", "escalationValue", "escalationApply"].some(k => k in updates)) {
+    try {
+      const revisionRows = await db.select({
+        effectiveFrom: rentRevisionsTable.effectiveFrom,
+        newRent: rentRevisionsTable.newRent,
+        previousRent: rentRevisionsTable.previousRent,
+        status: rentRevisionsTable.status,
+        changedBy: rentRevisionsTable.changedBy,
+      }).from(rentRevisionsTable).where(eq(rentRevisionsTable.tenantId, tenant.id));
+      const lease = buildLeaseContext(tenant, revisionRows);
+
+      const unsettled = await db.select({
+        id: generatedRentsTable.id,
+        amount: generatedRentsTable.amount,
+        billingPeriodStart: generatedRentsTable.billingPeriodStart,
+      }).from(generatedRentsTable).where(and(
+        eq(generatedRentsTable.tenantId, tenant.id),
+        sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
+      ));
+
+      let resynced = 0;
+      for (const row of unsettled) {
+        const correctAmount = getActiveRent(lease, row.billingPeriodStart);
+        if (Math.abs(correctAmount - parseFloat(String(row.amount))) > 0.005) {
+          await db.update(generatedRentsTable)
+            .set({ amount: String(correctAmount) })
+            .where(eq(generatedRentsTable.id, row.id));
+          resynced++;
+        }
+      }
+      if (resynced > 0) {
+        logger.info({ tenantId: tenant.id, resynced }, "Resynced unsettled generated_rents after escalation settings change");
+      }
+    } catch (err) {
+      logger.error({ err, tenantId: tenant.id }, "Failed to resync generated rents after escalation settings change");
+    }
+  }
+
   const [[property], payments, agreements, patchGeneratedRents, patchRevisions] = await Promise.all([
     db.select().from(propertiesTable).where(eq(propertiesTable.id, tenant.propertyId)),
     db.select({ amount: paymentsTable.amount, month: paymentsTable.month, year: paymentsTable.year })
