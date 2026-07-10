@@ -444,6 +444,49 @@ describe("computeLedgerCorrections — the ONE ledger-sync computation", () => {
     expect(computeLedgerCorrections(mehulLease(), [])).toEqual([]);
   });
 
+  it("corrects a stale due date after a collection-type flip (advance -> post_paid)", () => {
+    // Row generated under ADVANCE rules (due at period start + grace) while
+    // the lease is POST-PAID (due at period end + grace).
+    const corrections = computeLedgerCorrections(mehulLease(), [
+      {
+        id: 1,
+        amount: "10000.00", // timeline-correct, so only the due date moves
+        billingPeriodStart: "2024-06-01",
+        billingPeriodEnd: "2024-06-30",
+        dueDate: "2024-06-06",
+      },
+    ]);
+    expect(corrections).toEqual([{ id: 1, correctDueDate: "2024-07-05" }]);
+  });
+
+  it("corrects amount and due date together in a single entry", () => {
+    const corrections = computeLedgerCorrections(mehulLease(), [
+      {
+        id: 1,
+        amount: "10000.00", // stale: 2025-06 period is 10750 after escalation
+        billingPeriodStart: "2025-06-01",
+        billingPeriodEnd: "2025-06-30",
+        dueDate: "2025-06-06", // stale advance-style due date
+      },
+    ]);
+    expect(corrections).toEqual([
+      { id: 1, correctAmount: 10750, correctDueDate: "2025-07-05" },
+    ]);
+  });
+
+  it("leaves a row alone when amount and due date both already match", () => {
+    const corrections = computeLedgerCorrections(mehulLease(), [
+      {
+        id: 1,
+        amount: "10000.00",
+        billingPeriodStart: "2024-06-01",
+        billingPeriodEnd: "2024-06-30",
+        dueDate: "2024-07-05",
+      },
+    ]);
+    expect(corrections).toEqual([]);
+  });
+
   it("never touches rows from periods before the (re-anchored) leaseStart", () => {
     // Post-renewal, leaseStart moves forward; pre-renewal unsettled rows
     // cannot be priced by the current timeline and must be left alone.

@@ -1,5 +1,5 @@
 import { and, eq, desc, sql } from "drizzle-orm";
-import { db, tenantsTable, propertiesTable, generatedRentsTable, businessSettingsTable, rentRevisionsTable } from "@workspace/db";
+import { db, tenantsTable, propertiesTable, generatedRentsTable, rentRevisionsTable } from "@workspace/db";
 import {
   buildLeaseContext,
   getActiveRent,
@@ -65,6 +65,8 @@ export async function resyncTenantLedger(dbClient: DbLike, tenantId: number): Pr
       id: generatedRentsTable.id,
       amount: generatedRentsTable.amount,
       billingPeriodStart: generatedRentsTable.billingPeriodStart,
+      billingPeriodEnd: generatedRentsTable.billingPeriodEnd,
+      dueDate: generatedRentsTable.dueDate,
     })
     .from(generatedRentsTable)
     .where(and(
@@ -72,10 +74,23 @@ export async function resyncTenantLedger(dbClient: DbLike, tenantId: number): Pr
       sql`${generatedRentsTable.status} NOT IN ('paid', 'partial')`
     ));
 
+  // Corrections cover both stale amounts (escalations/revisions) AND stale
+  // due dates (collection type / grace period changes) — one shared path.
+  // When a due date moves, the pending/overdue status is recomputed from the
+  // NEW due date: the overdue marker elsewhere only ever flips pending →
+  // overdue, so without this a due date pushed into the future would leave
+  // the row stuck on a stale "overdue".
+  const today2 = new Date().toISOString().split("T")[0];
   const corrections = computeLedgerCorrections(lease, unsettled);
   for (const c of corrections) {
+    const patch: Record<string, string> = {};
+    if (c.correctAmount !== undefined) patch.amount = String(c.correctAmount);
+    if (c.correctDueDate !== undefined) {
+      patch.dueDate = c.correctDueDate;
+      patch.status = c.correctDueDate < today2 ? "overdue" : "pending";
+    }
     await dbClient.update(generatedRentsTable)
-      .set({ amount: String(c.correctAmount) })
+      .set(patch)
       .where(eq(generatedRentsTable.id, c.id));
   }
 
@@ -188,30 +203,17 @@ async function recordAutomaticEscalations(
 // canonical period walker in @workspace/rent-calc.
 async function generateForOneTenant(
   tenant: typeof tenantsTable.$inferSelect,
-  propertyUserId: number | null,
   today: string
 ): Promise<number> {
-  let billingCycle = tenant.billingCycle;
-  let rentCollectionType = tenant.rentCollectionType;
-  let gracePeriodDays = tenant.gracePeriodDays;
-
-  if (tenant.useBusinessDefault && propertyUserId != null) {
-    const [settings] = await db
-      .select()
-      .from(businessSettingsTable)
-      .where(eq(businessSettingsTable.userId, propertyUserId));
-    if (settings) {
-      billingCycle = settings.defaultBillingCycle;
-      rentCollectionType = settings.defaultRentCollectionType;
-      gracePeriodDays = settings.defaultGracePeriodDays;
-    }
-  }
+  // The tenant row IS the source of truth for billing settings. Business
+  // defaults are materialized into these columns at write time (tenant
+  // create/update and business-settings update) — never resolved here.
+  const billingCycle = tenant.billingCycle;
+  const rentCollectionType = tenant.rentCollectionType;
+  const gracePeriodDays = tenant.gracePeriodDays;
 
   const revisions = await loadRevisions(db, tenant.id);
-  const lease = buildLeaseContext(
-    { ...tenant, billingCycle, rentCollectionType, gracePeriodDays },
-    revisions
-  );
+  const lease = buildLeaseContext(tenant, revisions);
 
   // Audit rows for automatic escalation (timeline itself never reads them).
   await recordAutomaticEscalations(tenant, lease, today);
@@ -263,14 +265,14 @@ export async function runRentGeneration(): Promise<number> {
   let generated = 0;
 
   const tenants = await db
-    .select({ tenant: tenantsTable, propertyUserId: propertiesTable.userId })
+    .select({ tenant: tenantsTable })
     .from(tenantsTable)
     .innerJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
     .where(eq(tenantsTable.status, "active"));
 
-  for (const { tenant, propertyUserId } of tenants) {
+  for (const { tenant } of tenants) {
     try {
-      generated += await generateForOneTenant(tenant, propertyUserId, today);
+      generated += await generateForOneTenant(tenant, today);
     } catch (err) {
       logger.error({ err, tenantId: tenant.id }, "Rent generation failed for tenant");
     }
@@ -286,7 +288,7 @@ export async function runRentGenerationForTenant(tenantId: number): Promise<numb
   const today = new Date().toISOString().split("T")[0];
 
   const [row] = await db
-    .select({ tenant: tenantsTable, propertyUserId: propertiesTable.userId })
+    .select({ tenant: tenantsTable })
     .from(tenantsTable)
     .innerJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
     .where(eq(tenantsTable.id, tenantId));
@@ -294,7 +296,7 @@ export async function runRentGenerationForTenant(tenantId: number): Promise<numb
   if (!row || row.tenant.status !== "active") return 0;
 
   try {
-    const generated = await generateForOneTenant(row.tenant, row.propertyUserId, today);
+    const generated = await generateForOneTenant(row.tenant, today);
     logger.info({ tenantId, generated }, "Rent generation complete for tenant");
     return generated;
   } catch (err) {

@@ -5,6 +5,7 @@ import { computeLedgerSummary, computeMonthHistory, getActiveRent, buildDisplayR
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { logger } from "../lib/logger";
 import { runRentGenerationForTenant, resyncTenantLedger } from "../lib/rent-generator";
+import { getBusinessDefaults } from "../lib/business-defaults";
 import { getUserPropertyIds } from "../lib/ownership";
 
 const router: IRouter = Router();
@@ -197,16 +198,35 @@ router.post("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void
     .where(and(eq(propertiesTable.id, propertyId), eq(propertiesTable.userId, userId)));
   if (!property) { res.status(403).json({ error: "Property not found" }); return; }
 
+  // Billing settings source of truth is the tenant row. When the tenant
+  // follows business defaults, those defaults are COPIED into the row here
+  // (write-time materialization) — never resolved at read time. An explicit
+  // billing field means a custom override, which turns the flag off unless
+  // the client explicitly says otherwise.
+  const hasExplicitBilling = billingCycle != null || rentCollectionType != null || gracePeriodDays != null;
+  const followsDefaults = useBusinessDefault ?? !hasExplicitBilling;
+  let storedBillingCycle = billingCycle ?? "monthly";
+  let storedCollectionType = rentCollectionType ?? "post_paid";
+  let storedGraceDays = gracePeriodDays ?? 5;
+  if (followsDefaults) {
+    const defaults = await getBusinessDefaults(userId);
+    if (defaults) {
+      storedBillingCycle = defaults.billingCycle;
+      storedCollectionType = defaults.rentCollectionType;
+      storedGraceDays = defaults.gracePeriodDays;
+    }
+  }
+
   const [tenant] = await db.insert(tenantsTable).values({
     name, email, phone, propertyId, unitNumber, leaseStart, leaseEnd,
     rentAmount: String(rentAmount), status: status ?? "active", emergencyContact, notes,
     securityDeposit: securityDeposit != null ? String(securityDeposit) : undefined,
     depositDate: depositDate ?? undefined,
     depositStatus: depositStatus ?? "held",
-    billingCycle: billingCycle ?? "monthly",
-    rentCollectionType: rentCollectionType ?? "post_paid",
-    gracePeriodDays: gracePeriodDays ?? 5,
-    useBusinessDefault: useBusinessDefault ?? true,
+    billingCycle: storedBillingCycle,
+    rentCollectionType: storedCollectionType,
+    gracePeriodDays: storedGraceDays,
+    useBusinessDefault: followsDefaults,
     rentEscalation: rentEscalation ?? false,
     escalationFrequencyYears: escalationFrequencyYears ?? undefined,
     escalationType: escalationType ?? undefined,
@@ -328,6 +348,24 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
   if (body.securityDeposit !== undefined) updates.securityDeposit = body.securityDeposit != null ? String(body.securityDeposit) : null;
   if (body.escalationValue !== undefined) updates.escalationValue = String(body.escalationValue);
   if (body.customRenewalValue !== undefined) updates.customRenewalValue = body.customRenewalValue != null ? parseInt(String(body.customRenewalValue), 10) : null;
+
+  // Write-time materialization keeps the tenant row the single source of
+  // truth for billing settings: switching to business defaults copies the
+  // current defaults into the tenant's own columns, and sending an explicit
+  // billing field turns the follow-defaults flag off unless the client
+  // explicitly re-asserts it. No read path ever resolves defaults.
+  const billingFieldKeys = ["billingCycle", "rentCollectionType", "gracePeriodDays"];
+  if (updates.useBusinessDefault === true) {
+    const defaults = await getBusinessDefaults(userId);
+    if (defaults) {
+      updates.billingCycle = defaults.billingCycle;
+      updates.rentCollectionType = defaults.rentCollectionType;
+      updates.gracePeriodDays = defaults.gracePeriodDays;
+    }
+  } else if (updates.useBusinessDefault === undefined && billingFieldKeys.some(k => k in updates)) {
+    updates.useBusinessDefault = false;
+  }
+
   const [tenant] = await db.update(tenantsTable).set(updates).where(eq(tenantsTable.id, id)).returning();
   if (!tenant) { res.status(404).json({ error: "Tenant not found" }); return; }
 

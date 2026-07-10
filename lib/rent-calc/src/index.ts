@@ -473,17 +473,42 @@ export function nextEscalationEvent(
  */
 export function computeLedgerCorrections(
   lease: LeaseContext,
-  unsettledRows: Array<{ id: number; amount: string | number; billingPeriodStart: string }>
-): Array<{ id: number; correctAmount: number }> {
-  const corrections: Array<{ id: number; correctAmount: number }> = [];
+  unsettledRows: Array<{
+    id: number;
+    amount: string | number;
+    billingPeriodStart: string;
+    billingPeriodEnd?: string;
+    dueDate?: string;
+  }>
+): Array<{ id: number; correctAmount?: number; correctDueDate?: string }> {
+  const corrections: Array<{ id: number; correctAmount?: number; correctDueDate?: string }> = [];
   for (const row of unsettledRows) {
     // Periods that predate the (possibly re-anchored, post-renewal)
     // leaseStart cannot be priced by the current timeline — leave them
     // untouched rather than rewriting pre-renewal history.
     if (row.billingPeriodStart < lease.leaseStart) continue;
+    const entry: { id: number; correctAmount?: number; correctDueDate?: string } = { id: row.id };
     const correctAmount = getActiveRent(lease, row.billingPeriodStart);
     if (Math.abs(correctAmount - toNum(row.amount)) > 0.005) {
-      corrections.push({ id: row.id, correctAmount });
+      entry.correctAmount = correctAmount;
+    }
+    // When the caller supplies the stored period end and due date, also
+    // correct due dates that no longer match the lease's collection type /
+    // grace period (e.g. after switching advance <-> post_paid). Same
+    // canonical computeDueDate used at generation time — never a second
+    // implementation.
+    if (row.billingPeriodEnd != null && row.dueDate != null) {
+      const correctDueDate = computeDueDate(
+        { start: row.billingPeriodStart, end: row.billingPeriodEnd },
+        lease.rentCollectionType,
+        lease.gracePeriodDays
+      );
+      if (correctDueDate !== row.dueDate) {
+        entry.correctDueDate = correctDueDate;
+      }
+    }
+    if (entry.correctAmount !== undefined || entry.correctDueDate !== undefined) {
+      corrections.push(entry);
     }
   }
   return corrections;

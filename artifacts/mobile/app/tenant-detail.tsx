@@ -13,7 +13,6 @@ import {
   useListTenantDocuments, getListTenantDocumentsQueryKey,
   useDeleteDocument,
   useListGeneratedRents, getListGeneratedRentsQueryKey,
-  useGetBusinessBillingSettings, getGetBusinessBillingSettingsQueryKey,
   useListLeaseRenewals, getListLeaseRenewalsQueryKey, useRenewLease,
   LeaseRenewal,
   useListRentRevisions, getListRentRevisionsQueryKey, useReviseRent,
@@ -176,10 +175,6 @@ export default function TenantDetailScreen() {
     { tenantId },
     { query: { queryKey: getListGeneratedRentsQueryKey({ tenantId }), enabled: !!tenantId } }
   );
-
-  const { data: businessSettings } = useGetBusinessBillingSettings({
-    query: { queryKey: getGetBusinessBillingSettingsQueryKey() },
-  });
 
   const { data: leaseRenewals, refetch: refetchRenewals } = useListLeaseRenewals(
     tenantId,
@@ -655,18 +650,11 @@ export default function TenantDetailScreen() {
     billingCycleValue === "quarterly" ? "Rent Per Quarter" :
     billingCycleValue === "yearly" ? "Rent Per Year" : "Rent Per Month";
 
-  // Effective settings — use business defaults when the tenant is set that way
-  const effectiveBillingCycle: string = anyTenant.useBusinessDefault && businessSettings
-    ? (businessSettings.defaultBillingCycle ?? "monthly")
-    : billingCycleValue;
-  const effectiveCollectionType: string = anyTenant.useBusinessDefault && businessSettings
-    ? (businessSettings.defaultRentCollectionType ?? "post_paid")
-    : (anyTenant.rentCollectionType ?? "post_paid");
-  const effectiveGracePeriodDays: number = anyTenant.useBusinessDefault && businessSettings
-    ? (businessSettings.defaultGracePeriodDays ?? 5)
-    : (anyTenant.gracePeriodDays ?? 5);
-  const effectiveBillingCycleDisplay =
-    effectiveBillingCycle.charAt(0).toUpperCase() + effectiveBillingCycle.slice(1);
+  // The tenant's stored fields ARE the billing settings — business defaults
+  // are materialized into them server-side at write time. Never re-resolve
+  // defaults here; every screen must show the same stored value.
+  const collectionTypeValue: string = anyTenant.rentCollectionType ?? "post_paid";
+  const gracePeriodValue: number = anyTenant.gracePeriodDays ?? 5;
 
   // Latest generated rent (most recent by billing period end)
   const latestRent = generatedRents && generatedRents.length > 0
@@ -898,9 +886,9 @@ export default function TenantDetailScreen() {
                   <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground }}>Billing Information</Text>
                 </View>
                 {([
-                  { label: "Billing Cycle", value: effectiveBillingCycleDisplay },
-                  { label: "Collection Type", value: effectiveCollectionType === "advance" ? "Advance" : "Post-paid" },
-                  { label: "Grace Period", value: effectiveGracePeriodDays === 0 ? "None" : `${effectiveGracePeriodDays} days` },
+                  { label: "Billing Cycle", value: billingCycleDisplay },
+                  { label: "Collection Type", value: collectionTypeValue === "advance" ? "Advance" : "Post-paid" },
+                  { label: "Grace Period", value: gracePeriodValue === 0 ? "None" : `${gracePeriodValue} days` },
                   { label: "Billing Source", value: anyTenant.useBusinessDefault ? "Business Default" : "Custom" },
                   { label: "Current Period", value: currentPeriodDisplay },
                   { label: "Due Date", value: dueDateDisplay },
