@@ -216,6 +216,7 @@ export default function RentLedgerDetailScreen() {
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [expandedYears, setExpandedYears] = useState<Record<string, boolean>>({});
 
   const { user } = useAuth();
   const businessName =
@@ -268,6 +269,25 @@ export default function RentLedgerDetailScreen() {
     [...(payments ?? [])].sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime()),
     [payments]
   );
+
+  // Group ledger rows by calendar year (from billingPeriodStart) for the
+  // year-wise collapsible view. All financial figures come directly from the
+  // server-computed MonthHistoryRow — no recalculation here.
+  const yearGroups = useMemo(() => {
+    const groups: Record<string, MonthRow[]> = {};
+    for (const row of monthHistory) {
+      const yr = row.billingPeriodStart.substring(0, 4);
+      if (!groups[yr]) groups[yr] = [];
+      groups[yr].push(row);
+    }
+    return Object.entries(groups)
+      .sort(([a], [b]) => Number(b) - Number(a))
+      .map(([year, rows]) => {
+        const yearExpected = rows.reduce((s, r) => s + r.expected, 0);
+        const yearPaid = rows.reduce((s, r) => s + r.paid, 0);
+        return { year, rows, yearExpected, yearPaid, yearBalance: yearExpected - yearPaid };
+      });
+  }, [monthHistory]);
 
   // ── Per-payment receipt actions ──────────────────────────────────────────
   const handlePaymentAction = async (
@@ -538,57 +558,149 @@ export default function RentLedgerDetailScreen() {
           ))}
         </View>
 
-        {/* Month History */}
+        {/* Month History — Year-wise collapsible groups */}
         {activeSection === "history" && (
-          <View style={[styles.tableCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            {/* Table header */}
-            <View style={[styles.tableHeader, { backgroundColor: `${colors.primary}10`, borderBottomColor: colors.border }]}>
-              <Text style={[styles.thCell, { flex: 1.6, color: colors.primary }]}>Month</Text>
-              <Text style={[styles.thCell, { flex: 1.4, color: colors.primary, textAlign: "right" }]}>Expected</Text>
-              <Text style={[styles.thCell, { flex: 1.4, color: colors.primary, textAlign: "right" }]}>Paid</Text>
-              <Text style={[styles.thCell, { flex: 1, color: colors.primary, textAlign: "center" }]}>Status</Text>
-              <Text style={[styles.thCell, { flex: 1.4, color: colors.primary, textAlign: "right" }]}>Balance</Text>
-            </View>
-
+          <View style={{ gap: 10 }}>
             {monthHistory.length === 0 ? (
-              <View style={{ padding: 32, alignItems: "center" }}>
-                <Feather name="inbox" size={32} color={colors.mutedForeground} />
-                <Text style={{ color: colors.mutedForeground, marginTop: 8 }}>No history available</Text>
-              </View>
-            ) : monthHistory.map((m, idx) => {
-              const isEven = idx % 2 === 0;
-              const statusIcon = m.status === "paid" ? "✓" : m.status === "partial" ? "~" : "✗";
-              const statusColor = m.status === "paid" ? colors.success : m.status === "partial" ? colors.warning : colors.destructive;
-              const balColor = m.runningBalance > 0 ? colors.destructive : m.runningBalance < 0 ? colors.success : colors.mutedForeground;
-              const balLabel = m.runningBalance === 0 ? "—" : m.runningBalance < 0 ? `+${fmt(Math.abs(m.runningBalance))}` : fmt(m.runningBalance);
-              return (
-                <View
-                  key={m.billingPeriodStart}
-                  style={[
-                    styles.tableRow,
-                    { backgroundColor: isEven ? `${colors.primary}04` : colors.card, borderBottomColor: colors.border },
-                    idx === monthHistory.length - 1 && { borderBottomWidth: 0 },
-                  ]}
-                >
-                  <Text style={[styles.tdCell, { flex: 1.6, color: colors.foreground, fontWeight: "600" }]}>{m.label}</Text>
-                  <Text style={[styles.tdCell, { flex: 1.4, color: colors.mutedForeground, textAlign: "right" }]}>{fmt(m.expected)}</Text>
-                  <Text style={[styles.tdCell, { flex: 1.4, color: colors.success, textAlign: "right", fontWeight: "600" }]}>{fmt(m.paid)}</Text>
-                  <Text style={[styles.tdCell, { flex: 1, color: statusColor, textAlign: "center", fontWeight: "800", fontSize: 15 }]}>{statusIcon}</Text>
-                  <Text style={[styles.tdCell, { flex: 1.4, color: balColor, textAlign: "right", fontWeight: "600" }]}>{balLabel}</Text>
+              <View style={[styles.tableCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={{ padding: 32, alignItems: "center" }}>
+                  <Feather name="inbox" size={32} color={colors.mutedForeground} />
+                  <Text style={{ color: colors.mutedForeground, marginTop: 8 }}>No history available</Text>
                 </View>
-              );
-            })}
+              </View>
+            ) : (
+              <>
+                {yearGroups.map(({ year, rows, yearExpected, yearPaid, yearBalance }) => {
+                  const isExpanded = expandedYears[year] ?? false;
+                  const allPaid = rows.every(r => r.status === "paid");
+                  const hasOverdue = rows.some(r => r.status === "overdue");
+                  const yearAccentColor = allPaid ? colors.success : hasOverdue ? colors.destructive : colors.warning;
+                  return (
+                    <View key={year} style={[styles.tableCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      {/* Year header — tap to expand/collapse */}
+                      <TouchableOpacity
+                        onPress={() => setExpandedYears(prev => ({ ...prev, [year]: !prev[year] }))}
+                        activeOpacity={0.75}
+                        style={{ paddingHorizontal: 14, paddingVertical: 14 }}
+                      >
+                        <View style={{ flexDirection: "row", alignItems: "center" }}>
+                          <View style={[{ width: 4, height: 36, borderRadius: 2, marginRight: 12 }, { backgroundColor: yearAccentColor }]} />
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                              <Text style={{ fontSize: 17, fontWeight: "800", color: colors.foreground }}>{year}</Text>
+                              <View style={{ backgroundColor: `${yearAccentColor}18`, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                                <Text style={{ fontSize: 10, fontWeight: "700", color: yearAccentColor }}>
+                                  {rows.length} {periodsLabel.toLowerCase()}
+                                </Text>
+                              </View>
+                            </View>
+                            <View style={{ flexDirection: "row", gap: 14, marginTop: 6 }}>
+                              <Text style={{ fontSize: 12, color: colors.mutedForeground }}>
+                                Expected{" "}
+                                <Text style={{ fontWeight: "700", color: colors.foreground }}>{fmt(yearExpected)}</Text>
+                              </Text>
+                              <Text style={{ fontSize: 12, color: colors.mutedForeground }}>
+                                Paid{" "}
+                                <Text style={{ fontWeight: "700", color: colors.success }}>{fmt(yearPaid)}</Text>
+                              </Text>
+                              <Text style={{ fontSize: 12, color: colors.mutedForeground }}>
+                                Bal{" "}
+                                <Text style={{ fontWeight: "700", color: yearBalance > 0 ? colors.destructive : colors.success }}>
+                                  {fmt(yearBalance)}
+                                </Text>
+                              </Text>
+                            </View>
+                          </View>
+                          <Feather
+                            name={isExpanded ? "chevron-up" : "chevron-down"}
+                            size={20}
+                            color={colors.mutedForeground}
+                          />
+                        </View>
+                      </TouchableOpacity>
 
-            {/* Summary row */}
-            <View style={[styles.tableRow, { backgroundColor: `${colors.primary}10`, borderTopWidth: 1, borderTopColor: colors.border, borderBottomWidth: 0 }]}>
-              <Text style={[styles.tdCell, { flex: 1.6, color: colors.foreground, fontWeight: "800" }]}>TOTAL</Text>
-              <Text style={[styles.tdCell, { flex: 1.4, color: colors.primary, textAlign: "right", fontWeight: "700" }]}>{fmt(totalExpected)}</Text>
-              <Text style={[styles.tdCell, { flex: 1.4, color: colors.success, textAlign: "right", fontWeight: "700" }]}>{fmt(totalPaid)}</Text>
-              <Text style={[styles.tdCell, { flex: 1, textAlign: "center" }]}></Text>
-              <Text style={[styles.tdCell, { flex: 1.4, color: balanceDue > 0 ? colors.destructive : colors.success, textAlign: "right", fontWeight: "800" }]}>
-                {balanceDue > 0 ? fmt(balanceDue) : `+${fmt(advanceBalance)}`}
-              </Text>
-            </View>
+                      {/* Expanded monthly detail */}
+                      {isExpanded && (
+                        <>
+                          {/* Column headers */}
+                          <View style={[styles.tableHeader, { backgroundColor: `${colors.primary}10`, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, borderBottomColor: colors.border }]}>
+                            <Text style={[styles.thCell, { flex: 1.6, color: colors.primary }]}>Month</Text>
+                            <Text style={[styles.thCell, { flex: 1.4, color: colors.primary, textAlign: "right" }]}>Expected</Text>
+                            <Text style={[styles.thCell, { flex: 1.4, color: colors.primary, textAlign: "right" }]}>Paid</Text>
+                            <Text style={[styles.thCell, { flex: 0.9, color: colors.primary, textAlign: "center" }]}>Status</Text>
+                            <Text style={[styles.thCell, { flex: 1.5, color: colors.primary, textAlign: "right" }]}>Balance</Text>
+                          </View>
+
+                          {/* Monthly rows — all figures from server, zero recalculation */}
+                          {rows.map((m, idx) => {
+                            const isEven = idx % 2 === 0;
+                            const statusIcon = m.status === "paid" ? "✓" : m.status === "partial" ? "~" : "✗";
+                            const statusColor = m.status === "paid" ? colors.success : m.status === "partial" ? colors.warning : colors.destructive;
+                            const balColor = m.runningBalance > 0 ? colors.destructive : m.runningBalance < 0 ? colors.success : colors.mutedForeground;
+                            const balLabel = m.runningBalance === 0 ? "—" : m.runningBalance < 0 ? `+${fmt(Math.abs(m.runningBalance))}` : fmt(m.runningBalance);
+                            return (
+                              <View
+                                key={m.billingPeriodStart}
+                                style={[
+                                  styles.tableRow,
+                                  { backgroundColor: isEven ? `${colors.primary}04` : colors.card, borderBottomColor: colors.border },
+                                  idx === rows.length - 1 && { borderBottomWidth: 0 },
+                                ]}
+                              >
+                                <Text style={[styles.tdCell, { flex: 1.6, color: colors.foreground, fontWeight: "600" }]}>{m.label}</Text>
+                                <Text style={[styles.tdCell, { flex: 1.4, color: colors.mutedForeground, textAlign: "right" }]}>{fmt(m.expected)}</Text>
+                                <Text style={[styles.tdCell, { flex: 1.4, color: colors.success, textAlign: "right", fontWeight: "600" }]}>{fmt(m.paid)}</Text>
+                                <Text style={[styles.tdCell, { flex: 0.9, color: statusColor, textAlign: "center", fontWeight: "800", fontSize: 15 }]}>{statusIcon}</Text>
+                                <Text style={[styles.tdCell, { flex: 1.5, color: balColor, textAlign: "right", fontWeight: "600" }]}>{balLabel}</Text>
+                              </View>
+                            );
+                          })}
+
+                          {/* Year subtotal */}
+                          <View style={[styles.tableRow, { backgroundColor: `${colors.primary}10`, borderTopWidth: 1, borderTopColor: colors.border, borderBottomWidth: 0 }]}>
+                            <Text style={[styles.tdCell, { flex: 1.6, color: colors.foreground, fontWeight: "800" }]}>Subtotal</Text>
+                            <Text style={[styles.tdCell, { flex: 1.4, color: colors.primary, textAlign: "right", fontWeight: "700" }]}>{fmt(yearExpected)}</Text>
+                            <Text style={[styles.tdCell, { flex: 1.4, color: colors.success, textAlign: "right", fontWeight: "700" }]}>{fmt(yearPaid)}</Text>
+                            <Text style={[styles.tdCell, { flex: 0.9, textAlign: "center" }]} />
+                            <Text style={[styles.tdCell, { flex: 1.5, color: yearBalance > 0 ? colors.destructive : colors.success, textAlign: "right", fontWeight: "800" }]}>
+                              {fmt(yearBalance)}
+                            </Text>
+                          </View>
+                        </>
+                      )}
+                    </View>
+                  );
+                })}
+
+                {/* Overall Grand Total */}
+                <View style={[styles.tableCard, {
+                  backgroundColor: `${colors.primary}08`,
+                  borderColor: `${colors.primary}30`,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: 14,
+                }]}>
+                  <Text style={{ fontSize: 13, fontWeight: "800", color: colors.foreground }}>Grand Total</Text>
+                  <View style={{ flexDirection: "row", gap: 16 }}>
+                    <View style={{ alignItems: "flex-end" }}>
+                      <Text style={{ fontSize: 10, color: colors.mutedForeground, fontWeight: "600", textTransform: "uppercase" }}>Expected</Text>
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: colors.primary }}>{fmt(totalExpected)}</Text>
+                    </View>
+                    <View style={{ alignItems: "flex-end" }}>
+                      <Text style={{ fontSize: 10, color: colors.mutedForeground, fontWeight: "600", textTransform: "uppercase" }}>Paid</Text>
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: colors.success }}>{fmt(totalPaid)}</Text>
+                    </View>
+                    <View style={{ alignItems: "flex-end" }}>
+                      <Text style={{ fontSize: 10, color: colors.mutedForeground, fontWeight: "600", textTransform: "uppercase" }}>Balance</Text>
+                      <Text style={{ fontSize: 13, fontWeight: "800", color: balanceDue > 0 ? colors.destructive : colors.success }}>
+                        {balanceDue > 0 ? fmt(balanceDue) : `+${fmt(advanceBalance)}`}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              </>
+            )}
           </View>
         )}
 
@@ -606,7 +718,7 @@ export default function RentLedgerDetailScreen() {
             ) : sortedPayments.map((p, idx) => {
               const isLast = idx === sortedPayments.length - 1;
               const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-              const monthLabel = p.month ? `${MONTHS[p.month - 1]} ${p.year}` : "—";
+              const adjustedAgainst = p.month ? `${MONTHS[p.month - 1]} ${p.year}` : null;
               const statusColor = p.status === "paid" ? colors.success : p.status === "partial" ? colors.warning : colors.destructive;
               const anyBusy = busyKey !== null;
               return (
@@ -617,17 +729,22 @@ export default function RentLedgerDetailScreen() {
                   </View>
                   <View style={[styles.timelineCard, { backgroundColor: `${colors.primary}05`, borderColor: colors.border, borderWidth: 1 }]}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <View>
+                      <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 15, fontWeight: "700", color: colors.success }}>
                           {fmt(Number(p.amount))}
                         </Text>
                         <Text style={{ fontSize: 12, color: colors.mutedForeground, marginTop: 2 }}>
-                          {monthLabel} · {fmtDate(p.paymentDate)}
-                        </Text>
-                        <Text style={{ fontSize: 12, color: colors.mutedForeground, marginTop: 2 }}>
-                          {p.method.replace(/_/g, " ")}
+                          {fmtDate(p.paymentDate)} · {p.method.replace(/_/g, " ")}
                           {p.notes ? ` · ${p.notes}` : ""}
                         </Text>
+                        {adjustedAgainst && (
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6, backgroundColor: `${colors.primary}10`, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, alignSelf: "flex-start" as any }}>
+                            <Feather name="arrow-right-circle" size={11} color={colors.primary} />
+                            <Text style={{ fontSize: 11, fontWeight: "700", color: colors.primary }}>
+                              Adjusted Against: {adjustedAgainst}
+                            </Text>
+                          </View>
+                        )}
                       </View>
                       <View style={[styles.statusBadge, { backgroundColor: `${statusColor}18` }]}>
                         <Text style={{ fontSize: 10, fontWeight: "800", color: statusColor }}>
