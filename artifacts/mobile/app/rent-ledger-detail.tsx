@@ -720,9 +720,23 @@ export default function RentLedgerDetailScreen() {
               </View>
             ) : sortedPayments.map((p, idx) => {
               const isLast = idx === sortedPayments.length - 1;
-              const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-              const adjustedAgainst = p.month ? `${MONTHS[p.month - 1]} ${p.year}` : null;
-              const isPendingGeneration = p.generatedRentId == null;
+              const TL_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+              // Build allocation chips from actual billing periods (not cash-received date)
+              type AllocRow = { generatedRentId: number | null; allocatedAmount: number; billingPeriodStart: string | null; billingPeriodEnd: string | null };
+              const allocations = ((p as any).allocations ?? []) as AllocRow[];
+              const allocationChips = allocations.map((a) => {
+                const pStart = a.billingPeriodStart ? new Date(a.billingPeriodStart + "T00:00:00") : null;
+                return {
+                  label: pStart ? `${TL_MONTHS[pStart.getMonth()]} ${pStart.getFullYear()}` : "Pending",
+                  amount: Number(a.allocatedAmount),
+                };
+              });
+              // Fallback for legacy payments that pre-date allocation rows
+              const legacyLabel = allocations.length === 0 && p.generatedRentId != null && p.month
+                ? `${TL_MONTHS[p.month - 1]} ${p.year}` : null;
+
+              const isPendingGeneration = p.generatedRentId == null && allocations.length === 0;
               const statusColor = isPendingGeneration
                 ? colors.warning
                 : p.status === "paid" ? colors.success : p.status === "partial" ? colors.warning : colors.destructive;
@@ -743,11 +757,33 @@ export default function RentLedgerDetailScreen() {
                           {fmtDate(p.paymentDate)} · {p.method.replace(/_/g, " ")}
                           {p.notes ? ` · ${p.notes}` : ""}
                         </Text>
-                        {adjustedAgainst && (
+                        {/* Allocation breakdown — shows ACTUAL billing periods, not cash-received date */}
+                        {allocationChips.length > 0 && (
+                          <View style={{ marginTop: 6, gap: 3 }}>
+                            <Text style={{ fontSize: 10, color: colors.mutedForeground, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                              Applied to:
+                            </Text>
+                            {allocationChips.map((chip, ci) => (
+                              <View key={ci} style={{ flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: `${colors.primary}10`, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, alignSelf: "flex-start" as any }}>
+                                <Feather name="arrow-right-circle" size={10} color={colors.primary} />
+                                <Text style={{ fontSize: 11, fontWeight: "700", color: colors.primary }}>
+                                  {chip.label}
+                                </Text>
+                                {allocationChips.length > 1 && (
+                                  <Text style={{ fontSize: 11, color: colors.mutedForeground }}>
+                                    · {fmt(chip.amount)}
+                                  </Text>
+                                )}
+                              </View>
+                            ))}
+                          </View>
+                        )}
+                        {/* Legacy fallback for payments created before allocation rows existed */}
+                        {legacyLabel && (
                           <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6, backgroundColor: `${colors.primary}10`, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, alignSelf: "flex-start" as any }}>
                             <Feather name="arrow-right-circle" size={11} color={colors.primary} />
                             <Text style={{ fontSize: 11, fontWeight: "700", color: colors.primary }}>
-                              Adjusted Against: {adjustedAgainst}
+                              Applied to: {legacyLabel}
                             </Text>
                           </View>
                         )}

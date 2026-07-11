@@ -52,7 +52,39 @@ router.get("/payments", requireAuth, async (req: AuthRequest, res): Promise<void
       results = results.filter(r => r.payment.month === m);
     }
   }
-  res.json(results.map(r => formatPayment(r.payment, r.tenantName, r.propertyName, r.unitNumber)));
+
+  const formatted = results.map(r => formatPayment(r.payment, r.tenantName, r.propertyName, r.unitNumber));
+  if (formatted.length === 0) { res.json([]); return; }
+
+  // Batch-fetch allocations for all returned payments (same shape as GET /payments/:id)
+  const paymentIds = formatted.map(p => p.id);
+  const allAllocs = await db
+    .select({
+      paymentId: paymentAllocationsTable.paymentId,
+      generatedRentId: paymentAllocationsTable.generatedRentId,
+      allocatedAmount: paymentAllocationsTable.allocatedAmount,
+      billingPeriodStart: generatedRentsTable.billingPeriodStart,
+      billingPeriodEnd: generatedRentsTable.billingPeriodEnd,
+    })
+    .from(paymentAllocationsTable)
+    .leftJoin(generatedRentsTable, eq(paymentAllocationsTable.generatedRentId, generatedRentsTable.id))
+    .where(inArray(paymentAllocationsTable.paymentId, paymentIds));
+
+  const allocsByPayment = new Map<number, typeof allAllocs>();
+  for (const a of allAllocs) {
+    if (!allocsByPayment.has(a.paymentId)) allocsByPayment.set(a.paymentId, []);
+    allocsByPayment.get(a.paymentId)!.push(a);
+  }
+
+  res.json(formatted.map(p => ({
+    ...p,
+    allocations: (allocsByPayment.get(p.id) ?? []).map(a => ({
+      generatedRentId: a.generatedRentId,
+      allocatedAmount: parseFloat(String(a.allocatedAmount)),
+      billingPeriodStart: a.billingPeriodStart ?? null,
+      billingPeriodEnd: a.billingPeriodEnd ?? null,
+    })),
+  })));
 });
 
 router.post("/payments", requireAuth, async (req: AuthRequest, res): Promise<void> => {
