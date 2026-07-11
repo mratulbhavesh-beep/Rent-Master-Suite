@@ -26,6 +26,7 @@ import type {
   AuthResponse,
   BackupExportData,
   BackupMeta,
+  BillingPeriod,
   BusinessSettings,
   BusinessSettingsInput,
   ChangePassword200,
@@ -2314,6 +2315,83 @@ export function useGetTenantLedger<TData = Awaited<ReturnType<typeof getTenantLe
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetTenantLedgerQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetTenantBillingPeriodsUrl = (id: number,) => {
+
+
+
+
+  return `/api/tenants/${id}/billing-periods`
+}
+
+/**
+ * @summary List generated rent billing periods with remaining-due amounts for payment allocation
+ */
+export const getTenantBillingPeriods = async (id: number, options?: RequestInit): Promise<BillingPeriod[]> => {
+
+  return customFetch<BillingPeriod[]>(getGetTenantBillingPeriodsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTenantBillingPeriodsQueryKey = (id: number,) => {
+    return [
+    `/api/tenants/${id}/billing-periods`
+    ] as const;
+    }
+
+
+export const getGetTenantBillingPeriodsQueryOptions = <TData = Awaited<ReturnType<typeof getTenantBillingPeriods>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTenantBillingPeriods>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTenantBillingPeriodsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTenantBillingPeriods>>> = ({ signal }) => getTenantBillingPeriods(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTenantBillingPeriods>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTenantBillingPeriodsQueryResult = NonNullable<Awaited<ReturnType<typeof getTenantBillingPeriods>>>
+export type GetTenantBillingPeriodsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List generated rent billing periods with remaining-due amounts for payment allocation
+ */
+
+export function useGetTenantBillingPeriods<TData = Awaited<ReturnType<typeof getTenantBillingPeriods>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTenantBillingPeriods>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTenantBillingPeriodsQueryOptions(id,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

@@ -648,6 +648,29 @@ paths:
         "404":
           description: Not found
 
+  /tenants/{id}/billing-periods:
+    get:
+      operationId: getTenantBillingPeriods
+      tags: [tenants]
+      summary: List generated rent billing periods with remaining-due amounts for payment allocation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of billing periods
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BillingPeriod"
+        "404":
+          description: Not found
+
   /payments:
     get:
       operationId: listPayments
@@ -2116,6 +2139,43 @@ components:
         reason:
           type: string
 
+    PaymentAllocation:
+      type: object
+      required: [generatedRentId, allocatedAmount]
+      properties:
+        generatedRentId:
+          type: ["integer", "null"]
+        allocatedAmount:
+          type: number
+        billingPeriodStart:
+          type: ["string", "null"]
+        billingPeriodEnd:
+          type: ["string", "null"]
+
+    BillingPeriod:
+      type: object
+      required: [id, expectedAmount, paidAmount, remainingDue, status]
+      properties:
+        id:
+          type: integer
+        billingPeriodStart:
+          type: ["string", "null"]
+        billingPeriodEnd:
+          type: ["string", "null"]
+        dueDate:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [pending, partial, paid, overdue]
+        billingCycle:
+          type: ["string", "null"]
+        expectedAmount:
+          type: number
+        paidAmount:
+          type: number
+        remainingDue:
+          type: number
+
     Payment:
       type: object
       required: [id, tenantId, propertyId, amount, paymentDate, month, year, method, status, createdAt]
@@ -2152,6 +2212,10 @@ components:
           type: ["string", "null"]
         generatedRentId:
           type: ["integer", "null"]
+        allocations:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentAllocation"
         createdAt:
           type: string
 
@@ -2181,6 +2245,13 @@ components:
           type: string
         generatedRentId:
           type: integer
+        allocationMode:
+          type: string
+          enum: [auto, specific]
+          description: "auto = FIFO oldest-first; specific = allocate to targetGeneratedRentId. Omit for backward-compat."
+        targetGeneratedRentId:
+          type: integer
+          description: "For allocationMode=specific: the generated_rents.id to allocate to."
 
     Expense:
       type: object

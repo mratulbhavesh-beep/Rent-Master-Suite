@@ -5,6 +5,7 @@ import { computeLedgerSummary, computeMonthHistory, getActiveRent, buildDisplayR
 import { requireAuth, type AuthRequest } from "../middlewares/auth";
 import { logger } from "../lib/logger";
 import { runRentGenerationForTenant, resyncTenantLedger, rebuildTenantBilling } from "../lib/rent-generator";
+import { getBillingPeriods } from "../lib/payment-allocator";
 import { getBusinessDefaults } from "../lib/business-defaults";
 import { getUserPropertyIds } from "../lib/ownership";
 
@@ -324,6 +325,26 @@ router.get("/tenants/:id/ledger", requireAuth, async (req: AuthRequest, res): Pr
 
   const today = new Date().toISOString().split("T")[0];
   res.json(computeMonthHistory(generatedRents, payments, today));
+});
+
+/**
+ * List all generated rent periods for a tenant with per-period remaining-due
+ * amounts (factoring in existing allocations from all payments). Used by the
+ * Record Payment and Edit Payment screens to render the period selector for
+ * SPECIFIC allocation mode.
+ */
+router.get("/tenants/:id/billing-periods", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const userId = req.user!.id;
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  const [row] = await db
+    .select({ propertyUserId: propertiesTable.userId })
+    .from(tenantsTable)
+    .leftJoin(propertiesTable, eq(tenantsTable.propertyId, propertiesTable.id))
+    .where(eq(tenantsTable.id, id));
+  if (!row || row.propertyUserId !== userId) { res.status(404).json({ error: "Tenant not found" }); return; }
+  const periods = await getBillingPeriods(db, id);
+  res.json(periods);
 });
 
 router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise<void> => {

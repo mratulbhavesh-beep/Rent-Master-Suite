@@ -14,12 +14,13 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   useCreatePayment,
   useListTenants,
-  useListGeneratedRents,
+  useGetTenantBillingPeriods,
   getListTenantsQueryKey,
   getListPaymentsQueryKey,
   getGetDashboardSummaryQueryKey,
   getGetTenantQueryKey,
-  getListGeneratedRentsQueryKey,
+  getGetTenantBillingPeriodsQueryKey,
+  type BillingPeriod,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
@@ -35,8 +36,26 @@ const METHODS = [
 ] as const;
 
 type Method = (typeof METHODS)[number]["key"];
+type AllocMode = "auto" | "specific";
 
 const today = new Date().toISOString().split("T")[0];
+
+const STATUS_COLORS: Record<string, string> = {
+  pending: "#f59e0b",
+  overdue: "#ef4444",
+  partial: "#3b82f6",
+  paid: "#22c55e",
+};
+
+function periodLabel(p: BillingPeriod): string {
+  if (!p.billingPeriodStart) return "—";
+  const d = new Date(p.billingPeriodStart + "T00:00:00");
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  if (p.billingCycle === "monthly") return `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  const end = p.billingPeriodEnd ? new Date(p.billingPeriodEnd + "T00:00:00") : null;
+  if (!end) return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} – ${end.getDate()} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
+}
 
 export default function PaymentAddScreen() {
   const router = useRouter();
@@ -48,12 +67,13 @@ export default function PaymentAddScreen() {
   const [tenantId, setTenantId] = useState<number | null>(
     params.tenantId ? Number(params.tenantId) : null
   );
+  const [allocationMode, setAllocationMode] = useState<AllocMode>("auto");
+  const [selectedBillingPeriodId, setSelectedBillingPeriodId] = useState<number | null>(null);
   const [paymentType, setPaymentType] = useState<"full" | "partial">("full");
   const [amount, setAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(today);
   const [method, setMethod] = useState<Method>("cash");
   const [notes, setNotes] = useState("");
-  const [selectedGeneratedRentId, setSelectedGeneratedRentId] = useState<number | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const { data: tenants } = useListTenants(
@@ -61,9 +81,9 @@ export default function PaymentAddScreen() {
     { query: { queryKey: getListTenantsQueryKey({}) } }
   );
 
-  const { data: pendingRents } = useListGeneratedRents(
-    { tenantId: tenantId ?? undefined, status: "pending" },
-    { query: { queryKey: getListGeneratedRentsQueryKey({ tenantId: tenantId ?? undefined, status: "pending" }), enabled: !!tenantId } }
+  const { data: billingPeriods, isLoading: periodsLoading } = useGetTenantBillingPeriods(
+    tenantId!,
+    { query: { queryKey: getGetTenantBillingPeriodsQueryKey(tenantId!), enabled: !!tenantId } }
   );
 
   const createMutation = useCreatePayment();
@@ -80,6 +100,12 @@ export default function PaymentAddScreen() {
     [tenants, tenantId]
   );
 
+  // Oldest-outstanding period (for info display in Auto mode)
+  const oldestOutstanding = useMemo(() => {
+    if (!billingPeriods) return null;
+    return billingPeriods.find(p => p.status !== "paid" && p.remainingDue > 0) ?? null;
+  }, [billingPeriods]);
+
   const monthFromDate = useMemo(() => {
     const d = new Date(paymentDate);
     return isNaN(d.getTime()) ? new Date() : d;
@@ -88,16 +114,19 @@ export default function PaymentAddScreen() {
   const handleSelectTenant = (id: number, rentAmount: number) => {
     setTenantId(id);
     setAmount(rentAmount.toString());
-    setSelectedGeneratedRentId(null);
+    setSelectedBillingPeriodId(null);
     setErrors((e) => ({ ...e, tenantId: "" }));
   };
 
-  const handleSelectGeneratedRent = (rentId: number, rentAmount: number) => {
-    if (selectedGeneratedRentId === rentId) {
-      setSelectedGeneratedRentId(null);
+  const handleSelectBillingPeriod = (period: BillingPeriod) => {
+    if (selectedBillingPeriodId === period.id) {
+      setSelectedBillingPeriodId(null);
     } else {
-      setSelectedGeneratedRentId(rentId);
-      setAmount(rentAmount.toString());
+      setSelectedBillingPeriodId(period.id);
+      // Pre-fill amount to remaining due (capped at current amount if already set)
+      if (period.remainingDue > 0) {
+        setAmount(period.remainingDue.toString());
+      }
     }
   };
 
@@ -107,6 +136,9 @@ export default function PaymentAddScreen() {
     if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0)
       errs.amount = "Enter a valid amount";
     if (!paymentDate) errs.paymentDate = "Payment date is required";
+    if (allocationMode === "specific" && !selectedBillingPeriodId) {
+      errs.period = "Select a billing period to allocate this payment to";
+    }
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -129,7 +161,8 @@ export default function PaymentAddScreen() {
           method,
           status,
           notes: notes || undefined,
-          generatedRentId: selectedGeneratedRentId ?? undefined,
+          allocationMode,
+          targetGeneratedRentId: allocationMode === "specific" ? (selectedBillingPeriodId ?? undefined) : undefined,
         },
       },
       {
@@ -139,6 +172,7 @@ export default function PaymentAddScreen() {
           queryClient.invalidateQueries({ queryKey: getListTenantsQueryKey() });
           if (tenantId) {
             queryClient.invalidateQueries({ queryKey: getGetTenantQueryKey(tenantId) });
+            queryClient.invalidateQueries({ queryKey: getGetTenantBillingPeriodsQueryKey(tenantId) });
           }
           router.replace(`/payment-receipt?id=${payment.id}` as any);
         },
@@ -173,7 +207,6 @@ export default function PaymentAddScreen() {
         <View style={styles.iconButton} />
       </View>
 
-      {/* Scroll content — button is OUTSIDE scroll */}
       <KeyboardAwareScrollViewCompat
         style={styles.scroll}
         contentContainerStyle={styles.content}
@@ -195,9 +228,7 @@ export default function PaymentAddScreen() {
             style={[
               styles.pickerCard,
               {
-                borderColor: errors.tenantId
-                  ? colors.destructive
-                  : colors.border,
+                borderColor: errors.tenantId ? colors.destructive : colors.border,
               },
             ]}
           >
@@ -206,9 +237,7 @@ export default function PaymentAddScreen() {
                 key={t.id}
                 style={[
                   styles.tenantRow,
-                  tenantId === t.id && {
-                    backgroundColor: `${colors.primary}12`,
-                  },
+                  tenantId === t.id && { backgroundColor: `${colors.primary}12` },
                 ]}
                 onPress={() => handleSelectTenant(t.id, t.rentAmount)}
                 activeOpacity={0.7}
@@ -219,13 +248,7 @@ export default function PaymentAddScreen() {
                   </Text>
                 </View>
                 <View style={styles.tenantInfo}>
-                  <Text
-                    style={{
-                      color: tenantId === t.id ? colors.primary : colors.foreground,
-                      fontWeight: "600",
-                      fontSize: 15,
-                    }}
-                  >
+                  <Text style={{ color: tenantId === t.id ? colors.primary : colors.foreground, fontWeight: "600", fontSize: 15 }}>
                     {t.name}
                   </Text>
                   <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
@@ -243,65 +266,133 @@ export default function PaymentAddScreen() {
           </View>
         )}
         {errors.tenantId ? (
-          <Text style={[styles.errorText, { color: colors.destructive }]}>
-            {errors.tenantId}
-          </Text>
+          <Text style={[styles.errorText, { color: colors.destructive }]}>{errors.tenantId}</Text>
         ) : null}
 
-        {/* Pending Generated Rents */}
-        {tenantId && pendingRents && pendingRents.length > 0 && (
+        {/* ── Allocation Mode ─────────────────────────────────────────────── */}
+        {tenantId && (
           <View style={{ marginTop: 20 }}>
             <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
-              Pending Rent Entries
+              Allocation Mode
             </Text>
-            <View style={[styles.infoBox, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}30`, marginBottom: 10 }]}>
-              <Feather name="calendar" size={14} color={colors.primary} />
-              <Text style={[styles.infoText, { color: colors.primary }]}>
-                Select a pending rent to link this payment to it
-              </Text>
-            </View>
-            {pendingRents.map((rent: any) => {
-              const isSelected = selectedGeneratedRentId === rent.id;
-              const dueLabel = rent.dueDate
-                ? fmtDate(rent.dueDate)
-                : "—";
-              const period = rent.billingPeriodStart
-                ? `${new Date(rent.billingPeriodStart).toLocaleString("default", { month: "short", year: "numeric" })} – ${new Date(rent.billingPeriodEnd).toLocaleString("default", { month: "short", year: "numeric" })}`
-                : "";
-              return (
+            <View style={[styles.segmented, { backgroundColor: colors.input }]}>
+              {(["auto", "specific"] as AllocMode[]).map((mode) => (
                 <TouchableOpacity
-                  key={rent.id}
+                  key={mode}
                   style={[
-                    styles.rentEntry,
-                    {
-                      borderColor: isSelected ? colors.primary : colors.border,
-                      backgroundColor: isSelected ? `${colors.primary}10` : colors.card,
-                    },
+                    styles.segmentBtn,
+                    allocationMode === mode && { backgroundColor: colors.primary, elevation: 2 },
                   ]}
-                  onPress={() => handleSelectGeneratedRent(rent.id, parseFloat(String(rent.amount)))}
-                  activeOpacity={0.7}
+                  onPress={() => {
+                    setAllocationMode(mode);
+                    setSelectedBillingPeriodId(null);
+                    setErrors((e) => ({ ...e, period: "" }));
+                  }}
+                  activeOpacity={0.8}
                 >
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 14, fontWeight: "700", color: isSelected ? colors.primary : colors.foreground }}>
-                      ₹{parseFloat(String(rent.amount)).toLocaleString("en-IN")}
-                    </Text>
-                    {period ? (
-                      <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>{period}</Text>
-                    ) : null}
-                    <Text style={{ fontSize: 11, color: colors.mutedForeground }}>Due: {dueLabel}</Text>
-                  </View>
-                  <View style={[styles.rentStatus, {
-                    backgroundColor: `${colors.warning}20`,
-                    borderColor: `${colors.warning}40`,
-                  }]}>
-                    <Text style={{ fontSize: 10, fontWeight: "800", color: colors.warning }}>PENDING</Text>
-                  </View>
-                  {isSelected && (
-                    <Feather name="check-circle" size={18} color={colors.primary} style={{ marginLeft: 8 }} />
-                  )}
+                  <Feather
+                    name={mode === "auto" ? "zap" : "target"}
+                    size={14}
+                    color={allocationMode === mode ? colors.primaryForeground : colors.mutedForeground}
+                  />
+                  <Text style={{ color: allocationMode === mode ? colors.primaryForeground : colors.mutedForeground, fontWeight: "700", fontSize: 12, marginLeft: 5 }}>
+                    {mode === "auto" ? "Auto (FIFO)" : "Specific Period"}
+                  </Text>
                 </TouchableOpacity>
-              );
-            })}
+              ))}
+            </View>
+
+            {/* Auto mode info banner */}
+            {allocationMode === "auto" && (
+              <View style={[styles.infoBox, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}30`, marginTop: 8 }]}>
+                <Feather name="info" size={14} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.infoText, { color: colors.primary }]}>
+                    Payment will automatically cover the oldest unpaid periods first (FIFO). Any excess becomes advance credit.
+                  </Text>
+                  {oldestOutstanding && (
+                    <Text style={{ fontSize: 11, color: colors.primary, marginTop: 4, fontWeight: "600" }}>
+                      Next due: {periodLabel(oldestOutstanding)} — ₹{oldestOutstanding.remainingDue.toLocaleString("en-IN")} remaining
+                    </Text>
+                  )}
+                  {!oldestOutstanding && billingPeriods && billingPeriods.length > 0 && (
+                    <Text style={{ fontSize: 11, color: colors.success ?? colors.primary, marginTop: 4, fontWeight: "600" }}>
+                      ✓ All periods are paid — this payment will be advance credit
+                    </Text>
+                  )}
+                </View>
+              </View>
+            )}
+
+            {/* Specific mode period picker */}
+            {allocationMode === "specific" && (
+              <View style={{ marginTop: 8 }}>
+                <View style={[styles.infoBox, { backgroundColor: `${colors.warning}12`, borderColor: `${colors.warning}30`, marginBottom: 10 }]}>
+                  <Feather name="target" size={14} color={colors.warning} />
+                  <Text style={[styles.infoText, { color: colors.warning }]}>
+                    Select which billing period to allocate this payment to. Excess beyond the period's due becomes advance credit.
+                  </Text>
+                </View>
+
+                {periodsLoading ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (!billingPeriods || billingPeriods.length === 0) ? (
+                  <View style={[styles.emptyCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                    <Feather name="calendar" size={16} color={colors.mutedForeground} />
+                    <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                      No billing periods generated yet for this tenant.
+                    </Text>
+                  </View>
+                ) : (
+                  billingPeriods.map((period) => {
+                    const isSelected = selectedBillingPeriodId === period.id;
+                    const statusColor = STATUS_COLORS[period.status] ?? colors.mutedForeground;
+                    const isFullyPaid = period.remainingDue <= 0;
+                    return (
+                      <TouchableOpacity
+                        key={period.id}
+                        style={[
+                          styles.periodEntry,
+                          {
+                            borderColor: isSelected ? colors.primary : colors.border,
+                            backgroundColor: isSelected ? `${colors.primary}10` : colors.card,
+                            opacity: isFullyPaid ? 0.6 : 1,
+                          },
+                        ]}
+                        onPress={() => handleSelectBillingPeriod(period)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 14, fontWeight: "700", color: isSelected ? colors.primary : colors.foreground }}>
+                            {periodLabel(period)}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>
+                            Expected: ₹{period.expectedAmount.toLocaleString("en-IN")}
+                            {period.paidAmount > 0 ? ` · Paid: ₹${period.paidAmount.toLocaleString("en-IN")}` : ""}
+                          </Text>
+                          {!isFullyPaid && (
+                            <Text style={{ fontSize: 12, fontWeight: "700", color: statusColor, marginTop: 3 }}>
+                              ₹{period.remainingDue.toLocaleString("en-IN")} remaining
+                            </Text>
+                          )}
+                        </View>
+                        <View style={{ alignItems: "flex-end", gap: 6 }}>
+                          <View style={[styles.periodStatusBadge, { backgroundColor: `${statusColor}20`, borderColor: `${statusColor}40` }]}>
+                            <Text style={{ fontSize: 9, fontWeight: "800", color: statusColor }}>
+                              {period.status.toUpperCase()}
+                            </Text>
+                          </View>
+                          {isSelected && <Feather name="check-circle" size={18} color={colors.primary} />}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+                {errors.period ? (
+                  <Text style={[styles.errorText, { color: colors.destructive, marginTop: 4 }]}>{errors.period}</Text>
+                ) : null}
+              </View>
+            )}
           </View>
         )}
 
@@ -330,14 +421,7 @@ export default function PaymentAddScreen() {
                 size={14}
                 color={paymentType === type ? colors.primaryForeground : colors.mutedForeground}
               />
-              <Text
-                style={{
-                  color: paymentType === type ? colors.primaryForeground : colors.mutedForeground,
-                  fontWeight: "700",
-                  fontSize: 13,
-                  marginLeft: 6,
-                }}
-              >
+              <Text style={{ color: paymentType === type ? colors.primaryForeground : colors.mutedForeground, fontWeight: "700", fontSize: 13, marginLeft: 6 }}>
                 {type === "full" ? "Full Payment" : "Partial Payment"}
               </Text>
             </TouchableOpacity>
@@ -345,12 +429,7 @@ export default function PaymentAddScreen() {
         </View>
 
         {paymentType === "partial" && (
-          <View
-            style={[
-              styles.infoBox,
-              { backgroundColor: `${colors.warning}15`, borderColor: `${colors.warning}40` },
-            ]}
-          >
+          <View style={[styles.infoBox, { backgroundColor: `${colors.warning}15`, borderColor: `${colors.warning}40` }]}>
             <Feather name="alert-circle" size={14} color={colors.warning} />
             <Text style={[styles.infoText, { color: colors.warning }]}>
               Partial payment will be marked as "Partial" status
@@ -361,23 +440,11 @@ export default function PaymentAddScreen() {
         {/* Amount */}
         <View style={styles.row}>
           <View style={styles.flex1}>
-            <Text style={[styles.label, { color: colors.foreground }]}>
-              Amount (₹) *
-            </Text>
+            <Text style={[styles.label, { color: colors.foreground }]}>Amount (₹) *</Text>
             <TextInput
-              style={[
-                styles.input,
-                {
-                  backgroundColor: colors.input,
-                  color: colors.text,
-                  borderColor: errors.amount ? colors.destructive : colors.border,
-                },
-              ]}
+              style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: errors.amount ? colors.destructive : colors.border }]}
               value={amount}
-              onChangeText={(v) => {
-                setAmount(v);
-                setErrors((e) => ({ ...e, amount: "" }));
-              }}
+              onChangeText={(v) => { setAmount(v); setErrors((e) => ({ ...e, amount: "" })); }}
               keyboardType="numeric"
               placeholder="0"
               placeholderTextColor={colors.mutedForeground}
@@ -387,45 +454,22 @@ export default function PaymentAddScreen() {
                 Monthly rent: ₹{selectedTenant.rentAmount.toLocaleString("en-IN")}
               </Text>
             )}
-            {errors.amount ? (
-              <Text style={[styles.errorText, { color: colors.destructive }]}>
-                {errors.amount}
-              </Text>
-            ) : null}
+            {errors.amount ? <Text style={[styles.errorText, { color: colors.destructive }]}>{errors.amount}</Text> : null}
           </View>
           <View style={styles.flex1}>
-            <Text style={[styles.label, { color: colors.foreground }]}>
-              Payment Date *
-            </Text>
+            <Text style={[styles.label, { color: colors.foreground }]}>Payment Date *</Text>
             <TextInput
-              style={[
-                styles.input,
-                {
-                  backgroundColor: colors.input,
-                  color: colors.text,
-                  borderColor: errors.paymentDate ? colors.destructive : colors.border,
-                },
-              ]}
+              style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: errors.paymentDate ? colors.destructive : colors.border }]}
               value={paymentDate}
-              onChangeText={(v) => {
-                setPaymentDate(v);
-                setErrors((e) => ({ ...e, paymentDate: "" }));
-              }}
+              onChangeText={(v) => { setPaymentDate(v); setErrors((e) => ({ ...e, paymentDate: "" })); }}
               placeholder="YYYY-MM-DD"
               placeholderTextColor={colors.mutedForeground}
             />
             <Text style={[styles.hintText, { color: colors.mutedForeground }]}>
-              For:{" "}
-              {monthFromDate.toLocaleString("default", {
-                month: "long",
-                year: "numeric",
-              })}
+              Recorded for:{" "}
+              {monthFromDate.toLocaleString("default", { month: "long", year: "numeric" })}
             </Text>
-            {errors.paymentDate ? (
-              <Text style={[styles.errorText, { color: colors.destructive }]}>
-                {errors.paymentDate}
-              </Text>
-            ) : null}
+            {errors.paymentDate ? <Text style={[styles.errorText, { color: colors.destructive }]}>{errors.paymentDate}</Text> : null}
           </View>
         </View>
 
@@ -440,31 +484,15 @@ export default function PaymentAddScreen() {
               style={[
                 styles.methodBtn,
                 {
-                  backgroundColor:
-                    method === m.key ? colors.primary : colors.card,
-                  borderColor:
-                    method === m.key ? colors.primary : colors.border,
+                  backgroundColor: method === m.key ? colors.primary : colors.card,
+                  borderColor: method === m.key ? colors.primary : colors.border,
                 },
               ]}
               onPress={() => setMethod(m.key)}
               activeOpacity={0.8}
             >
-              <Feather
-                name={m.icon as any}
-                size={16}
-                color={method === m.key ? colors.primaryForeground : colors.mutedForeground}
-              />
-              <Text
-                style={{
-                  fontSize: 12,
-                  marginTop: 4,
-                  fontWeight: "600",
-                  color:
-                    method === m.key
-                      ? colors.primaryForeground
-                      : colors.foreground,
-                }}
-              >
+              <Feather name={m.icon as any} size={16} color={method === m.key ? colors.primaryForeground : colors.mutedForeground} />
+              <Text style={{ fontSize: 12, marginTop: 4, fontWeight: "600", color: method === m.key ? colors.primaryForeground : colors.foreground }}>
                 {m.label}
               </Text>
             </TouchableOpacity>
@@ -476,15 +504,7 @@ export default function PaymentAddScreen() {
           Notes (Optional)
         </Text>
         <TextInput
-          style={[
-            styles.input,
-            styles.textArea,
-            {
-              backgroundColor: colors.input,
-              color: colors.text,
-              borderColor: colors.border,
-            },
-          ]}
+          style={[styles.input, styles.textArea, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
           value={notes}
           onChangeText={setNotes}
           multiline
@@ -495,22 +515,9 @@ export default function PaymentAddScreen() {
       </KeyboardAwareScrollViewCompat>
 
       {/* Fixed footer button — OUTSIDE scroll */}
-      <View
-        style={[
-          styles.footer,
-          {
-            backgroundColor: colors.background,
-            borderTopColor: colors.border,
-            paddingBottom: insets.bottom + 16,
-          },
-        ]}
-      >
+      <View style={[styles.footer, { backgroundColor: colors.background, borderTopColor: colors.border, paddingBottom: insets.bottom + 16 }]}>
         <TouchableOpacity
-          style={[
-            styles.saveBtn,
-            { backgroundColor: colors.primary },
-            createMutation.isPending && { opacity: 0.7 },
-          ]}
+          style={[styles.saveBtn, { backgroundColor: colors.primary }, createMutation.isPending && { opacity: 0.7 }]}
           onPress={handleSave}
           disabled={createMutation.isPending}
           activeOpacity={0.8}
@@ -518,16 +525,12 @@ export default function PaymentAddScreen() {
           {createMutation.isPending ? (
             <View style={styles.loadingRow}>
               <ActivityIndicator color={colors.primaryForeground} />
-              <Text style={[styles.saveBtnText, { color: colors.primaryForeground }]}>
-                Saving...
-              </Text>
+              <Text style={[styles.saveBtnText, { color: colors.primaryForeground }]}>Saving...</Text>
             </View>
           ) : (
             <>
               <Feather name="save" size={18} color={colors.primaryForeground} />
-              <Text style={[styles.saveBtnText, { color: colors.primaryForeground }]}>
-                Record Payment
-              </Text>
+              <Text style={[styles.saveBtnText, { color: colors.primaryForeground }]}>Record Payment</Text>
             </>
           )}
         </TouchableOpacity>
@@ -588,7 +591,7 @@ const styles = StyleSheet.create({
   },
   infoBox: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 8,
     padding: 10,
     borderRadius: 8,
@@ -602,11 +605,7 @@ const styles = StyleSheet.create({
   textArea: { height: 80, paddingTop: 12, textAlignVertical: "top" },
   hintText: { fontSize: 11, marginTop: 4 },
   errorText: { fontSize: 12, marginTop: 4 },
-  methodGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
+  methodGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   methodBtn: {
     width: "18%",
     minWidth: 60,
@@ -616,11 +615,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
   },
-  footer: {
-    padding: 16,
-    paddingTop: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
+  footer: { padding: 16, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
   saveBtn: {
     height: 52,
     borderRadius: 12,
@@ -631,7 +626,7 @@ const styles = StyleSheet.create({
   },
   loadingRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   saveBtnText: { fontSize: 16, fontWeight: "bold" },
-  rentEntry: {
+  periodEntry: {
     flexDirection: "row",
     alignItems: "center",
     padding: 14,
@@ -639,7 +634,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     marginBottom: 8,
   },
-  rentStatus: {
+  periodStatusBadge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,

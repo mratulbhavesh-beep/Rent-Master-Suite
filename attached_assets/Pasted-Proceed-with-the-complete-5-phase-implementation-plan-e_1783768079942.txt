@@ -1,0 +1,360 @@
+Proceed with the complete 5-phase implementation plan exactly as analyzed and proposed.
+
+Implement all 5 phases sequentially in ONE task:
+Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5.
+
+Do not require separate approval between phases. However, complete and verify each phase before moving to the next one. Do not skip phase-level tests or safety checks.
+
+==================================================
+CRITICAL NON-REGRESSION REQUIREMENT
+==================================================
+
+The existing Advance and Post-paid billing systems are currently working correctly and MUST NOT be disturbed.
+
+Throughout all 5 phases, preserve the existing behavior of:
+
+- Advance rent calculation
+- Post-paid rent calculation
+- Advance rent generation timing
+- Post-paid rent generation timing
+- Weekly billing cycle
+- Monthly billing cycle
+- Quarterly billing cycle
+- Yearly billing cycle
+- Billing period boundaries
+- Due date calculations
+- Outstanding calculations
+- Lease Start Date behavior
+- Lease Date Edit / Rebuild behavior
+- Rent Revision behavior
+- Rent Escalation ON/OFF behavior
+- Historical generated rent amounts
+- Existing payment amounts
+- Existing reports and cash-flow reporting behavior
+
+Do NOT rewrite, replace, or unnecessarily refactor the existing working Advance/Post-paid billing engine.
+
+The new payment allocation system must be added around the existing working billing system.
+
+IMPORTANT SEPARATION OF RESPONSIBILITIES:
+
+1. The existing billing engine decides:
+   - when a rent period is generated,
+   - which billing period exists,
+   - how much rent is expected,
+   - how Advance and Post-paid billing work.
+
+2. The new payment allocation system decides only:
+   - how received money is applied to generated rent periods,
+   - FIFO allocation,
+   - specific-period allocation,
+   - partial/multi-period allocation,
+   - Advance Credit,
+   - Pending Adjustment.
+
+The allocation system MUST NOT change the underlying Advance or Post-paid rent-generation logic.
+
+==================================================
+SOURCE OF TRUTH
+==================================================
+
+payments.amount must remain the single source of truth for:
+"How much money was actually received."
+
+Never modify a payment amount merely because its allocation changes.
+
+payment_allocations must only represent:
+"How the received money was applied to rent periods."
+
+Reports must continue to use the actual payment received date/month/year as currently designed.
+
+Do NOT change report accounting from cash-received date to allocation-period accounting.
+
+Example:
+If ₹12,000 is received in July but allocated to January and February rent periods, it must still appear in the July payment/cash-flow report.
+
+==================================================
+IMPLEMENTATION PROCESS
+==================================================
+
+Before starting:
+- Create a safe checkpoint/backup.
+- Confirm the current test baseline.
+- Preserve existing data and financial totals.
+
+Then implement all phases sequentially.
+
+-------------------------
+PHASE 1 — Schema & Migration
+-------------------------
+
+Implement the payment_allocations table and required schema/indexes.
+
+Run the required database migration.
+
+Backfill existing eligible payments that are currently linked to generated rent periods.
+
+Requirements:
+- Do not change payments.amount.
+- Do not change existing financial totals.
+- Do not create duplicate allocations.
+- Preserve all existing working behavior.
+- Verify backfilled allocation totals.
+
+After Phase 1:
+- Run tests.
+- Verify Advance billing regression.
+- Verify Post-paid billing regression.
+- Verify financial totals are unchanged.
+- Only continue when Phase 1 is stable.
+
+-------------------------
+PHASE 2 — Allocation Plumbing
+-------------------------
+
+Migrate recomputeGeneratedRentStatus to calculate payment status from payment_allocations.
+
+Update rebuildTenantBilling safely so affected allocations are handled correctly.
+
+Update the existing adoption logic so an early/Pending Adjustment payment can be linked to a newly generated period and an allocation row is created correctly.
+
+Requirements:
+- No duplicate adoption.
+- No duplicate allocation.
+- Pending Adjustment behavior must remain correct.
+- Existing single-period payments must continue working identically.
+
+After Phase 2:
+- Run full tests.
+- Verify Advance calculation and generation remain unchanged.
+- Verify Post-paid calculation and generation remain unchanged.
+- Verify existing payments and financial totals.
+
+Only continue when stable.
+
+-------------------------
+PHASE 3 — FIFO & Specific Period Allocation Engine
+-------------------------
+
+Implement the planned server-side payment allocation engine.
+
+Support:
+
+1. AUTO / FIFO allocation
+   - Allocate to the oldest unpaid generated rent period first.
+   - Then continue to the next unpaid period.
+   - Support partial payments.
+   - Support one payment spanning multiple periods.
+
+2. SPECIFIC PERIOD allocation
+   - User can select one generated rent period.
+   - Apply payment only to that selected period.
+   - If payment exceeds the remaining due of the selected period, the excess must become Advance Credit.
+   - Do NOT automatically forward that excess to another period in Specific Period mode.
+
+3. Pending Adjustment
+   - If a valid target period does not yet exist where applicable, preserve the payment as Pending Adjustment according to the approved design.
+   - When the appropriate period is later generated, adoption must happen safely without duplicating the payment or allocation.
+
+4. Payment Edit
+   - Editing a payment must safely clear and rebuild affected allocations.
+   - Payment Edit is HIGH RISK.
+   - The entire edit operation must run in ONE database transaction.
+   - Payment update + old allocation removal + new allocation creation + affected rent status recomputation must succeed or fail together.
+   - If any step fails, rollback the entire transaction.
+
+5. Payment Delete
+   - Safely remove affected allocation rows.
+   - Recompute affected generated rent period statuses.
+   - Deleting one of multiple payments on the same period must correctly recalculate paid/partial/pending status.
+   - Do not re-trigger adoption for a deleted payment.
+
+6. Add the planned billing-period endpoint.
+
+7. Update OpenAPI/codegen if required.
+
+8. Add all planned API and rent-calculation tests.
+
+Do not change the working Advance/Post-paid rent-generation engine while implementing FIFO.
+
+After Phase 3:
+- Run the full test suite.
+- Run Advance regression tests.
+- Run Post-paid regression tests.
+- Test partial payments.
+- Test multi-period FIFO.
+- Test specific-period payments.
+- Test Payment Edit.
+- Test Payment Delete.
+- Test Pending Adjustment/adoption.
+- Test duplicate prevention.
+
+Only continue when stable.
+
+-------------------------
+PHASE 4 — Mobile UI & Receipt
+-------------------------
+
+Update the payment-add mobile UI with:
+
+"Apply Payment To"
+
+Options:
+- Auto (FIFO) — default
+- Specific Period
+
+For Specific Period:
+- Show available generated billing periods.
+- Show period boundaries.
+- Show status.
+- Show expected rent.
+- Show remaining due.
+
+Send the correct allocationMode and targetGeneratedRentId to the server.
+
+Update Rent Ledger / Timeline:
+- Single payment should remain easy to understand.
+- Multi-period payment should show allocation breakdown by period.
+- Pending Adjustment must remain clearly identified.
+
+Update PDF receipt:
+- Single-period receipt behavior must remain compatible.
+- Multi-period payments should show allocation breakdown.
+- Receipt number must remain unchanged after payment edit unless existing business rules explicitly require otherwise.
+- WhatsApp/share flow must continue working.
+
+After Phase 4:
+- Run full tests.
+- Verify mobile payment flow.
+- Verify Auto/FIFO flow.
+- Verify Specific Period flow.
+- Verify timeline.
+- Verify PDF receipts.
+- Verify existing Advance/Post-paid tenant screens and calculations.
+
+Only continue when stable.
+
+-------------------------
+PHASE 5 — Ledger Summary Enhancements
+-------------------------
+
+Add Advance Credit to LedgerSummary as planned.
+
+Ledger accounting must clearly distinguish:
+
+- Expected
+- Received
+- Allocated
+- Outstanding
+- Advance Credit
+- Pending Adjustment
+
+Rules:
+
+Expected = total generated rent expected.
+
+Received = actual payment amounts received.
+
+Allocated = amount actually allocated to generated rent periods.
+
+Outstanding = unpaid amount on generated rent periods.
+
+Advance Credit = received amount not allocated because generated dues are already fully covered.
+
+Pending Adjustment = payment awaiting an appropriate/generated period according to the approved workflow.
+
+Show Advance Credit in the UI when > 0.
+
+Run the complete test suite after Phase 5.
+
+==================================================
+MANDATORY REGRESSION TESTING
+==================================================
+
+The detailed regression test plan already analyzed must be followed.
+
+Test all major areas:
+
+A. Advance tenant
+B. Post-paid tenant
+C. Weekly / Monthly / Quarterly / Yearly billing cycles
+D. Rent Revision / Escalation
+E. Lease Date Edit / Rebuild
+F. Payment Edit
+G. Payment Delete
+H. Receipt / PDF / Share
+I. Timeline
+J. Reports / PDF / Export
+K. Ledger Summary Accounting
+L. No-duplicate guarantees
+
+Especially verify:
+
+- Advance tenant calculations remain correct.
+- Post-paid tenant calculations remain correct.
+- Rent Revision remains correct.
+- Escalation ON remains correct.
+- Escalation OFF remains correct.
+- Lease Date Edit remains correct.
+- Existing payment amounts are preserved.
+- Existing financial totals are preserved.
+- Reports continue using payment received month/year.
+- No duplicate generated_rents.
+- No duplicate payment allocations.
+- No payment is counted twice.
+- No allocation exceeds the payment amount.
+- No interrupted Payment Edit can leave partial/inconsistent data.
+
+==================================================
+FAILURE / SAFETY RULE
+==================================================
+
+If any phase causes a regression in the currently working:
+
+- Advance billing,
+- Post-paid billing,
+- rent generation,
+- rent revision,
+- escalation,
+- lease-date behavior,
+- payment totals,
+- reports,
+- or existing financial data,
+
+DO NOT continue blindly.
+
+Fix only the regression caused by the new implementation while preserving the intended existing behavior, rerun all relevant tests, and continue only after the system is stable.
+
+Do not make unrelated feature changes.
+
+Do not redesign unrelated UI.
+
+Do not change existing business rules unless required by this approved 5-phase payment allocation plan.
+
+==================================================
+FINAL REPORT
+==================================================
+
+After completing all 5 phases, provide a detailed implementation report containing:
+
+1. Files changed
+2. Database schema changes
+3. Migration result
+4. Backfill result
+5. Phase 1 test result
+6. Phase 2 test result
+7. Phase 3 test result
+8. Phase 4 test result
+9. Phase 5 test result
+10. Advance billing regression result
+11. Post-paid billing regression result
+12. Rent Revision / Escalation regression result
+13. Lease Date Edit / Rebuild regression result
+14. Payment Edit/Delete test result
+15. Duplicate-prevention verification
+16. Final full test-suite result
+17. Any remaining risk, warning, or manual mobile test required
+
+Implement all 5 phases in this single task, sequentially and safely.
+
+The final system must preserve the existing correctly working Advance and Post-paid calculation/rent-generation behavior while adding the new payment allocation capabilities.

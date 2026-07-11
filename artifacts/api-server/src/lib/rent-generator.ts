@@ -1,5 +1,5 @@
 import { and, eq, desc, sql } from "drizzle-orm";
-import { db, tenantsTable, propertiesTable, generatedRentsTable, rentRevisionsTable, paymentsTable } from "@workspace/db";
+import { db, tenantsTable, propertiesTable, generatedRentsTable, rentRevisionsTable, paymentsTable, paymentAllocationsTable } from "@workspace/db";
 import {
   buildLeaseContext,
   getBillableRent,
@@ -350,6 +350,8 @@ async function generateForOneTenant(
     // Adopt any still-unlinked payments recorded for this period's month
     // (e.g. rent paid in advance of a future period, before its row could
     // exist) so every payment ends up on exactly one ledger row.
+    // Phase 2: also insert payment_allocations rows for adopted payments so
+    // recomputeGeneratedRentStatus (which now reads allocations) is correct.
     if (inserted) {
       const startDate = new Date(period.start + "T00:00:00Z");
       const adopted = await dbClient.update(paymentsTable)
@@ -360,8 +362,18 @@ async function generateForOneTenant(
           eq(paymentsTable.month, startDate.getUTCMonth() + 1),
           eq(paymentsTable.year, startDate.getUTCFullYear())
         ))
-        .returning({ id: paymentsTable.id });
+        .returning({ id: paymentsTable.id, amount: paymentsTable.amount });
       if (adopted.length > 0) {
+        // Insert allocation rows for all adopted payments (idempotent via
+        // ON CONFLICT DO NOTHING — safe if the payment was already linked
+        // by a prior rebuild run that partially completed).
+        for (const p of adopted) {
+          await dbClient.insert(paymentAllocationsTable).values({
+            paymentId: p.id,
+            generatedRentId: inserted.id,
+            allocatedAmount: String(p.amount),
+          }).onConflictDoNothing();
+        }
         await recomputeGeneratedRentStatus(inserted.id, dbClient);
         logger.info({ tenantId: tenant.id, periodStart: period.start, payments: adopted.length }, "Adopted unlinked payments into newly generated period row");
       }
@@ -418,6 +430,13 @@ export async function rebuildTenantBilling(
   await dbClient.update(paymentsTable)
     .set({ generatedRentId: null })
     .where(eq(paymentsTable.tenantId, tenantId));
+  // Clear allocations before deleting generated_rents rows — the soft
+  // reference (no DB FK on generated_rent_id) means we must clean up
+  // explicitly, same pattern as payments.generatedRentId above.
+  await dbClient.delete(paymentAllocationsTable)
+    .where(sql`${paymentAllocationsTable.paymentId} IN (
+      SELECT id FROM payments WHERE tenant_id = ${tenantId}
+    )`);
   await dbClient.delete(generatedRentsTable)
     .where(eq(generatedRentsTable.tenantId, tenantId));
   if (!preserveRevisionHistory) {
@@ -465,9 +484,21 @@ export async function rebuildTenantBilling(
       );
       continue;
     }
+    // Fetch amounts so we can build allocation rows alongside the link update
+    const paymentRows = await dbClient
+      .select({ id: paymentsTable.id, amount: paymentsTable.amount })
+      .from(paymentsTable)
+      .where(sql`${paymentsTable.id} IN (${sql.join(entry.ids.map(id => sql`${id}`), sql`, `)})`);
     await dbClient.update(paymentsTable)
       .set({ generatedRentId: rentId })
       .where(sql`${paymentsTable.id} IN (${sql.join(entry.ids.map(id => sql`${id}`), sql`, `)})`);
+    for (const p of paymentRows) {
+      await dbClient.insert(paymentAllocationsTable).values({
+        paymentId: p.id,
+        generatedRentId: rentId,
+        allocatedAmount: String(p.amount),
+      }).onConflictDoNothing();
+    }
     await recomputeGeneratedRentStatus(rentId, dbClient);
   }
 
@@ -571,10 +602,11 @@ export async function ensureGeneratedRentForPeriod(
 }
 
 /**
- * Recompute a generated_rents row's status from the payments actually
- * linked to it (the single source of truth for allocation). Used after a
- * payment is created, deleted, or re-allocated so the ledger row never
- * carries a stale paid/partial marker.
+ * Recompute a generated_rents row's status from the payment_allocations
+ * rows that reference it. This is the single source of truth for
+ * allocation after Phase 2 migration — recomputeGeneratedRentStatus no
+ * longer reads payments.generatedRentId; it reads payment_allocations
+ * instead, so one payment can span multiple periods.
  */
 export async function recomputeGeneratedRentStatus(generatedRentId: number, dbClient: DbClient = db): Promise<void> {
   const [rent] = await dbClient
@@ -583,21 +615,21 @@ export async function recomputeGeneratedRentStatus(generatedRentId: number, dbCl
     .where(eq(generatedRentsTable.id, generatedRentId));
   if (!rent) return;
 
-  const linked = await dbClient
-    .select({ id: paymentsTable.id, amount: paymentsTable.amount })
-    .from(paymentsTable)
-    .where(eq(paymentsTable.generatedRentId, generatedRentId));
+  const allocations = await dbClient
+    .select({ paymentId: paymentAllocationsTable.paymentId, allocatedAmount: paymentAllocationsTable.allocatedAmount })
+    .from(paymentAllocationsTable)
+    .where(eq(paymentAllocationsTable.generatedRentId, generatedRentId));
 
   const today = new Date().toISOString().split("T")[0];
   let status: string;
-  if (linked.length === 0) {
+  if (allocations.length === 0) {
     status = rent.dueDate < today ? "overdue" : "pending";
   } else {
-    const paid = linked.reduce((s, p) => s + parseFloat(String(p.amount)), 0);
+    const paid = allocations.reduce((s, a) => s + parseFloat(String(a.allocatedAmount)), 0);
     status = paid >= parseFloat(String(rent.amount)) - 0.005 ? "paid" : "partial";
   }
   await dbClient.update(generatedRentsTable)
-    .set({ status, paymentId: linked[0]?.id ?? null })
+    .set({ status, paymentId: allocations[0]?.paymentId ?? null })
     .where(eq(generatedRentsTable.id, generatedRentId));
 }
 

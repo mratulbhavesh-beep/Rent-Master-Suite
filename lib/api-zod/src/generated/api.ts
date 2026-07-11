@@ -740,6 +740,27 @@ export const GetTenantLedgerResponse = zod.array(GetTenantLedgerResponseItem)
 
 
 /**
+ * @summary List generated rent billing periods with remaining-due amounts for payment allocation
+ */
+export const GetTenantBillingPeriodsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetTenantBillingPeriodsResponseItem = zod.object({
+  "id": zod.number(),
+  "billingPeriodStart": zod.string().nullish(),
+  "billingPeriodEnd": zod.string().nullish(),
+  "dueDate": zod.string().nullish(),
+  "status": zod.enum(['pending', 'partial', 'paid', 'overdue']),
+  "billingCycle": zod.string().nullish(),
+  "expectedAmount": zod.number(),
+  "paidAmount": zod.number(),
+  "remainingDue": zod.number()
+})
+export const GetTenantBillingPeriodsResponse = zod.array(GetTenantBillingPeriodsResponseItem)
+
+
+/**
  * @summary List all rent payments
  */
 export const ListPaymentsQueryParams = zod.object({
@@ -765,6 +786,12 @@ export const ListPaymentsResponseItem = zod.object({
   "notes": zod.string().nullish(),
   "receiptNumber": zod.string().nullish(),
   "generatedRentId": zod.number().nullish(),
+  "allocations": zod.array(zod.object({
+  "generatedRentId": zod.number().nullable(),
+  "allocatedAmount": zod.number(),
+  "billingPeriodStart": zod.string().nullish(),
+  "billingPeriodEnd": zod.string().nullish()
+})).optional(),
   "createdAt": zod.string()
 })
 export const ListPaymentsResponse = zod.array(ListPaymentsResponseItem)
@@ -783,7 +810,9 @@ export const CreatePaymentBody = zod.object({
   "method": zod.enum(['cash', 'bank_transfer', 'upi', 'cheque', 'online']),
   "status": zod.enum(['paid', 'pending', 'partial', 'overdue']).optional(),
   "notes": zod.string().optional(),
-  "generatedRentId": zod.number().optional()
+  "generatedRentId": zod.number().optional(),
+  "allocationMode": zod.enum(['auto', 'specific']).optional().describe('auto = FIFO oldest-first; specific = allocate to targetGeneratedRentId. Omit for backward-compat.'),
+  "targetGeneratedRentId": zod.number().optional().describe('For allocationMode=specific: the generated_rents.id to allocate to.')
 })
 
 export const CreatePaymentResponse = zod.object({
@@ -802,6 +831,12 @@ export const CreatePaymentResponse = zod.object({
   "notes": zod.string().nullish(),
   "receiptNumber": zod.string().nullish(),
   "generatedRentId": zod.number().nullish(),
+  "allocations": zod.array(zod.object({
+  "generatedRentId": zod.number().nullable(),
+  "allocatedAmount": zod.number(),
+  "billingPeriodStart": zod.string().nullish(),
+  "billingPeriodEnd": zod.string().nullish()
+})).optional(),
   "createdAt": zod.string()
 })
 
@@ -829,6 +864,12 @@ export const GetPaymentResponse = zod.object({
   "notes": zod.string().nullish(),
   "receiptNumber": zod.string().nullish(),
   "generatedRentId": zod.number().nullish(),
+  "allocations": zod.array(zod.object({
+  "generatedRentId": zod.number().nullable(),
+  "allocatedAmount": zod.number(),
+  "billingPeriodStart": zod.string().nullish(),
+  "billingPeriodEnd": zod.string().nullish()
+})).optional(),
   "createdAt": zod.string()
 })
 
@@ -850,7 +891,9 @@ export const UpdatePaymentBody = zod.object({
   "method": zod.enum(['cash', 'bank_transfer', 'upi', 'cheque', 'online']),
   "status": zod.enum(['paid', 'pending', 'partial', 'overdue']).optional(),
   "notes": zod.string().optional(),
-  "generatedRentId": zod.number().optional()
+  "generatedRentId": zod.number().optional(),
+  "allocationMode": zod.enum(['auto', 'specific']).optional().describe('auto = FIFO oldest-first; specific = allocate to targetGeneratedRentId. Omit for backward-compat.'),
+  "targetGeneratedRentId": zod.number().optional().describe('For allocationMode=specific: the generated_rents.id to allocate to.')
 })
 
 export const UpdatePaymentResponse = zod.object({
@@ -869,6 +912,12 @@ export const UpdatePaymentResponse = zod.object({
   "notes": zod.string().nullish(),
   "receiptNumber": zod.string().nullish(),
   "generatedRentId": zod.number().nullish(),
+  "allocations": zod.array(zod.object({
+  "generatedRentId": zod.number().nullable(),
+  "allocatedAmount": zod.number(),
+  "billingPeriodStart": zod.string().nullish(),
+  "billingPeriodEnd": zod.string().nullish()
+})).optional(),
   "createdAt": zod.string()
 })
 
@@ -1498,6 +1547,12 @@ export const GetMonthlyReportResponse = zod.object({
   "notes": zod.string().nullish(),
   "receiptNumber": zod.string().nullish(),
   "generatedRentId": zod.number().nullish(),
+  "allocations": zod.array(zod.object({
+  "generatedRentId": zod.number().nullable(),
+  "allocatedAmount": zod.number(),
+  "billingPeriodStart": zod.string().nullish(),
+  "billingPeriodEnd": zod.string().nullish()
+})).optional(),
   "createdAt": zod.string()
 })),
   "expenses": zod.array(zod.object({

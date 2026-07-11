@@ -5,6 +5,7 @@
  * Gemini Rent Manager API
  * OpenAPI spec version: 0.1.0
  */
+import type { PaymentAllocation } from './paymentAllocation';
 import type { PaymentMethod } from './paymentMethod';
 import type { PaymentStatus } from './paymentStatus';
 
@@ -30,5 +31,6 @@ export interface Payment {
   receiptNumber?: string | null;
   /** @nullable */
   generatedRentId?: number | null;
+  allocations?: PaymentAllocation[];
   createdAt: string;
 }

@@ -165,9 +165,17 @@ export default function PaymentReceiptScreen() {
 
   // ── Derived display values ────────────────────────────────────────────────
   const dateStr = fmtDate(payment.paymentDate);
-  const monthLabel = new Date(payment.year, payment.month - 1).toLocaleString("default", {
-    month: "long", year: "numeric",
-  });
+  const allocations = (payment as any).allocations as Array<{
+    generatedRentId: number | null;
+    allocatedAmount: number;
+    billingPeriodStart: string | null;
+    billingPeriodEnd: string | null;
+  }> | undefined;
+  const isMultiPeriod = allocations && allocations.length > 1;
+  const MONTHS_RX = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const monthLabel = isMultiPeriod
+    ? `${allocations.length} billing periods`
+    : new Date(payment.year, payment.month - 1).toLocaleString("default", { month: "long", year: "numeric" });
   const methodLabel = (payment.method ?? "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c: string) => c.toUpperCase());
@@ -351,6 +359,60 @@ export default function PaymentReceiptScreen() {
               </View>
             ))}
           </View>
+
+          {/* Multi-period allocation breakdown */}
+          {isMultiPeriod && (
+            <>
+              <View style={[styles.solidLine, { backgroundColor: colors.border }]} />
+              <View style={styles.sectionPad}>
+                <Text style={[styles.sectionMeta, { color: colors.mutedForeground }]}>
+                  APPLIED TO PERIODS
+                </Text>
+                {allocations!.map((a, idx) => {
+                  const pStart = a.billingPeriodStart
+                    ? new Date(a.billingPeriodStart + "T00:00:00")
+                    : null;
+                  const periodStr = pStart
+                    ? `${MONTHS_RX[pStart.getMonth()]} ${pStart.getFullYear()}`
+                    : `Period ${idx + 1}`;
+                  return (
+                    <View key={idx} style={[styles.detailRow, { paddingVertical: 6 }]}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary, opacity: 0.7 }} />
+                        <Text style={[styles.detailLabel, { color: colors.foreground, fontWeight: "600" }]}>
+                          {periodStr}
+                        </Text>
+                      </View>
+                      <Text style={[styles.detailValue, { color: colors.success, fontWeight: "700" }]}>
+                        ₹{Number(a.allocatedAmount).toLocaleString("en-IN")}
+                      </Text>
+                    </View>
+                  );
+                })}
+                {/* Unallocated / advance credit line */}
+                {(() => {
+                  const totalAlloc = allocations!.reduce((s, a) => s + Number(a.allocatedAmount), 0);
+                  const unalloc = paidAmount - totalAlloc;
+                  if (unalloc > 0.01) {
+                    return (
+                      <View style={[styles.detailRow, { paddingVertical: 6 }]}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent }} />
+                          <Text style={[styles.detailLabel, { color: colors.mutedForeground }]}>
+                            Advance Credit
+                          </Text>
+                        </View>
+                        <Text style={[styles.detailValue, { color: colors.accent, fontWeight: "700" }]}>
+                          ₹{unalloc.toLocaleString("en-IN")}
+                        </Text>
+                      </View>
+                    );
+                  }
+                  return null;
+                })()}
+              </View>
+            </>
+          )}
 
           {/* Advance / Due */}
           {tenantRentAmount > 0 && (

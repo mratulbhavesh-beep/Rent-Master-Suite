@@ -5,6 +5,7 @@
  * Gemini Rent Manager API
  * OpenAPI spec version: 0.1.0
  */
+import type { PaymentInputAllocationMode } from './paymentInputAllocationMode';
 import type { PaymentInputMethod } from './paymentInputMethod';
 import type { PaymentInputStatus } from './paymentInputStatus';
 
@@ -19,4 +20,8 @@ export interface PaymentInput {
   status?: PaymentInputStatus;
   notes?: string;
   generatedRentId?: number;
+  /** auto = FIFO oldest-first; specific = allocate to targetGeneratedRentId. Omit for backward-compat. */
+  allocationMode?: PaymentInputAllocationMode;
+  /** For allocationMode=specific: the generated_rents.id to allocate to. */
+  targetGeneratedRentId?: number;
 }

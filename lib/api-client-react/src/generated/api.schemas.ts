@@ -601,6 +601,42 @@ export interface RentRevisionUpdateInput {
   reason?: string;
 }
 
+export interface PaymentAllocation {
+  /** @nullable */
+  generatedRentId: number | null;
+  allocatedAmount: number;
+  /** @nullable */
+  billingPeriodStart?: string | null;
+  /** @nullable */
+  billingPeriodEnd?: string | null;
+}
+
+export type BillingPeriodStatus = typeof BillingPeriodStatus[keyof typeof BillingPeriodStatus];
+
+
+export const BillingPeriodStatus = {
+  pending: 'pending',
+  partial: 'partial',
+  paid: 'paid',
+  overdue: 'overdue',
+} as const;
+
+export interface BillingPeriod {
+  id: number;
+  /** @nullable */
+  billingPeriodStart?: string | null;
+  /** @nullable */
+  billingPeriodEnd?: string | null;
+  /** @nullable */
+  dueDate?: string | null;
+  status: BillingPeriodStatus;
+  /** @nullable */
+  billingCycle?: string | null;
+  expectedAmount: number;
+  paidAmount: number;
+  remainingDue: number;
+}
+
 export type PaymentMethod = typeof PaymentMethod[keyof typeof PaymentMethod];
 
 
@@ -644,6 +680,7 @@ export interface Payment {
   receiptNumber?: string | null;
   /** @nullable */
   generatedRentId?: number | null;
+  allocations?: PaymentAllocation[];
   createdAt: string;
 }
 
@@ -668,6 +705,17 @@ export const PaymentInputStatus = {
   overdue: 'overdue',
 } as const;
 
+/**
+ * auto = FIFO oldest-first; specific = allocate to targetGeneratedRentId. Omit for backward-compat.
+ */
+export type PaymentInputAllocationMode = typeof PaymentInputAllocationMode[keyof typeof PaymentInputAllocationMode];
+
+
+export const PaymentInputAllocationMode = {
+  auto: 'auto',
+  specific: 'specific',
+} as const;
+
 export interface PaymentInput {
   tenantId: number;
   propertyId: number;
@@ -679,6 +727,10 @@ export interface PaymentInput {
   status?: PaymentInputStatus;
   notes?: string;
   generatedRentId?: number;
+  /** auto = FIFO oldest-first; specific = allocate to targetGeneratedRentId. Omit for backward-compat. */
+  allocationMode?: PaymentInputAllocationMode;
+  /** For allocationMode=specific: the generated_rents.id to allocate to. */
+  targetGeneratedRentId?: number;
 }
 
 export type ExpenseCategory = typeof ExpenseCategory[keyof typeof ExpenseCategory];
