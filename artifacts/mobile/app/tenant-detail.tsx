@@ -633,6 +633,7 @@ export default function TenantDetailScreen() {
   const totalExpected: number = anyTenant.totalExpected ?? 0;
   const totalPaid: number = anyTenant.totalPaid ?? 0;
   const balanceDue: number = anyTenant.balanceDue ?? 0;
+  const pendingAdjustment: number = anyTenant.pendingAdjustment ?? 0;
   const fmt = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
   const billingCycleValue: string = anyTenant.billingCycle ?? "monthly";
   const periodLabel =
@@ -960,8 +961,9 @@ export default function TenantDetailScreen() {
                   { label: rentPeriodLabel, value: fmt(tenant.rentAmount), color: colors.foreground },
                   { label: `${periodLabel} Active`, value: `${monthsElapsed} ${periodLabel.toLowerCase()}`, color: colors.foreground },
                   { label: "Total Expected", value: fmt(totalExpected), color: colors.primary },
-                  { label: "Total Paid", value: fmt(totalPaid), color: colors.success },
-                  { label: "Balance Due", value: fmt(balanceDue), color: balanceDue > 0 ? colors.destructive : colors.success },
+                  { label: "Total Received", value: fmt(totalPaid), color: colors.success },
+                  ...(pendingAdjustment > 0 ? [{ label: "Pending Adjustment", value: fmt(pendingAdjustment), color: colors.warning }] : []),
+                  { label: "Outstanding Due", value: fmt(balanceDue), color: balanceDue > 0 ? colors.destructive : colors.success },
                 ].map(row => (
                   <View key={row.label} style={[styles.balanceRow, { borderBottomColor: colors.border }]}>
                     <Text style={[styles.label, { color: colors.mutedForeground }]}>{row.label}</Text>
@@ -992,7 +994,7 @@ export default function TenantDetailScreen() {
                       `🏠 Property: ${(tenant as any).propertyName ?? ""}`,
                       `📦 Unit: ${tenant.unitNumber ?? ""}`,
                       `💰 Monthly Rent: ₹${Math.round(tenant.rentAmount).toLocaleString("en-IN")}`,
-                      `⚠️ Balance Due: ₹${Math.round(balanceDue).toLocaleString("en-IN")}`,
+                      `⚠️ Outstanding Due: ₹${Math.round(balanceDue).toLocaleString("en-IN")}`,
                       `📅 Billing Period: ${MONTHS[now.getMonth()]} ${now.getFullYear()}`, ``,
                       `Please make the payment at your earliest convenience.`, ``,
                       `Thank you,`, `Gemini Rent Manager`,

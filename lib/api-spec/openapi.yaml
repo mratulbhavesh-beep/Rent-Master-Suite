@@ -1871,6 +1871,8 @@ components:
           type: number
         totalPaid:
           type: number
+        pendingAdjustment:
+          type: number
         balanceDue:
           type: number
         advanceBalance:

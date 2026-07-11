@@ -118,6 +118,8 @@ describe("yearly fixed escalation — Total Expected / Balance Due (Mehul scenar
   it("keeps Balance Due = Total Expected - Total Paid exactly, even with partial payments", () => {
     const lease = mehulLease();
     const summary = computeLedgerSummary([], [{ amount: 2000 }], "2026-07-09", lease);
+    // Payment has generatedRentId: undefined (not null) — not a pending adjustment.
+    expect(summary.pendingAdjustment).toBe(0);
     expect(summary.balanceDue).toBe(summary.totalExpected - summary.totalPaid);
     expect(summary.balanceDue).toBe(316000);
   });
@@ -211,6 +213,120 @@ describe("yearly fixed escalation — Total Expected / Balance Due (Mehul scenar
     expect(withFutureRow.monthsElapsed).toBe(baseline.monthsElapsed);
     expect(withFutureRow.dueExpected).toBe(baseline.dueExpected);
     expect(withFutureRow.balanceDue).toBe(baseline.balanceDue);
+  });
+});
+
+describe("pendingAdjustment — early post-paid payment accounting clarity", () => {
+  const postPaidLease: LeaseContext = {
+    leaseStart: "2026-01-01",
+    billingCycle: "monthly",
+    rentCollectionType: "post_paid",
+    gracePeriodDays: 5,
+    baseRentAmount: 10000,
+    currentRentAmount: 10000,
+    revisions: [],
+    rentEscalation: false,
+    escalationFrequencyYears: 1,
+    escalationType: "percentage",
+    escalationValue: 0,
+  };
+
+  // TC3: Early payment for in-progress post-paid period must NOT reduce historical balanceDue.
+  it("TC3: early post-paid payment (generatedRentId=null) does NOT reduce historical outstanding due", () => {
+    // 6 months elapsed (Jan–Jun 2026), all unpaid = 60,000 outstanding.
+    // User records ₹10,000 for Jul 2026 before Jul ends (early post-paid).
+    // No generated_rents row for Jul yet — so month=7, year=2026 has no key.
+    const earlyPayment = { amount: 10000, generatedRentId: null as null, month: 7, year: 2026 };
+    const summary = computeLedgerSummary([], [earlyPayment], "2026-07-09", postPaidLease);
+
+    expect(summary.totalExpected).toBe(60000); // Jan–Jun only (Jul in-progress)
+    expect(summary.totalPaid).toBe(10000);      // total money received
+    expect(summary.pendingAdjustment).toBe(10000); // reserved for Jul, not applied
+    expect(summary.balanceDue).toBe(60000);     // MUST stay at 60000, not 50000
+    expect(summary.advanceBalance).toBe(0);     // NOT advance credit
+  });
+
+  // TC7: Historical unpaid rent remains unchanged when an early payment is reserved for a future period.
+  it("TC7: historical unpaid rent (30 months × ₹10,000 = ₹3,00,000) is unchanged by an early Jul payment", () => {
+    // Simulate a tenant with 30 months of generated rent, all unpaid,
+    // and one early payment for Jul 2026 (month=7, year=2026, no generated row for Jul).
+    const historicalRents = Array.from({ length: 30 }, (_, i) => {
+      const d = new Date("2024-01-01T00:00:00Z");
+      d.setUTCMonth(d.getUTCMonth() + i);
+      return {
+        billingPeriodStart: d.toISOString().split("T")[0],
+        dueDate: d.toISOString().split("T")[0],
+        amount: "10000.00",
+        status: "overdue",
+      };
+    });
+    const earlyPayment = { amount: 10000, generatedRentId: null as null, month: 7, year: 2026 };
+    const lease = { ...postPaidLease, leaseStart: "2024-01-01" };
+    const summary = computeLedgerSummary(historicalRents, [earlyPayment], "2026-07-09", lease);
+
+    expect(summary.totalPaid).toBe(10000);
+    expect(summary.pendingAdjustment).toBe(10000);
+    expect(summary.balanceDue).toBe(300000); // all 30 months remain outstanding
+    expect(summary.advanceBalance).toBe(0);
+  });
+
+  // TC6: True advance credit (overpayment with generatedRentId=undefined) is NOT confused with pendingAdjustment.
+  it("TC6: overpayment with generatedRentId=undefined is NOT pendingAdjustment — it is genuine advance credit", () => {
+    // A payment with generatedRentId absent (undefined) is an old-style linked payment
+    // or an overpayment — it reduces balanceDue normally.
+    const overpayment = { amount: 70000 }; // generatedRentId not set = undefined
+    const summary = computeLedgerSummary([], [overpayment], "2026-07-09", postPaidLease);
+
+    expect(summary.pendingAdjustment).toBe(0);
+    expect(summary.balanceDue).toBe(0);
+    expect(summary.advanceBalance).toBe(10000); // 70000 - 60000 = genuine surplus
+  });
+
+  // TC4: After Jul rent generates and adoption links the payment, pendingAdjustment becomes 0.
+  it("TC4: after adoption (generatedRentId becomes a number), pendingAdjustment drops to 0 and July is paid", () => {
+    // Jul generated_rents row now exists; payment is now linked (generatedRentId = 31).
+    const julRentRow = {
+      billingPeriodStart: "2026-07-01",
+      dueDate: "2026-08-05",
+      amount: "10000.00",
+      status: "paid",
+    };
+    const linkedPayment = { amount: 10000, generatedRentId: 31 };
+    const lease = { ...postPaidLease, leaseStart: "2026-01-01" };
+    const summary = computeLedgerSummary([julRentRow], [linkedPayment], "2026-07-31", lease);
+
+    expect(summary.pendingAdjustment).toBe(0);
+    expect(summary.totalPaid).toBe(10000);
+    expect(summary.balanceDue).toBe(60000); // Jan–Jun still unpaid, Jul is now paid
+  });
+
+  // TC3b: When a generated_rents row exists for the same month (fallback match scenario),
+  // generatedRentId=null payment still applies against balanceDue (backward compat).
+  it("TC3b: generatedRentId=null payment whose month/year matches an existing generated row IS applied (fallback compat)", () => {
+    // A generated_rents row exists for Jul 2026 (perhaps inserted via a different path).
+    const julRentRow = {
+      billingPeriodStart: "2026-07-01",
+      dueDate: "2026-08-05",
+      amount: "10000.00",
+      status: "pending",
+    };
+    // Payment has generatedRentId=null but month=7, year=2026 → matching row exists → NOT pending.
+    const payment = { amount: 10000, generatedRentId: null as null, month: 7, year: 2026 };
+    const lease = { ...postPaidLease, leaseStart: "2026-01-01" };
+    const summary = computeLedgerSummary([julRentRow], [payment], "2026-07-31", lease);
+
+    expect(summary.pendingAdjustment).toBe(0); // NOT pending — fallback match exists
+    expect(summary.balanceDue).toBe(60000); // Jan–Jun unpaid, Jul matched by fallback
+  });
+
+  // TC5: Partial payment against a generated rent (generatedRentId set) is not pendingAdjustment.
+  it("TC5: partial payment (generatedRentId set) is correctly applied, pendingAdjustment = 0", () => {
+    const partial = { amount: 5000, generatedRentId: 42 };
+    const summary = computeLedgerSummary([], [partial], "2026-07-09", postPaidLease);
+
+    expect(summary.pendingAdjustment).toBe(0);
+    expect(summary.balanceDue).toBe(55000); // 60000 - 5000
+    expect(summary.advanceBalance).toBe(0);
   });
 });
 

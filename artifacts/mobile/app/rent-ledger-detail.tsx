@@ -180,9 +180,9 @@ function generateLedgerHTML(
   <div class="section-title">Financial Summary</div>
   <div class="summary-grid">
     <div class="summary-box"><div class="summary-lbl">Total Expected</div><div class="summary-val">${fmt(totalExpected)}</div></div>
-    <div class="summary-box"><div class="summary-lbl">Total Paid</div><div class="summary-val" style="color:#16a34a">${fmt(totalPaid)}</div></div>
+    <div class="summary-box"><div class="summary-lbl">Total Received</div><div class="summary-val" style="color:#16a34a">${fmt(totalPaid)}</div></div>
     <div class="summary-box"><div class="summary-lbl">Advance Balance</div><div class="summary-val" style="color:#16a34a">${fmt(advanceBalance)}</div></div>
-    <div class="summary-box"><div class="summary-lbl">Balance Due</div><div class="summary-val" style="color:${balanceDue > 0 ? '#dc2626' : '#16a34a'}">${fmt(balanceDue)}</div></div>
+    <div class="summary-box"><div class="summary-lbl">Outstanding Due</div><div class="summary-val" style="color:${balanceDue > 0 ? '#dc2626' : '#16a34a'}">${fmt(balanceDue)}</div></div>
   </div>
 
   <div class="section-title">Period-wise Ledger</div>
@@ -264,6 +264,7 @@ export default function RentLedgerDetailScreen() {
   const totalExpected = anyTenant?.totalExpected ?? 0;
   const balanceDue = anyTenant?.balanceDue ?? 0;
   const advanceBalance = anyTenant?.advanceBalance ?? 0;
+  const pendingAdjustment: number = anyTenant?.pendingAdjustment ?? 0;
 
   const sortedPayments = useMemo(() =>
     [...(payments ?? [])].sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime()),
@@ -400,8 +401,9 @@ export default function RentLedgerDetailScreen() {
       ``,
       `💰 ${rentCycleLabel}: ${fmt(tenant.rentAmount)}`,
       `📊 Total Expected: ${fmt(totalExpected)}`,
-      `✅ Total Paid: ${fmt(totalPaid)}`,
-      advanceBalance > 0 ? `🟢 Advance Balance: ${fmt(advanceBalance)}` : `⚠️ Balance Due: ${fmt(balanceDue)}`,
+      `✅ Total Received: ${fmt(totalPaid)}`,
+      pendingAdjustment > 0 ? `⏳ Pending Adjustment: ${fmt(pendingAdjustment)}` : ``,
+      advanceBalance > 0 ? `🟢 Advance Balance: ${fmt(advanceBalance)}` : `⚠️ Outstanding Due: ${fmt(balanceDue)}`,
       ``,
       recent ? `📅 Recent Payments:\n${recent}` : ``,
       ``,
@@ -523,9 +525,10 @@ export default function RentLedgerDetailScreen() {
           {[
             { label: rentCycleLabel, value: fmt(tenant.rentAmount), color: colors.primary, icon: "home" as const },
             { label: "Total Expected", value: fmt(totalExpected), color: colors.foreground, icon: "trending-up" as const },
-            { label: "Total Paid", value: fmt(totalPaid), color: colors.success, icon: "check-circle" as const },
+            { label: "Total Received", value: fmt(totalPaid), color: colors.success, icon: "check-circle" as const },
+            ...(pendingAdjustment > 0 ? [{ label: "Pending Adjustment", value: fmt(pendingAdjustment), color: colors.warning, icon: "clock" as const }] : []),
             { label: "Advance", value: fmt(advanceBalance), color: colors.success, icon: "arrow-up-circle" as const },
-            { label: "Balance Due", value: fmt(balanceDue), color: balanceDue > 0 ? colors.destructive : colors.success, icon: "alert-circle" as const },
+            { label: "Outstanding Due", value: fmt(balanceDue), color: balanceDue > 0 ? colors.destructive : colors.success, icon: "alert-circle" as const },
             { label: periodsLabel, value: `${paidMonths}P / ${partialMonths}~ / ${dueMonths}D`, color: colors.foreground, icon: "calendar" as const },
           ].map(box => (
             <View key={box.label} style={[styles.summaryBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -628,7 +631,7 @@ export default function RentLedgerDetailScreen() {
                             <Text style={[styles.thCell, { flex: 1.4, color: colors.primary, textAlign: "right" }]}>Expected</Text>
                             <Text style={[styles.thCell, { flex: 1.4, color: colors.primary, textAlign: "right" }]}>Paid</Text>
                             <Text style={[styles.thCell, { flex: 0.9, color: colors.primary, textAlign: "center" }]}>Status</Text>
-                            <Text style={[styles.thCell, { flex: 1.5, color: colors.primary, textAlign: "right" }]}>Balance</Text>
+                            <Text style={[styles.thCell, { flex: 1.5, color: colors.primary, textAlign: "right" }]}>Running Due</Text>
                           </View>
 
                           {/* Monthly rows — all figures from server, zero recalculation */}
@@ -692,7 +695,7 @@ export default function RentLedgerDetailScreen() {
                       <Text style={{ fontSize: 13, fontWeight: "700", color: colors.success }}>{fmt(totalPaid)}</Text>
                     </View>
                     <View style={{ alignItems: "flex-end" }}>
-                      <Text style={{ fontSize: 10, color: colors.mutedForeground, fontWeight: "600", textTransform: "uppercase" }}>Balance</Text>
+                      <Text style={{ fontSize: 10, color: colors.mutedForeground, fontWeight: "600", textTransform: "uppercase" }}>Outstanding</Text>
                       <Text style={{ fontSize: 13, fontWeight: "800", color: balanceDue > 0 ? colors.destructive : colors.success }}>
                         {balanceDue > 0 ? fmt(balanceDue) : `+${fmt(advanceBalance)}`}
                       </Text>
@@ -751,7 +754,7 @@ export default function RentLedgerDetailScreen() {
                       </View>
                       <View style={[styles.statusBadge, { backgroundColor: `${statusColor}18` }]}>
                         <Text style={{ fontSize: 10, fontWeight: "800", color: statusColor }}>
-                          {isPendingGeneration ? "PENDING GENERATION" : p.status.toUpperCase()}
+                          {isPendingGeneration ? "PENDING ADJUSTMENT" : p.status.toUpperCase()}
                         </Text>
                       </View>
                     </View>

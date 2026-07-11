@@ -36,11 +36,29 @@ export type LedgerSummary = {
   totalExpected: number;
   /** Subset of totalExpected whose due date has already passed. Informational only — NOT used for balanceDue. */
   dueExpected: number;
-  /** Sum of all recorded payments. */
+  /** Sum of all recorded payments (= total money received, regardless of allocation). */
   totalPaid: number;
-  /** What the tenant currently owes: max(0, totalExpected - totalPaid). Always consistent with totalExpected/totalPaid. */
+  /**
+   * Payments that have generatedRentId === null and whose target month/year has
+   * no existing generated_rents row yet. These are real received payments that are
+   * waiting for their billing period to be generated (typically early post-paid
+   * payments). They must NOT reduce outstandingDue/balanceDue against unrelated
+   * historical rent — they are not "applied" until the target period generates
+   * and the adoption logic links them.
+   */
+  pendingAdjustment: number;
+  /**
+   * Actual unpaid amount from generated/billable rent only.
+   * = max(0, totalExpected - linkedPaid) where linkedPaid = totalPaid - pendingAdjustment.
+   * A pending-adjustment payment reserved for a future/in-progress post-paid period
+   * does NOT reduce this value against historical outstanding rent.
+   */
   balanceDue: number;
-  /** Credit the tenant is carrying: max(0, totalPaid - totalExpected). */
+  /**
+   * Genuine surplus credit the tenant is carrying (advance over generated/billable rent).
+   * = max(0, linkedPaid - totalExpected). pendingAdjustment payments are NOT counted
+   * as advance credit — they are pending allocation to a specific future period.
+   */
   advanceBalance: number;
   /** Amount owed for the most recent billing period, 0 if not yet due or already paid. */
   currentMonthDue: number;
@@ -710,6 +728,43 @@ export function buildDisplayRevisionHistory<T extends DisplayRevision>(
  * agreement, not that staleness. When `lease` is omitted, the summary falls
  * back to the ledger-only calculation.
  */
+/**
+ * Build a set of "year-month" keys for every existing generated_rents row so
+ * we can distinguish truly unmatched early-payment rows from payments that
+ * would be picked up by computeMonthHistory's fallback matching.
+ *
+ * A payment is "pending adjustment" only when:
+ *   - generatedRentId === null  (strict null — undefined means not explicitly
+ *     set, which is backward-compat for test helpers that omit the field)
+ *   - AND there is no generated_rents row whose billingPeriodStart falls in
+ *     the same calendar month/year as the payment's stored month+year
+ *
+ * This preserves existing fallback-matching behaviour: a generatedRentId=null
+ * payment that happens to share a month/year with an existing generated row
+ * still reduces balanceDue exactly as before.
+ */
+function computePendingAdjustment(
+  generatedRents: LedgerEntry[],
+  payments: LedgerPayment[]
+): number {
+  const generatedPeriodKeys = new Set<string>();
+  for (const r of generatedRents) {
+    const d = new Date(r.billingPeriodStart + "T00:00:00Z");
+    generatedPeriodKeys.add(`${d.getUTCFullYear()}-${d.getUTCMonth() + 1}`);
+  }
+  let pending = 0;
+  for (const p of payments) {
+    if (p.generatedRentId === null) {
+      const key =
+        p.month != null && p.year != null ? `${p.year}-${p.month}` : null;
+      if (key == null || !generatedPeriodKeys.has(key)) {
+        pending += toNum(p.amount);
+      }
+    }
+  }
+  return pending;
+}
+
 export function computeLedgerSummary(
   generatedRents: LedgerEntry[],
   payments: LedgerPayment[],
@@ -717,49 +772,50 @@ export function computeLedgerSummary(
   lease?: LeaseContext
 ): LedgerSummary {
   const totalPaid = payments.reduce((s, p) => s + toNum(p.amount), 0);
+  const pendingAdjustment = computePendingAdjustment(generatedRents, payments);
+  // linkedPaid = money actually applied to generated/billable rent periods.
+  // Pending-adjustment payments are real received money but are reserved for
+  // a specific not-yet-generated post-paid period; they must NOT reduce the
+  // outstanding balance against unrelated historical rent.
+  const linkedPaid = totalPaid - pendingAdjustment;
 
   if (!lease) {
     const monthsElapsed = generatedRents.length;
     const totalExpected = generatedRents.reduce((s, r) => s + toNum(r.amount), 0);
     const dueEntries = generatedRents.filter(r => r.dueDate <= today);
     const dueExpected = dueEntries.reduce((s, r) => s + toNum(r.amount), 0);
-    // Balance Due is always Total Expected - Total Paid (never dueExpected),
-    // so the two numbers displayed together on Tenant Details are never
-    // internally inconsistent. `dueExpected` is retained only as a
-    // "how much is currently overdue" signal for currentMonthDue below.
-    const balanceDue = Math.max(0, totalExpected - totalPaid);
-    const advanceBalance = Math.max(0, totalPaid - totalExpected);
+    // Outstanding Due uses linkedPaid (not totalPaid) so that a pending-
+    // adjustment payment reserved for a future period does not subtract from
+    // historical unpaid balances.
+    const balanceDue = Math.max(0, totalExpected - linkedPaid);
+    const advanceBalance = Math.max(0, linkedPaid - totalExpected);
     const sorted = [...generatedRents].sort((a, b) => b.billingPeriodStart.localeCompare(a.billingPeriodStart));
     const latest = sorted[0];
     const currentMonthDue =
       latest && latest.status !== "paid" && latest.dueDate <= today ? toNum(latest.amount) : 0;
-    return { monthsElapsed, totalExpected, dueExpected, totalPaid, balanceDue, advanceBalance, currentMonthDue };
+    return { monthsElapsed, totalExpected, dueExpected, totalPaid, pendingAdjustment, balanceDue, advanceBalance, currentMonthDue };
   }
 
   // computeEffectivePeriods already applies the collection-type
   // billing-generation gate (isPeriodBillable): a post-paid in-progress
   // month or a future month materialized early for payment allocation is
-  // excluded from expected-side totals — the payment itself still counts
-  // in totalPaid, netting against balanceDue exactly as before the row
-  // existed.
+  // excluded from expected-side totals.
   const merged = computeEffectivePeriods(generatedRents, lease, today);
 
   const monthsElapsed = merged.length;
   const totalExpected = merged.reduce((s, r) => s + r.amount, 0);
   const dueExpected = merged.filter(r => r.dueDate <= today).reduce((s, r) => s + r.amount, 0);
-  // Balance Due is always Total Expected - Total Paid (never dueExpected),
-  // so the two numbers displayed together on Tenant Details are never
-  // internally inconsistent. `dueExpected` is retained only as a
-  // "how much is currently overdue" signal for currentMonthDue below.
-  const balanceDue = Math.max(0, totalExpected - totalPaid);
-  const advanceBalance = Math.max(0, totalPaid - totalExpected);
+  // Outstanding Due uses linkedPaid — pending-adjustment payments reserved for
+  // a future/in-progress post-paid period do not reduce historical balance.
+  const balanceDue = Math.max(0, totalExpected - linkedPaid);
+  const advanceBalance = Math.max(0, linkedPaid - totalExpected);
 
   const sorted = [...merged].sort((a, b) => b.billingPeriodStart.localeCompare(a.billingPeriodStart));
   const latest = sorted[0];
   const currentMonthDue =
     latest && latest.status !== "paid" && latest.dueDate <= today ? latest.amount : 0;
 
-  return { monthsElapsed, totalExpected, dueExpected, totalPaid, balanceDue, advanceBalance, currentMonthDue };
+  return { monthsElapsed, totalExpected, dueExpected, totalPaid, pendingAdjustment, balanceDue, advanceBalance, currentMonthDue };
 }
 
 export type EffectivePeriod = {

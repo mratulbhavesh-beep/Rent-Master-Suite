@@ -335,6 +335,7 @@ export interface Tenant {
   totalExpected?: number;
   dueExpected?: number;
   totalPaid?: number;
+  pendingAdjustment?: number;
   balanceDue?: number;
   advanceBalance?: number;
   currentMonthDue?: number;
