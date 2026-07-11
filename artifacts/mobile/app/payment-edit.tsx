@@ -102,7 +102,11 @@ export default function PaymentEditScreen() {
     const parsed = parseFloat(amount);
     if (!amount || isNaN(parsed) || parsed <= 0)
       errs.amount = "Enter a valid amount greater than zero";
-    if (!paymentDate) errs.paymentDate = "Payment date is required";
+    if (paymentDateDisplay.replace(/\D/g, "").length === 0) {
+      errs.paymentDate = "Payment date is required";
+    } else if (!paymentDate) {
+      errs.paymentDate = "Invalid date. Please enter a valid date in DD/MM/YYYY format.";
+    }
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };

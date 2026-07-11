@@ -99,10 +99,21 @@ export default function TenantAddScreen() {
     if (!rentAmount.trim()) newErrors.rentAmount = "Rent amount is required";
     else if (isNaN(parseFloat(rentAmount)) || parseFloat(rentAmount) <= 0)
       newErrors.rentAmount = "Enter a valid amount";
-    if (!leaseStart) newErrors.leaseStart = "Lease start date is required";
-    if (!leaseEnd) newErrors.leaseEnd = "Lease end date is required";
-    else if (leaseStart && leaseEnd <= leaseStart)
+    if (leaseStartDisplay.replace(/\D/g, "").length === 0) {
+      newErrors.leaseStart = "Lease start date is required";
+    } else if (!leaseStart) {
+      newErrors.leaseStart = "Invalid date. Please enter a valid date in DD/MM/YYYY format.";
+    }
+    if (leaseEndDisplay.replace(/\D/g, "").length === 0) {
+      newErrors.leaseEnd = "Lease end date is required";
+    } else if (!leaseEnd) {
+      newErrors.leaseEnd = "Invalid date. Please enter a valid date in DD/MM/YYYY format.";
+    } else if (leaseStart && leaseEnd <= leaseStart) {
       newErrors.leaseEnd = "End date must be after start date";
+    }
+    if (depositDateDisplay.replace(/\D/g, "").length > 0 && !depositDate) {
+      newErrors.depositDate = "Invalid date. Please enter a valid date in DD/MM/YYYY format.";
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };

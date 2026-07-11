@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useDateInput } from "@/utils/useDateInput";
+import { useDateInput, isValidCalendarDate } from "@/utils/useDateInput";
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
   ActivityIndicator, Alert, Platform, Linking, Switch, Modal,
@@ -227,6 +227,18 @@ export default function TenantDetailScreen() {
       Alert.alert("Error", "Please fill in all required fields");
       return;
     }
+    if (leaseStartDisplay.replace(/\D/g, "").length === 0 || !leaseStart) {
+      Alert.alert("Invalid Date", "Please enter a valid lease start date in DD/MM/YYYY format.");
+      return;
+    }
+    if (leaseEndDisplay.replace(/\D/g, "").length === 0 || !leaseEnd) {
+      Alert.alert("Invalid Date", "Please enter a valid lease end date in DD/MM/YYYY format.");
+      return;
+    }
+    if (depositDateDisplay.replace(/\D/g, "").length > 0 && !depositDate) {
+      Alert.alert("Invalid Date", "Please enter a valid deposit date in DD/MM/YYYY format.");
+      return;
+    }
     updateMutation.mutate(
       {
         id: tenantId,
@@ -333,6 +345,10 @@ export default function TenantDetailScreen() {
       setRevisionError("Enter a valid effective date in DD/MM/YYYY format.");
       return;
     }
+    if (!isValidCalendarDate(isoDate)) {
+      setRevisionError("Invalid date. Please enter a valid date in DD/MM/YYYY format.");
+      return;
+    }
     // Client-side: effectiveFrom cannot be before lease start
     if (tenant?.leaseStart && isoDate < tenant.leaseStart) {
       const leaseStartDisplay = fmtDate(tenant.leaseStart);
@@ -396,6 +412,7 @@ export default function TenantDetailScreen() {
     const parts = editDate.trim().split("/");
     if (parts.length !== 3 || parts[2].length !== 4) { setEditError("Enter date as DD/MM/YYYY."); return; }
     const isoDate = `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+    if (!isValidCalendarDate(isoDate)) { setEditError("Invalid date. Please enter a valid date in DD/MM/YYYY format."); return; }
     const amt = parseFloat(editAmount);
     if (!editAmount.trim() || isNaN(amt) || amt <= 0) { setEditError("Enter a valid rent amount greater than zero."); return; }
     updateRevisionMutation.mutate(

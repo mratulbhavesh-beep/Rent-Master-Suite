@@ -5,6 +5,19 @@ import { requireAuth, type AuthRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
+/** Returns true only when str is a real calendar date (YYYY-MM-DD). */
+function isValidIsoDate(str: unknown): boolean {
+  if (typeof str !== "string") return false;
+  const parts = str.split("-");
+  if (parts.length !== 3 || parts[0].length !== 4) return false;
+  const y = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  const d = parseInt(parts[2], 10);
+  if (isNaN(y) || isNaN(m) || isNaN(d)) return false;
+  if (m < 1 || m > 12 || d < 1 || y < 1900 || y > 2100) return false;
+  return d <= new Date(y, m, 0).getDate();
+}
+
 function formatLoan(l: typeof loansTable.$inferSelect, propertyName?: string | null) {
   const principal = parseFloat(String(l.principalAmount));
   const emi = parseFloat(String(l.emiAmount));
@@ -36,6 +49,10 @@ router.post("/loans", requireAuth, async (req: AuthRequest, res): Promise<void> 
   const { lenderName, principalAmount, interestRate, emiAmount, startDate, totalMonths, propertyId, notes } = req.body;
   if (!lenderName || !principalAmount || !interestRate || !emiAmount || !startDate || !totalMonths) {
     res.status(400).json({ error: "Required fields missing" });
+    return;
+  }
+  if (!isValidIsoDate(startDate)) {
+    res.status(400).json({ error: "Invalid date. Please enter a valid date in DD/MM/YYYY format." });
     return;
   }
   if (propertyId) {
@@ -99,6 +116,10 @@ router.post("/loans/:id/payments", requireAuth, async (req: AuthRequest, res): P
   const { amount, paymentDate, notes } = req.body;
   if (!amount || !paymentDate) {
     res.status(400).json({ error: "Amount and paymentDate required" });
+    return;
+  }
+  if (!isValidIsoDate(paymentDate)) {
+    res.status(400).json({ error: "Invalid date. Please enter a valid date in DD/MM/YYYY format." });
     return;
   }
   const [loan] = await db.select().from(loansTable)

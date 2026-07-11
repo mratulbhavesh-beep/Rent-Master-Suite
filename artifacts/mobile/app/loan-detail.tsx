@@ -30,8 +30,16 @@ export default function LoanDetailScreen() {
   const createPaymentMutation = useCreateLoanPayment();
 
   const handleRecordPayment = () => {
-    if (!amount || !paymentDate) {
+    if (!amount) {
       Alert.alert("Error", "Please fill in all required fields");
+      return;
+    }
+    if (paymentDateDisplay.replace(/\D/g, "").length === 0) {
+      Alert.alert("Error", "Payment date is required");
+      return;
+    }
+    if (!paymentDate) {
+      Alert.alert("Invalid Date", "Invalid date. Please enter a valid date in DD/MM/YYYY format.");
       return;
     }
     const parsedAmount = parseFloat(amount);

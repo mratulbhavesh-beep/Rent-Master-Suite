@@ -11,6 +11,19 @@ import { getUserPropertyIds } from "../lib/ownership";
 
 const router: IRouter = Router();
 
+/** Returns true only when str is a real calendar date (YYYY-MM-DD). */
+function isValidIsoDate(str: unknown): boolean {
+  if (typeof str !== "string") return false;
+  const parts = str.split("-");
+  if (parts.length !== 3 || parts[0].length !== 4) return false;
+  const y = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  const d = parseInt(parts[2], 10);
+  if (isNaN(y) || isNaN(m) || isNaN(d)) return false;
+  if (m < 1 || m > 12 || d < 1 || y < 1900 || y > 2100) return false;
+  return d <= new Date(y, m, 0).getDate();
+}
+
 /**
  * Balance figures (Total Expected / Total Paid / Balance Due / Advance Balance)
  * are always derived from the shared @workspace/rent-calc module, which is the
@@ -196,6 +209,14 @@ router.post("/tenants", requireAuth, async (req: AuthRequest, res): Promise<void
     res.status(400).json({ error: "Required fields missing" });
     return;
   }
+  if (!isValidIsoDate(leaseStart) || !isValidIsoDate(leaseEnd)) {
+    res.status(400).json({ error: "Invalid date. Please enter a valid date in DD/MM/YYYY format." });
+    return;
+  }
+  if (depositDate && !isValidIsoDate(depositDate)) {
+    res.status(400).json({ error: "Invalid date. Please enter a valid date in DD/MM/YYYY format." });
+    return;
+  }
   const [property] = await db.select().from(propertiesTable)
     .where(and(eq(propertiesTable.id, propertyId), eq(propertiesTable.userId, userId)));
   if (!property) { res.status(403).json({ error: "Property not found" }); return; }
@@ -369,6 +390,18 @@ router.patch("/tenants/:id", requireAuth, async (req: AuthRequest, res): Promise
   if (body.rentAmount !== undefined) updates.rentAmount = String(body.rentAmount);
   if (body.securityDeposit !== undefined) updates.securityDeposit = body.securityDeposit != null ? String(body.securityDeposit) : null;
   if (body.escalationValue !== undefined) updates.escalationValue = String(body.escalationValue);
+  if (updates.leaseStart !== undefined && !isValidIsoDate(updates.leaseStart)) {
+    res.status(400).json({ error: "Invalid date. Please enter a valid date in DD/MM/YYYY format." });
+    return;
+  }
+  if (updates.leaseEnd !== undefined && !isValidIsoDate(updates.leaseEnd)) {
+    res.status(400).json({ error: "Invalid date. Please enter a valid date in DD/MM/YYYY format." });
+    return;
+  }
+  if (updates.depositDate !== undefined && updates.depositDate !== null && !isValidIsoDate(updates.depositDate)) {
+    res.status(400).json({ error: "Invalid date. Please enter a valid date in DD/MM/YYYY format." });
+    return;
+  }
   if (body.customRenewalValue !== undefined) updates.customRenewalValue = body.customRenewalValue != null ? parseInt(String(body.customRenewalValue), 10) : null;
 
   // Write-time materialization keeps the tenant row the single source of

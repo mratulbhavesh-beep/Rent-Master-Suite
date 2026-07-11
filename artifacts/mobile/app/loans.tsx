@@ -42,8 +42,16 @@ export default function LoansScreen() {
   };
 
   const handleSave = () => {
-    if (!lenderName.trim() || !principalAmount || !interestRate || !emiAmount || !startDate || !totalMonths) {
+    if (!lenderName.trim() || !principalAmount || !interestRate || !emiAmount || !totalMonths) {
       Alert.alert("Error", "Please fill in all required fields");
+      return;
+    }
+    if (startDateDisplay.replace(/\D/g, "").length === 0) {
+      Alert.alert("Error", "Start date is required");
+      return;
+    }
+    if (!startDate) {
+      Alert.alert("Invalid Date", "Invalid date. Please enter a valid date in DD/MM/YYYY format.");
       return;
     }
     const principal = parseFloat(principalAmount);

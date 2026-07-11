@@ -136,7 +136,11 @@ export default function PaymentAddScreen() {
     if (!tenantId) errs.tenantId = "Please select a tenant";
     if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0)
       errs.amount = "Enter a valid amount";
-    if (!paymentDate) errs.paymentDate = "Payment date is required";
+    if (paymentDateDisplay.replace(/\D/g, "").length === 0) {
+      errs.paymentDate = "Payment date is required";
+    } else if (!paymentDate) {
+      errs.paymentDate = "Invalid date. Please enter a valid date in DD/MM/YYYY format.";
+    }
     if (allocationMode === "specific" && !selectedBillingPeriodId) {
       errs.period = "Select a billing period to allocate this payment to";
     }

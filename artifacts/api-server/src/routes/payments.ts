@@ -10,6 +10,19 @@ import { allocatePaymentFIFO, allocateToSpecificPeriod, clearAllocations } from 
 
 const router: IRouter = Router();
 
+/** Returns true only when str is a real calendar date (YYYY-MM-DD). */
+function isValidIsoDate(str: unknown): boolean {
+  if (typeof str !== "string") return false;
+  const parts = str.split("-");
+  if (parts.length !== 3 || parts[0].length !== 4) return false;
+  const y = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  const d = parseInt(parts[2], 10);
+  if (isNaN(y) || isNaN(m) || isNaN(d)) return false;
+  if (m < 1 || m > 12 || d < 1 || y < 1900 || y > 2100) return false;
+  return d <= new Date(y, m, 0).getDate();
+}
+
 function formatPayment(p: typeof paymentsTable.$inferSelect, tenantName?: string | null, propertyName?: string | null, unitNumber?: string | null) {
   return {
     ...p,
@@ -98,6 +111,10 @@ router.post("/payments", requireAuth, async (req: AuthRequest, res): Promise<voi
 
   if (!tenantId || !propertyId || !amount || !paymentDate || !month || !year || !method) {
     res.status(400).json({ error: "Required fields missing" });
+    return;
+  }
+  if (!isValidIsoDate(paymentDate)) {
+    res.status(400).json({ error: "Invalid date. Please enter a valid date in DD/MM/YYYY format." });
     return;
   }
   const [property] = await db.select().from(propertiesTable)
