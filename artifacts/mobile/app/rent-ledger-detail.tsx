@@ -13,7 +13,7 @@ import {
 } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
-import { Feather } from "@expo/vector-icons";
+import { Feather, FontAwesome } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fmtDate } from "@/utils/dateFormat";
 import {
@@ -475,7 +475,7 @@ export default function RentLedgerDetailScreen() {
             style={[styles.actionBtn, { backgroundColor: "#25D36615" }]}
             onPress={handleWhatsApp}
           >
-            <Feather name="message-circle" size={18} color="#25D366" />
+            <FontAwesome name="whatsapp" size={20} color="#25D366" />
           </TouchableOpacity>
         </View>
       </View>
@@ -954,7 +954,7 @@ export default function RentLedgerDetailScreen() {
             style={[styles.bigActionBtn, { backgroundColor: "#25D36615", borderColor: "#25D36630" }]}
             onPress={handleWhatsApp}
           >
-            <Feather name="message-circle" size={20} color="#25D366" />
+            <FontAwesome name="whatsapp" size={22} color="#25D366" />
             <Text style={[styles.bigActionText, { color: "#25D366" }]}>WhatsApp</Text>
           </TouchableOpacity>
         </View>

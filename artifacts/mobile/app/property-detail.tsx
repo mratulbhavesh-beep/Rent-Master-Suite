@@ -33,7 +33,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
-import { Feather } from "@expo/vector-icons";
+import { Feather, FontAwesome } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fmtDate } from "@/utils/dateFormat";
 import { confirmAction } from "@/utils/confirm";
@@ -718,7 +718,7 @@ export default function PropertyDetailScreen() {
                         style={[s.actionBtn, { backgroundColor: "#25D36618" }]}
                         onPress={() => handleWhatsAppRemind(tenant)}
                       >
-                        <Feather name="message-circle" size={14} color="#25D366" />
+                        <FontAwesome name="whatsapp" size={15} color="#25D366" />
                         <Text style={[s.actionText, { color: "#25D366" }]}>Remind</Text>
                       </TouchableOpacity>
                       <TouchableOpacity

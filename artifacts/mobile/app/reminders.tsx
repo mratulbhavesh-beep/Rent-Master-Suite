@@ -6,7 +6,7 @@ import {
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useColors } from "@/hooks/useColors";
-import { Feather } from "@expo/vector-icons";
+import { Feather, FontAwesome } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
 import { shareViaWhatsApp, interpolateTemplate, type ShareResult } from "@/utils/whatsapp";
@@ -593,7 +593,7 @@ export default function RemindersScreen() {
                 <ActivityIndicator color="#fff" />
               ) : (
                 <>
-                  <Feather name="message-circle" size={18} color="#fff" />
+                  <FontAwesome name="whatsapp" size={20} color="#fff" />
                   <Text style={styles.shareBtnText}>Share via WhatsApp</Text>
                 </>
               )}

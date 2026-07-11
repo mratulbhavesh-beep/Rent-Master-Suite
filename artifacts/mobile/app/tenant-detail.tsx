@@ -23,7 +23,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
-import { Feather } from "@expo/vector-icons";
+import { Feather, FontAwesome } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
 import * as ImagePicker from "expo-image-picker";
@@ -1036,7 +1036,7 @@ export default function TenantDetailScreen() {
                   }}
                   activeOpacity={0.85}
                 >
-                  <Feather name="message-circle" size={16} color="#fff" />
+                  <FontAwesome name="whatsapp" size={18} color="#fff" />
                   <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>Send Reminder</Text>
                 </TouchableOpacity>
               </View>
