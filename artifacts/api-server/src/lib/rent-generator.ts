@@ -453,13 +453,15 @@ export async function rebuildTenantBilling(
   }
   for (const entry of byPeriod.values()) {
     const rentId = await ensureGeneratedRentForPeriod(tenantId, entry.month, entry.year, dbClient);
-    if (rentId == null) {
-      // No billable period under the NEW settings (e.g. payment predates the
-      // moved lease start). The payment record is preserved — it still
-      // counts in Total Paid — but has no ledger row to sit on.
+    if (rentId == null || rentId === "early") {
+      // null  = no billable period under the NEW settings (e.g. payment predates
+      //          the moved lease start) — payment stays unlinked, still counts
+      //          in Total Paid.
+      // "early" = post-paid period still in progress — payment stays unlinked,
+      //          cron adoption will link it when the period generates normally.
       logger.warn(
-        { tenantId, month: entry.month, year: entry.year, payments: entry.ids.length },
-        "Rebuild: payments have no billable period under new settings; left unlinked"
+        { tenantId, month: entry.month, year: entry.year, payments: entry.ids.length, reason: rentId ?? "no_period" },
+        "Rebuild: payments left unlinked (no billable period or post-paid in-progress)"
       );
       continue;
     }
@@ -484,12 +486,24 @@ export async function rebuildTenantBilling(
  * Timeline, Receipts and Summary all read the same rows. Returns null when
  * no started period matches (e.g. a future month).
  */
+/**
+ * "early" means the billing period exists on the lease timeline but has not
+ * yet reached its normal post-paid generation eligibility date (periodEnd >
+ * today). The caller must save the payment with generatedRentId = null and
+ * let the cron's adoption block link it when the period is legitimately
+ * generated.
+ *
+ * null means no billing period exists for that month/year on this lease at
+ * all (e.g. before leaseStart). The caller must reject the payment with 400.
+ *
+ * number means the row was found or created; link the payment to it.
+ */
 export async function ensureGeneratedRentForPeriod(
   tenantId: number,
   month: number,
   year: number,
   dbClient: DbClient = db
-): Promise<number | null> {
+): Promise<number | null | "early"> {
   const [tenant] = await dbClient.select().from(tenantsTable).where(eq(tenantsTable.id, tenantId));
   if (!tenant) return null;
 
@@ -515,6 +529,19 @@ export async function ensureGeneratedRentForPeriod(
   const period = findBillablePeriodForMonth(lease, month, year, today);
   if (!period) return null;
 
+  // CRITICAL: For post-paid tenants, do NOT generate the period row early.
+  // Recording a payment must never cause an unfinished billing period to
+  // become generated. The payment is saved with generatedRentId = null and
+  // the cron's adoption block will link it once the period is legitimately
+  // generated (periodEnd <= today on a future run).
+  if (tenant.rentCollectionType === "post_paid" && period.end > today) {
+    logger.info(
+      { tenantId, month, year, periodEnd: period.end, today },
+      "Post-paid period not yet billable — payment will be saved as unlinked for later adoption"
+    );
+    return "early";
+  }
+
   const [inserted] = await dbClient.insert(generatedRentsTable).values({
     tenantId,
     propertyId: tenant.propertyId,
@@ -528,7 +555,7 @@ export async function ensureGeneratedRentForPeriod(
   }).onConflictDoNothing().returning({ id: generatedRentsTable.id });
 
   if (inserted) {
-    logger.info({ tenantId, periodStart: period.start }, "Generated in-progress period row for payment allocation");
+    logger.info({ tenantId, periodStart: period.start }, "Generated period row for payment allocation");
     return inserted.id;
   }
 

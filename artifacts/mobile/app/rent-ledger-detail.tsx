@@ -719,7 +719,10 @@ export default function RentLedgerDetailScreen() {
               const isLast = idx === sortedPayments.length - 1;
               const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
               const adjustedAgainst = p.month ? `${MONTHS[p.month - 1]} ${p.year}` : null;
-              const statusColor = p.status === "paid" ? colors.success : p.status === "partial" ? colors.warning : colors.destructive;
+              const isPendingGeneration = p.generatedRentId == null;
+              const statusColor = isPendingGeneration
+                ? colors.warning
+                : p.status === "paid" ? colors.success : p.status === "partial" ? colors.warning : colors.destructive;
               const anyBusy = busyKey !== null;
               return (
                 <View key={p.id} style={styles.timelineItem}>
@@ -748,7 +751,7 @@ export default function RentLedgerDetailScreen() {
                       </View>
                       <View style={[styles.statusBadge, { backgroundColor: `${statusColor}18` }]}>
                         <Text style={{ fontSize: 10, fontWeight: "800", color: statusColor }}>
-                          {p.status.toUpperCase()}
+                          {isPendingGeneration ? "PENDING GENERATION" : p.status.toUpperCase()}
                         </Text>
                       </View>
                     </View>

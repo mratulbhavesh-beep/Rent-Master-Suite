@@ -79,20 +79,26 @@ router.post("/payments", requireAuth, async (req: AuthRequest, res): Promise<voi
     }
   }
 
-  // Every payment must land on exactly one ledger row. When the client
-  // didn't pick one explicitly, resolve (and if needed generate) the row
-  // for the payment's billing period via the ONE shared billing engine —
-  // this covers post-paid tenants paying for the in-progress period, whose
-  // row is otherwise not generated until the period ends.
-  const resolvedRentId: number | null =
-    generatedRentId ?? (await ensureGeneratedRentForPeriod(tenantId, month, year));
-  if (resolvedRentId == null) {
-    // Enforce the invariant at write time: a payment that cannot be placed
-    // on any ledger row (e.g. a month before the lease starts) must be
-    // rejected, not silently left unallocated.
+  // Resolve the ledger row for this payment's billing period.
+  // Three outcomes from ensureGeneratedRentForPeriod:
+  //   number  — existing or newly created row; link the payment to it.
+  //   "early" — post-paid period exists on the lease but periodEnd > today;
+  //             save payment with generatedRentId = null so the cron's
+  //             adoption block links it when the period is legitimately
+  //             generated. DO NOT create the generated_rents row early.
+  //   null    — no period on the lease at all (e.g. before leaseStart); reject.
+  const ensureResult =
+    generatedRentId != null
+      ? generatedRentId
+      : await ensureGeneratedRentForPeriod(tenantId, month, year);
+
+  if (ensureResult === null) {
     res.status(400).json({ error: "No billable period exists for that month — check the payment's month/year against the tenant's lease" });
     return;
   }
+
+  // null = unlinked early post-paid payment (will be adopted by cron later)
+  const resolvedRentId: number | null = ensureResult === "early" ? null : ensureResult;
 
   const receiptNumber = generateReceiptNumber();
   const [payment] = await db.insert(paymentsTable).values({
@@ -274,17 +280,19 @@ router.put("/payments/:id", requireAuth, async (req: AuthRequest, res): Promise<
   if (notes !== undefined) updates.notes = notes;
 
   // Billing period moved — re-allocate to the correct ledger row via the
-  // same shared engine path used at creation time.
+  // same shared engine path used at creation time. "early" = post-paid
+  // in-progress period; save as unlinked (null) for later cron adoption.
   const newMonth = month !== undefined ? month : existing.month;
   const newYear = year !== undefined ? year : existing.year;
   const periodMoved = newMonth !== existing.month || newYear !== existing.year;
   if (periodMoved) {
     const newRentId = await ensureGeneratedRentForPeriod(existing.tenantId, newMonth, newYear);
-    if (newRentId == null) {
+    if (newRentId === null) {
       res.status(400).json({ error: "No billable period exists for that month — check the payment's month/year against the tenant's lease" });
       return;
     }
-    updates.generatedRentId = newRentId;
+    // "early" = post-paid in-progress → save with generatedRentId = null
+    updates.generatedRentId = newRentId === "early" ? null : newRentId;
   }
 
   const [payment] = await db.update(paymentsTable).set(updates).where(eq(paymentsTable.id, id)).returning();
