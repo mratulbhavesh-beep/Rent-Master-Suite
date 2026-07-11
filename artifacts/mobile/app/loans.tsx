@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from "react";
+import { useDateInput } from "@/utils/useDateInput";
 import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal } from "react-native";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { useListLoans, getListLoansQueryKey, Loan, useCreateLoan, useListProperties, getListPropertiesQueryKey } from "@workspace/api-client-react";
@@ -19,7 +20,7 @@ export default function LoansScreen() {
   const [principalAmount, setPrincipalAmount] = useState("");
   const [interestRate, setInterestRate] = useState("");
   const [emiAmount, setEmiAmount] = useState("");
-  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const { displayValue: startDateDisplay, onChangeDisplay: onStartDateChange, isoValue: startDate, setFromIso: setStartDateFromIso } = useDateInput(new Date().toISOString().split('T')[0]);
   const [totalMonths, setTotalMonths] = useState("");
   const [propertyId, setPropertyId] = useState<number | null>(null);
 
@@ -35,7 +36,7 @@ export default function LoansScreen() {
     setPrincipalAmount("");
     setInterestRate("");
     setEmiAmount("");
-    setStartDate(new Date().toISOString().split('T')[0]);
+    setStartDateFromIso(new Date().toISOString().split('T')[0]);
     setTotalMonths("");
     setPropertyId(null);
   };
@@ -235,9 +236,10 @@ export default function LoansScreen() {
             <Text style={[styles.inputLabel, { color: colors.foreground }]}>Start Date*</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-              value={startDate}
-              onChangeText={setStartDate}
-              placeholder="YYYY-MM-DD"
+              value={startDateDisplay}
+              onChangeText={onStartDateChange}
+              placeholder="DD/MM/YYYY"
+              keyboardType="numeric"
               placeholderTextColor={colors.mutedForeground}
             />
 

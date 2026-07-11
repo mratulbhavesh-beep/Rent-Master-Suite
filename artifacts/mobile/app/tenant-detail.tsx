@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useDateInput } from "@/utils/useDateInput";
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
   ActivityIndicator, Alert, Platform, Linking, Switch, Modal,
@@ -89,10 +90,10 @@ export default function TenantDetailScreen() {
   const [unitNumber, setUnitNumber] = useState("");
   const [rentAmount, setRentAmount] = useState("");
   const [status, setStatus] = useState<"active" | "inactive" | "evicted">("active");
-  const [leaseStart, setLeaseStart] = useState("");
-  const [leaseEnd, setLeaseEnd] = useState("");
+  const { displayValue: leaseStartDisplay, onChangeDisplay: onLeaseStartChange, isoValue: leaseStart, setFromIso: setLeaseStartFromIso } = useDateInput("");
+  const { displayValue: leaseEndDisplay, onChangeDisplay: onLeaseEndChange, isoValue: leaseEnd, setFromIso: setLeaseEndFromIso } = useDateInput("");
   const [depositAmount, setDepositAmount] = useState("");
-  const [depositDate, setDepositDate] = useState("");
+  const { displayValue: depositDateDisplay, onChangeDisplay: onDepositDateChange, isoValue: depositDate, setFromIso: setDepositDateFromIso } = useDateInput("");
   const [depositStatus, setDepositStatus] = useState<"held" | "refunded">("held");
   const [billingCycle, setBillingCycle] = useState<"weekly" | "monthly" | "quarterly" | "yearly">("monthly");
   const [rentCollectionType, setRentCollectionType] = useState<"advance" | "post_paid">("post_paid");
@@ -198,11 +199,11 @@ export default function TenantDetailScreen() {
       setUnitNumber(tenant.unitNumber);
       setRentAmount(tenant.rentAmount.toString());
       setStatus(tenant.status as "active" | "inactive" | "evicted");
-      setLeaseStart(tenant.leaseStart.split("T")[0]);
-      setLeaseEnd(tenant.leaseEnd.split("T")[0]);
+      setLeaseStartFromIso(tenant.leaseStart.split("T")[0]);
+      setLeaseEndFromIso(tenant.leaseEnd.split("T")[0]);
       const t = tenant as any;
       setDepositAmount(t.securityDeposit != null ? String(t.securityDeposit) : "");
-      setDepositDate(t.depositDate ? String(t.depositDate).split("T")[0] : "");
+      setDepositDateFromIso(t.depositDate ? String(t.depositDate).split("T")[0] : "");
       setDepositStatus((t.depositStatus as "held" | "refunded") ?? "held");
       setBillingCycle(((t as any).billingCycle as "monthly" | "quarterly" | "yearly") ?? "monthly");
       setRentCollectionType(((t as any).rentCollectionType as "advance" | "post_paid") ?? "post_paid");
@@ -1313,12 +1314,12 @@ export default function TenantDetailScreen() {
               </View>
               <View style={styles.row}>
                 <View style={styles.flex1}>
-                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease Start (YYYY-MM-DD)</Text>
-                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={leaseStart} onChangeText={setLeaseStart} />
+                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease Start (DD/MM/YYYY)</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={leaseStartDisplay} onChangeText={onLeaseStartChange} placeholder="DD/MM/YYYY" placeholderTextColor="#999" keyboardType="numeric" />
                 </View>
                 <View style={styles.flex1}>
-                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease End (YYYY-MM-DD)</Text>
-                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={leaseEnd} onChangeText={setLeaseEnd} />
+                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease End (DD/MM/YYYY)</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={leaseEndDisplay} onChangeText={onLeaseEndChange} placeholder="DD/MM/YYYY" placeholderTextColor="#999" keyboardType="numeric" />
                 </View>
               </View>
               <View style={[styles.sectionDivider, { backgroundColor: colors.border }]} />
@@ -1329,8 +1330,8 @@ export default function TenantDetailScreen() {
                   <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={depositAmount} onChangeText={setDepositAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.mutedForeground} />
                 </View>
                 <View style={styles.flex1}>
-                  <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Date (YYYY-MM-DD)</Text>
-                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={depositDate} onChangeText={setDepositDate} placeholder="YYYY-MM-DD" placeholderTextColor={colors.mutedForeground} />
+                  <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Date (DD/MM/YYYY)</Text>
+                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={depositDateDisplay} onChangeText={onDepositDateChange} placeholder="DD/MM/YYYY" placeholderTextColor={colors.mutedForeground} keyboardType="numeric" />
                 </View>
               </View>
               <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 8 }]}>Status</Text>

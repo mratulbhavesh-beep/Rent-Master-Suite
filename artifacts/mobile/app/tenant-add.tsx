@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useDateInput } from "@/utils/useDateInput";
 import {
   View,
   Text,
@@ -70,10 +71,10 @@ export default function TenantAddScreen() {
   );
   const [unitNumber, setUnitNumber] = useState("");
   const [rentAmount, setRentAmount] = useState("");
-  const [leaseStart, setLeaseStart] = useState(today);
-  const [leaseEnd, setLeaseEnd] = useState(nextYear);
+  const { displayValue: leaseStartDisplay, onChangeDisplay: onLeaseStartChange, isoValue: leaseStart } = useDateInput(today);
+  const { displayValue: leaseEndDisplay, onChangeDisplay: onLeaseEndChange, isoValue: leaseEnd } = useDateInput(nextYear);
   const [depositAmount, setDepositAmount] = useState("");
-  const [depositDate, setDepositDate] = useState(today);
+  const { displayValue: depositDateDisplay, onChangeDisplay: onDepositDateChange, isoValue: depositDate } = useDateInput(today);
   const [billingCycle, setBillingCycle] = useState<"weekly" | "monthly" | "quarterly" | "yearly">("monthly");
   const [rentCollectionType, setRentCollectionType] = useState<"advance" | "post_paid">("post_paid");
   const [gracePeriodDays, setGracePeriodDays] = useState(5);
@@ -390,12 +391,13 @@ export default function TenantAddScreen() {
                         : colors.border,
                     },
                   ]}
-                  value={leaseStart}
+                  value={leaseStartDisplay}
                   onChangeText={(v) => {
-                    setLeaseStart(v);
+                    onLeaseStartChange(v);
                     setErrors((e) => ({ ...e, leaseStart: "" }));
                   }}
-                  placeholder="YYYY-MM-DD"
+                  placeholder="DD/MM/YYYY"
+                  keyboardType="numeric"
                   placeholderTextColor={colors.mutedForeground}
                 />
               </Field>
@@ -413,12 +415,13 @@ export default function TenantAddScreen() {
                         : colors.border,
                     },
                   ]}
-                  value={leaseEnd}
+                  value={leaseEndDisplay}
                   onChangeText={(v) => {
-                    setLeaseEnd(v);
+                    onLeaseEndChange(v);
                     setErrors((e) => ({ ...e, leaseEnd: "" }));
                   }}
-                  placeholder="YYYY-MM-DD"
+                  placeholder="DD/MM/YYYY"
+                  keyboardType="numeric"
                   placeholderTextColor={colors.mutedForeground}
                 />
               </Field>
@@ -443,12 +446,13 @@ export default function TenantAddScreen() {
                 />
               </View>
               <View style={styles.flex1}>
-                <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Date (YYYY-MM-DD)</Text>
+                <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Date (DD/MM/YYYY)</Text>
                 <TextInput
                   style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-                  value={depositDate}
-                  onChangeText={setDepositDate}
-                  placeholder="YYYY-MM-DD"
+                  value={depositDateDisplay}
+                  onChangeText={onDepositDateChange}
+                  placeholder="DD/MM/YYYY"
+                  keyboardType="numeric"
                   placeholderTextColor={colors.mutedForeground}
                 />
               </View>

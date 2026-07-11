@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useDateInput } from "@/utils/useDateInput";
 import {
   View,
   Text,
@@ -67,7 +68,7 @@ export default function PaymentEditScreen() {
   const queryClient = useQueryClient();
 
   const [amount, setAmount] = useState("");
-  const [paymentDate, setPaymentDate] = useState("");
+  const { displayValue: paymentDateDisplay, onChangeDisplay: onPaymentDateChange, isoValue: paymentDate, setFromIso: setPaymentDateFromIso } = useDateInput("");
   const [method, setMethod] = useState<Method>("cash");
   const [status, setStatus] = useState<Status>("paid");
   const [notes, setNotes] = useState("");
@@ -83,7 +84,7 @@ export default function PaymentEditScreen() {
   useEffect(() => {
     if (payment) {
       setAmount(String(Number(payment.amount)));
-      setPaymentDate(payment.paymentDate.split("T")[0]);
+      setPaymentDateFromIso(payment.paymentDate.split("T")[0]);
       setMethod(payment.method as Method);
       setStatus(payment.status as Status);
       setNotes(payment.notes || "");
@@ -262,9 +263,10 @@ export default function PaymentEditScreen() {
                   borderColor: errors.paymentDate ? colors.destructive : colors.border,
                 },
               ]}
-              value={paymentDate}
-              onChangeText={(v) => { setPaymentDate(v); setErrors((e) => ({ ...e, paymentDate: "" })); }}
-              placeholder="YYYY-MM-DD"
+              value={paymentDateDisplay}
+              onChangeText={(v) => { onPaymentDateChange(v); setErrors((e) => ({ ...e, paymentDate: "" })); }}
+              placeholder="DD/MM/YYYY"
+              keyboardType="numeric"
               placeholderTextColor={colors.mutedForeground}
               editable={!isBusy}
             />

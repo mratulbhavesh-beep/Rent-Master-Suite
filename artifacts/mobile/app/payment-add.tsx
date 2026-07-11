@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { fmtDate } from "@/utils/dateFormat";
+import { useDateInput } from "@/utils/useDateInput";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   useCreatePayment,
@@ -71,7 +72,7 @@ export default function PaymentAddScreen() {
   const [selectedBillingPeriodId, setSelectedBillingPeriodId] = useState<number | null>(null);
   const [paymentType, setPaymentType] = useState<"full" | "partial">("full");
   const [amount, setAmount] = useState("");
-  const [paymentDate, setPaymentDate] = useState(today);
+  const { displayValue: paymentDateDisplay, onChangeDisplay: onPaymentDateChange, isoValue: paymentDate } = useDateInput(today);
   const [method, setMethod] = useState<Method>("cash");
   const [notes, setNotes] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -460,9 +461,10 @@ export default function PaymentAddScreen() {
             <Text style={[styles.label, { color: colors.foreground }]}>Payment Date *</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: errors.paymentDate ? colors.destructive : colors.border }]}
-              value={paymentDate}
-              onChangeText={(v) => { setPaymentDate(v); setErrors((e) => ({ ...e, paymentDate: "" })); }}
-              placeholder="YYYY-MM-DD"
+              value={paymentDateDisplay}
+              onChangeText={(v) => { onPaymentDateChange(v); setErrors((e) => ({ ...e, paymentDate: "" })); }}
+              placeholder="DD/MM/YYYY"
+              keyboardType="numeric"
               placeholderTextColor={colors.mutedForeground}
             />
             <Text style={[styles.hintText, { color: colors.mutedForeground }]}>

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useDateInput } from "@/utils/useDateInput";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Modal, TextInput } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { getListLoansQueryKey, useCreateLoanPayment, useListLoans } from "@workspace/api-client-react";
@@ -18,7 +19,7 @@ export default function LoanDetailScreen() {
 
   const [isPaymentModalVisible, setIsPaymentModalVisible] = useState(false);
   const [amount, setAmount] = useState("");
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const { displayValue: paymentDateDisplay, onChangeDisplay: onPaymentDateChange, isoValue: paymentDate } = useDateInput(new Date().toISOString().split('T')[0]);
 
   // Use useListLoans and find the specific loan by ID
   const { data: loans, isLoading, refetch } = useListLoans({
@@ -171,8 +172,11 @@ export default function LoanDetailScreen() {
             <Text style={[styles.inputLabel, { color: colors.foreground }]}>Payment Date</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
-              value={paymentDate}
-              onChangeText={setPaymentDate}
+              value={paymentDateDisplay}
+              onChangeText={onPaymentDateChange}
+              placeholder="DD/MM/YYYY"
+              placeholderTextColor="#999"
+              keyboardType="numeric"
             />
 
             <View style={styles.modalActions}>
