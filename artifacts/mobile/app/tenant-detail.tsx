@@ -86,6 +86,23 @@ function addOneDayStr(dateStr: string): string {
   return d.toISOString().split("T")[0];
 }
 
+// Mirrors lib/rent-calc computePeriodEnd exactly — kept local to avoid
+// adding a new workspace dependency to the mobile bundle.
+// weekly: 7-day period (day 0 → day 6); others: addMonths(n) − 1 day.
+function computeNextPeriodEnd(periodStart: string, billingCycle: string): string {
+  if (billingCycle === "weekly") {
+    const d = new Date(periodStart + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + 6);
+    return d.toISOString().split("T")[0];
+  }
+  const months = billingCycle === "quarterly" ? 3 : billingCycle === "yearly" ? 12 : 1;
+  const d = new Date(periodStart + "T00:00:00Z");
+  d.setUTCMonth(d.getUTCMonth() + months);
+  const end = new Date(d.toISOString().split("T")[0] + "T00:00:00Z");
+  end.setUTCDate(end.getUTCDate() - 1);
+  return end.toISOString().split("T")[0];
+}
+
 export default function TenantDetailScreen() {
   const { id } = useLocalSearchParams();
   const tenantId = Number(id);
@@ -725,7 +742,16 @@ export default function TenantDetailScreen() {
     : "Not generated yet";
   const dueDateDisplay = latestRent ? fmtBillingDate(latestRent.dueDate) : "—";
   const nextGenDateDisplay = latestRent
-    ? fmtBillingDate(addOneDayStr(latestRent.billingPeriodEnd))
+    ? (() => {
+        const nextPeriodStart = addOneDayStr(latestRent.billingPeriodEnd);
+        // Advance gate: periodStart <= today → next gen = start of next period
+        // Post-paid gate: periodEnd <= today → next gen = end of next period
+        return fmtBillingDate(
+          collectionTypeValue === "advance"
+            ? nextPeriodStart
+            : computeNextPeriodEnd(nextPeriodStart, billingCycleValue)
+        );
+      })()
     : "—";
 
   // ─── Render ──────────────────────────────────────────────────────────────
