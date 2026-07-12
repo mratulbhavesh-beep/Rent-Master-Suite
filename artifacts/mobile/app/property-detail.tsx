@@ -677,7 +677,7 @@ export default function PropertyDetailScreen() {
                         </Text>
                       </View>
                       <View style={s.amountBox}>
-                        <Text style={[s.amtLbl, { color: colors.mutedForeground }]}>Current Due</Text>
+                        <Text style={[s.amtLbl, { color: colors.mutedForeground }]}>Total Due (Outstanding)</Text>
                         <Text style={[s.amtVal, { color: bal > 0 ? colors.destructive : colors.success }]}>
                           {bal > 0 ? fmt(bal) : "Nil"}
                         </Text>
