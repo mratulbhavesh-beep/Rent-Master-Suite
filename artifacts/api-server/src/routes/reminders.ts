@@ -13,8 +13,43 @@ const router: IRouter = Router();
 // Templates — CRUD (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 
+const DEFAULT_TEMPLATES = [
+  {
+    name: "3-Day Advance Reminder",
+    type: "reminder_3days",
+    body: "Hi {{tenantName}}, your rent of ₹{{amount}} for {{property}} (Unit {{unit}}) is due on {{dueDate}}. Please arrange payment to avoid late fees. Thank you! — {{ownerName}}",
+    variables: ["tenantName", "amount", "property", "unit", "dueDate", "ownerName"],
+    isActive: true,
+  },
+  {
+    name: "Due-Date Reminder",
+    type: "reminder_due",
+    body: "Hi {{tenantName}}, your rent of ₹{{amount}} for {{property}} (Unit {{unit}}) is DUE TODAY ({{dueDate}}). Please pay immediately to avoid penalties. — {{ownerName}}",
+    variables: ["tenantName", "amount", "property", "unit", "dueDate", "ownerName"],
+    isActive: true,
+  },
+  {
+    name: "Overdue Reminder",
+    type: "reminder_overdue",
+    body: "Hi {{tenantName}}, your rent of ₹{{amount}} for {{property}} (Unit {{unit}}) was due on {{dueDate}} and is now OVERDUE by {{overdueDays}} day(s). Please pay immediately. — {{ownerName}}",
+    variables: ["tenantName", "amount", "property", "unit", "dueDate", "ownerName", "overdueDays"],
+    isActive: true,
+  },
+  {
+    name: "Payment Receipt",
+    type: "receipt_whatsapp",
+    body: "Payment Received ✅\nTenant: {{tenantName}}\nProperty: {{property}} (Unit {{unit}})\nAmount: ₹{{amount}}\nDate: {{paymentDate}}\nMode: {{method}}\nReceipt No: {{receiptNumber}}\nThank you! — {{ownerName}}",
+    variables: ["tenantName", "property", "unit", "amount", "paymentDate", "method", "receiptNumber", "ownerName"],
+    isActive: true,
+  },
+] as const;
+
 router.get("/reminders/templates", requireAuth, async (_req: AuthRequest, res): Promise<void> => {
-  const templates = await db.select().from(messageTemplatesTable).orderBy(messageTemplatesTable.id);
+  let templates = await db.select().from(messageTemplatesTable).orderBy(messageTemplatesTable.id);
+  // Auto-seed default templates on first use (production DB starts empty — no migration seed)
+  if (templates.length === 0) {
+    templates = await db.insert(messageTemplatesTable).values(DEFAULT_TEMPLATES.map(t => ({ ...t, variables: [...t.variables] }))).returning();
+  }
   res.json(templates.map(t => ({
     ...t,
     createdAt: t.createdAt.toISOString(),
