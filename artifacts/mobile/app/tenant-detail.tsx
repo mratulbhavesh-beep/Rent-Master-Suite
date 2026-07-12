@@ -111,8 +111,6 @@ export default function TenantDetailScreen() {
   const { displayValue: leaseStartDisplay, onChangeDisplay: onLeaseStartChangeRaw, isoValue: leaseStart, setFromIso: setLeaseStartFromIso } = useDateInput("");
   const [durationYears, setDurationYears] = useState(0);
   const [durationMonths, setDurationMonths] = useState(0);
-  const [yearsDisplay, setYearsDisplay] = useState("0");
-  const [monthsDisplay, setMonthsDisplay] = useState("0");
   const [originalLeaseEnd, setOriginalLeaseEnd] = useState("");
   const [leaseDurationDirty, setLeaseDurationDirty] = useState(false);
   const computedLeaseEnd = leaseStart
@@ -235,8 +233,6 @@ export default function TenantDetailScreen() {
       const { years, months } = deriveYearsMonths(ls, le);
       setDurationYears(years);
       setDurationMonths(months);
-      setYearsDisplay(String(years));
-      setMonthsDisplay(String(months));
       const t = tenant as any;
       setDepositAmount(t.securityDeposit != null ? String(t.securityDeposit) : "");
       setDepositDateFromIso(t.depositDate ? String(t.depositDate).split("T")[0] : "");
@@ -1384,25 +1380,16 @@ export default function TenantDetailScreen() {
                     <View style={{ flexDirection: "row", alignItems: "center", height: 48, borderWidth: 1, borderRadius: 8, borderColor: colors.border, backgroundColor: colors.input, overflow: "hidden" }}>
                       <TouchableOpacity
                         style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border }}
-                        onPress={() => { const v = Math.max(0, durationYears - 1); setDurationYears(v); setYearsDisplay(String(v)); setLeaseDurationDirty(true); }}
+                        onPress={() => { setDurationYears(y => Math.max(0, y - 1)); setLeaseDurationDirty(true); }}
                       >
                         <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>−</Text>
                       </TouchableOpacity>
-                      <TextInput
-                        style={{ flex: 1, textAlign: "center", fontSize: 17, fontWeight: "600", color: colors.text }}
-                        keyboardType="numeric"
-                        value={yearsDisplay}
-                        onChangeText={(v) => {
-                          const n = parseInt(v.replace(/\D/g, ""), 10);
-                          const num = isNaN(n) ? 0 : Math.min(99, n);
-                          setDurationYears(num);
-                          setYearsDisplay(String(num));
-                          setLeaseDurationDirty(true);
-                        }}
-                      />
+                      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                        <Text style={{ fontSize: 20, fontWeight: "700", color: colors.foreground }}>{durationYears}</Text>
+                      </View>
                       <TouchableOpacity
                         style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.border }}
-                        onPress={() => { const v = Math.min(99, durationYears + 1); setDurationYears(v); setYearsDisplay(String(v)); setLeaseDurationDirty(true); }}
+                        onPress={() => { setDurationYears(y => Math.min(99, y + 1)); setLeaseDurationDirty(true); }}
                       >
                         <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>+</Text>
                       </TouchableOpacity>
@@ -1413,25 +1400,16 @@ export default function TenantDetailScreen() {
                     <View style={{ flexDirection: "row", alignItems: "center", height: 48, borderWidth: 1, borderRadius: 8, borderColor: colors.border, backgroundColor: colors.input, overflow: "hidden" }}>
                       <TouchableOpacity
                         style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border }}
-                        onPress={() => { const v = Math.max(0, durationMonths - 1); setDurationMonths(v); setMonthsDisplay(String(v)); setLeaseDurationDirty(true); }}
+                        onPress={() => { setDurationMonths(m => Math.max(0, m - 1)); setLeaseDurationDirty(true); }}
                       >
                         <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>−</Text>
                       </TouchableOpacity>
-                      <TextInput
-                        style={{ flex: 1, textAlign: "center", fontSize: 17, fontWeight: "600", color: colors.text }}
-                        keyboardType="numeric"
-                        value={monthsDisplay}
-                        onChangeText={(v) => {
-                          const n = parseInt(v.replace(/\D/g, ""), 10);
-                          const num = isNaN(n) ? 0 : Math.min(11, n);
-                          setDurationMonths(num);
-                          setMonthsDisplay(String(num));
-                          setLeaseDurationDirty(true);
-                        }}
-                      />
+                      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                        <Text style={{ fontSize: 20, fontWeight: "700", color: colors.foreground }}>{durationMonths}</Text>
+                      </View>
                       <TouchableOpacity
                         style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.border }}
-                        onPress={() => { const v = Math.min(11, durationMonths + 1); setDurationMonths(v); setMonthsDisplay(String(v)); setLeaseDurationDirty(true); }}
+                        onPress={() => { setDurationMonths(m => Math.min(11, m + 1)); setLeaseDurationDirty(true); }}
                       >
                         <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>+</Text>
                       </TouchableOpacity>
