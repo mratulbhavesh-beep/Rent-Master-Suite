@@ -129,8 +129,8 @@ export default function TenantDetailScreen() {
   // Lease Management state
   const [autoRenewal, setAutoRenewal] = useState(false);
   const [renewalMethod, setRenewalMethod] = useState<"same" | "custom">("same");
-  const [customRenewalValue, setCustomRenewalValue] = useState("11");
-  const [customRenewalUnit, setCustomRenewalUnit] = useState<"months" | "years">("months");
+  const [renewalYears, setRenewalYears] = useState(0);
+  const [renewalMonths, setRenewalMonths] = useState(11);
   const [rentEscalation, setRentEscalation] = useState(false);
   const [escalationFrequencyYears, setEscalationFrequencyYears] = useState("1");
   const [escalationType, setEscalationType] = useState<"percentage" | "fixed">("percentage");
@@ -243,8 +243,11 @@ export default function TenantDetailScreen() {
       setUseBusinessDefault((t as any).useBusinessDefault ?? true);
       setAutoRenewal((t as any).autoRenewal ?? false);
       setRenewalMethod(((t as any).renewalDuration as "same" | "custom") === "custom" ? "custom" : "same");
-      setCustomRenewalValue(String((t as any).customRenewalValue ?? "11"));
-      setCustomRenewalUnit(((t as any).customRenewalUnit as "months" | "years") ?? "months");
+      const rawVal: number = Number((t as any).customRenewalValue ?? 11);
+      const rawUnit: string = (t as any).customRenewalUnit ?? "months";
+      const totalRenewalMos = rawUnit === "years" ? rawVal * 12 : rawVal;
+      setRenewalYears(Math.floor(totalRenewalMos / 12));
+      setRenewalMonths(totalRenewalMos % 12);
       setRentEscalation((t as any).rentEscalation ?? false);
       setEscalationFrequencyYears(String((t as any).escalationFrequencyYears ?? "1"));
       setEscalationType(((t as any).escalationType as "percentage" | "fixed") ?? "percentage");
@@ -291,8 +294,8 @@ export default function TenantDetailScreen() {
           useBusinessDefault,
           autoRenewal,
           renewalDuration: renewalMethod,
-          customRenewalValue: renewalMethod === "custom" ? (parseInt(customRenewalValue, 10) || 11) : undefined,
-          customRenewalUnit,
+          customRenewalValue: renewalMethod === "custom" ? (renewalYears * 12 + renewalMonths || 11) : undefined,
+          customRenewalUnit: renewalMethod === "custom" ? "months" : undefined,
           rentEscalation,
           escalationFrequencyYears: parseInt(escalationFrequencyYears, 10) || 1,
           escalationType,
@@ -976,7 +979,17 @@ export default function TenantDetailScreen() {
                         {
                           label: "Renewal Method",
                           value: t.renewalDuration === "custom"
-                            ? `${t.customRenewalValue} ${(t.customRenewalUnit as string ?? "months").charAt(0).toUpperCase() + (t.customRenewalUnit as string ?? "months").slice(1)}`
+                            ? ((): string => {
+                                const rawV = Number(t.customRenewalValue ?? 11);
+                                const rawU = (t.customRenewalUnit as string) ?? "months";
+                                const tot = rawU === "years" ? rawV * 12 : rawV;
+                                const yrs = Math.floor(tot / 12);
+                                const mos = tot % 12;
+                                const p: string[] = [];
+                                if (yrs > 0) p.push(`${yrs} year${yrs === 1 ? "" : "s"}`);
+                                if (mos > 0) p.push(`${mos} month${mos === 1 ? "" : "s"}`);
+                                return p.length ? p.join(" ") : "11 months";
+                              })()
                             : "Same Lease Duration"
                         },
                       ] : []),
@@ -1584,73 +1597,88 @@ export default function TenantDetailScreen() {
                   ))}
                   {renewalMethod === "custom" && (
                     <View style={{ marginTop: 4, gap: 10 }}>
-                      {/* Quick presets */}
+                      {/* Quick presets — active when total months match */}
                       <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                        {([["11","months"],["12","months"],["18","months"]] as [string,"months"][]).map(([val, unit]) => {
-                          const active = customRenewalValue === val && customRenewalUnit === unit;
+                        {([
+                          { label: "11 Mo", total: 11 },
+                          { label: "12 Mo", total: 12 },
+                          { label: "18 Mo", total: 18 },
+                          { label: "2 Yr",  total: 24 },
+                          { label: "3 Yr",  total: 36 },
+                          { label: "5 Yr",  total: 60 },
+                          { label: "11 Yr", total: 132 },
+                        ]).map(({ label, total }) => {
+                          const active = renewalYears * 12 + renewalMonths === total;
                           return (
                             <TouchableOpacity
-                              key={`${val}${unit}`}
+                              key={label}
                               style={[{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8, borderWidth: 1.5 },
                                 active ? { backgroundColor: colors.primary, borderColor: colors.primary }
                                        : { backgroundColor: colors.input, borderColor: colors.border }]}
-                              onPress={() => { setCustomRenewalValue(val); setCustomRenewalUnit(unit); }}
+                              onPress={() => { setRenewalYears(Math.floor(total / 12)); setRenewalMonths(total % 12); }}
                               activeOpacity={0.7}
                             >
-                              <Text style={{ fontSize: 12, fontWeight: "600", color: active ? colors.primaryForeground : colors.foreground }}>{val} Mo</Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                        {([["2","years"],["3","years"],["5","years"],["11","years"]] as [string,"years"][]).map(([val, unit]) => {
-                          const active = customRenewalValue === val && customRenewalUnit === unit;
-                          return (
-                            <TouchableOpacity
-                              key={`${val}${unit}`}
-                              style={[{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8, borderWidth: 1.5 },
-                                active ? { backgroundColor: colors.primary, borderColor: colors.primary }
-                                       : { backgroundColor: colors.input, borderColor: colors.border }]}
-                              onPress={() => { setCustomRenewalValue(val); setCustomRenewalUnit(unit); }}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={{ fontSize: 12, fontWeight: "600", color: active ? colors.primaryForeground : colors.foreground }}>{val} Yr</Text>
+                              <Text style={{ fontSize: 12, fontWeight: "600", color: active ? colors.primaryForeground : colors.foreground }}>{label}</Text>
                             </TouchableOpacity>
                           );
                         })}
                       </View>
 
-                      {/* Custom duration */}
+                      {/* Years + Months steppers */}
                       <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 0 }]}>Custom Lease Duration</Text>
-                      <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                        <TextInput
-                          style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border, flex: 1, marginBottom: 0, height: 44 }]}
-                          value={customRenewalValue}
-                          onChangeText={setCustomRenewalValue}
-                          keyboardType="numeric"
-                          placeholder="e.g. 18"
-                          placeholderTextColor={colors.mutedForeground}
-                        />
-                        <View style={{ flexDirection: "row", gap: 6 }}>
-                          {(["months", "years"] as const).map(unit => (
+                      <View style={styles.row}>
+                        <View style={styles.flex1}>
+                          <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Years (0 – 99)</Text>
+                          <View style={{ flexDirection: "row", alignItems: "center", height: 48, borderWidth: 1, borderRadius: 8, borderColor: colors.border, backgroundColor: colors.input, overflow: "hidden" }}>
                             <TouchableOpacity
-                              key={unit}
-                              style={[{ paddingHorizontal: 14, paddingVertical: 12, borderRadius: 8, borderWidth: 1.5 },
-                                customRenewalUnit === unit
-                                  ? { backgroundColor: `${colors.primary}15`, borderColor: colors.primary }
-                                  : { backgroundColor: colors.input, borderColor: colors.border }]}
-                              onPress={() => setCustomRenewalUnit(unit)}
-                              activeOpacity={0.7}
+                              style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border }}
+                              onPress={() => setRenewalYears(y => Math.max(0, y - 1))}
                             >
-                              <Text style={{ fontSize: 12, fontWeight: "600", color: customRenewalUnit === unit ? colors.primary : colors.foreground, textTransform: "capitalize" }}>{unit}</Text>
+                              <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>−</Text>
                             </TouchableOpacity>
-                          ))}
+                            <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                              <Text style={{ fontSize: 20, fontWeight: "700", color: colors.foreground }}>{renewalYears}</Text>
+                            </View>
+                            <TouchableOpacity
+                              style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.border }}
+                              onPress={() => setRenewalYears(y => Math.min(99, y + 1))}
+                            >
+                              <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>+</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                        <View style={styles.flex1}>
+                          <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Months (0 – 11)</Text>
+                          <View style={{ flexDirection: "row", alignItems: "center", height: 48, borderWidth: 1, borderRadius: 8, borderColor: colors.border, backgroundColor: colors.input, overflow: "hidden" }}>
+                            <TouchableOpacity
+                              style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border }}
+                              onPress={() => setRenewalMonths(m => Math.max(0, m - 1))}
+                            >
+                              <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>−</Text>
+                            </TouchableOpacity>
+                            <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                              <Text style={{ fontSize: 20, fontWeight: "700", color: colors.foreground }}>{renewalMonths}</Text>
+                            </View>
+                            <TouchableOpacity
+                              style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.border }}
+                              onPress={() => setRenewalMonths(m => Math.min(11, m + 1))}
+                            >
+                              <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>+</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       </View>
 
-                      {customRenewalValue && parseInt(customRenewalValue, 10) > 0 && (
+                      {(renewalYears > 0 || renewalMonths > 0) && (
                         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: `${colors.primary}10`, padding: 10, borderRadius: 8 }}>
                           <Feather name="calendar" size={12} color={colors.primary} />
                           <Text style={{ fontSize: 12, color: colors.primary, fontWeight: "600" }}>
-                            Lease will renew for {customRenewalValue} {customRenewalUnit}
+                            {(() => {
+                              const p: string[] = [];
+                              if (renewalYears > 0) p.push(`${renewalYears} year${renewalYears === 1 ? "" : "s"}`);
+                              if (renewalMonths > 0) p.push(`${renewalMonths} month${renewalMonths === 1 ? "" : "s"}`);
+                              return `Lease will renew for ${p.join(" ")}`;
+                            })()}
                           </Text>
                         </View>
                       )}
