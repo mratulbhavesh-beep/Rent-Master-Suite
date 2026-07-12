@@ -437,16 +437,9 @@ export default function TenantAddScreen() {
                   >
                     <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>−</Text>
                   </TouchableOpacity>
-                  <TextInput
-                    style={{ flex: 1, textAlign: "center", fontSize: 17, fontWeight: "600", color: colors.text }}
-                    keyboardType="numeric"
-                    value={String(durationYears)}
-                    onChangeText={(v) => {
-                      const n = parseInt(v.replace(/\D/g, ""), 10);
-                      setDurationYears(isNaN(n) ? 0 : Math.min(99, n));
-                      setErrors(e => ({ ...e, duration: "" }));
-                    }}
-                  />
+                  <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                    <Text style={{ fontSize: 20, fontWeight: "700", color: colors.foreground }}>{durationYears}</Text>
+                  </View>
                   <TouchableOpacity
                     style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.border }}
                     onPress={() => { setDurationYears(y => Math.min(99, y + 1)); setErrors(e => ({ ...e, duration: "" })); }}
@@ -464,16 +457,9 @@ export default function TenantAddScreen() {
                   >
                     <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>−</Text>
                   </TouchableOpacity>
-                  <TextInput
-                    style={{ flex: 1, textAlign: "center", fontSize: 17, fontWeight: "600", color: colors.text }}
-                    keyboardType="numeric"
-                    value={String(durationMonths)}
-                    onChangeText={(v) => {
-                      const n = parseInt(v.replace(/\D/g, ""), 10);
-                      setDurationMonths(isNaN(n) ? 0 : Math.min(11, n));
-                      setErrors(e => ({ ...e, duration: "" }));
-                    }}
-                  />
+                  <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                    <Text style={{ fontSize: 20, fontWeight: "700", color: colors.foreground }}>{durationMonths}</Text>
+                  </View>
                   <TouchableOpacity
                     style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.border }}
                     onPress={() => { setDurationMonths(m => Math.min(11, m + 1)); setErrors(e => ({ ...e, duration: "" })); }}
