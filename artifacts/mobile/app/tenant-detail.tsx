@@ -33,6 +33,24 @@ import { fmtDate } from "@/utils/dateFormat";
 import { shareViaWhatsApp } from "@/utils/whatsapp";
 import { confirmAction } from "@/utils/confirm";
 
+function addMonthsUTC(dateStr: string, months: number): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCMonth(d.getUTCMonth() + months);
+  return d.toISOString().split("T")[0];
+}
+function addDaysUTC(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().split("T")[0];
+}
+function deriveYearsMonths(leaseStart: string, leaseEnd: string): { years: number; months: number } {
+  const excl = addDaysUTC(leaseEnd, 1);
+  const s = new Date(leaseStart + "T00:00:00Z");
+  const e = new Date(excl + "T00:00:00Z");
+  const total = Math.max(0, (e.getUTCFullYear() - s.getUTCFullYear()) * 12 + (e.getUTCMonth() - s.getUTCMonth()));
+  return { years: Math.floor(total / 12), months: total % 12 };
+}
+
 type ActiveTab = "overview" | "agreement" | "documents";
 
 const DOC_TYPES = [
@@ -90,8 +108,16 @@ export default function TenantDetailScreen() {
   const [unitNumber, setUnitNumber] = useState("");
   const [rentAmount, setRentAmount] = useState("");
   const [status, setStatus] = useState<"active" | "inactive" | "evicted">("active");
-  const { displayValue: leaseStartDisplay, onChangeDisplay: onLeaseStartChange, isoValue: leaseStart, setFromIso: setLeaseStartFromIso } = useDateInput("");
-  const { displayValue: leaseEndDisplay, onChangeDisplay: onLeaseEndChange, isoValue: leaseEnd, setFromIso: setLeaseEndFromIso } = useDateInput("");
+  const { displayValue: leaseStartDisplay, onChangeDisplay: onLeaseStartChangeRaw, isoValue: leaseStart, setFromIso: setLeaseStartFromIso } = useDateInput("");
+  const [durationYears, setDurationYears] = useState(0);
+  const [durationMonths, setDurationMonths] = useState(0);
+  const [originalLeaseEnd, setOriginalLeaseEnd] = useState("");
+  const [leaseDurationDirty, setLeaseDurationDirty] = useState(false);
+  const computedLeaseEnd = leaseStart
+    ? addDaysUTC(addMonthsUTC(leaseStart, durationYears * 12 + durationMonths), -1)
+    : null;
+  const leaseEndToSubmit = leaseDurationDirty ? (computedLeaseEnd ?? originalLeaseEnd) : originalLeaseEnd;
+  const onLeaseStartChange = (v: string) => { onLeaseStartChangeRaw(v); setLeaseDurationDirty(true); };
   const [depositAmount, setDepositAmount] = useState("");
   const { displayValue: depositDateDisplay, onChangeDisplay: onDepositDateChange, isoValue: depositDate, setFromIso: setDepositDateFromIso } = useDateInput("");
   const [depositStatus, setDepositStatus] = useState<"held" | "refunded">("held");
@@ -199,8 +225,14 @@ export default function TenantDetailScreen() {
       setUnitNumber(tenant.unitNumber);
       setRentAmount(tenant.rentAmount.toString());
       setStatus(tenant.status as "active" | "inactive" | "evicted");
-      setLeaseStartFromIso(tenant.leaseStart.split("T")[0]);
-      setLeaseEndFromIso(tenant.leaseEnd.split("T")[0]);
+      const ls = tenant.leaseStart.split("T")[0];
+      const le = tenant.leaseEnd.split("T")[0];
+      setLeaseStartFromIso(ls);
+      setOriginalLeaseEnd(le);
+      setLeaseDurationDirty(false);
+      const { years, months } = deriveYearsMonths(ls, le);
+      setDurationYears(years);
+      setDurationMonths(months);
       const t = tenant as any;
       setDepositAmount(t.securityDeposit != null ? String(t.securityDeposit) : "");
       setDepositDateFromIso(t.depositDate ? String(t.depositDate).split("T")[0] : "");
@@ -231,8 +263,12 @@ export default function TenantDetailScreen() {
       Alert.alert("Invalid Date", "Please enter a valid lease start date in DD/MM/YYYY format.");
       return;
     }
-    if (leaseEndDisplay.replace(/\D/g, "").length === 0 || !leaseEnd) {
-      Alert.alert("Invalid Date", "Please enter a valid lease end date in DD/MM/YYYY format.");
+    if (!leaseEndToSubmit) {
+      Alert.alert("Invalid Date", "Could not determine lease end date. Please check Lease Start and Duration.");
+      return;
+    }
+    if (leaseDurationDirty && durationYears * 12 + durationMonths === 0) {
+      Alert.alert("Invalid Duration", "Lease duration must be at least 1 month.");
       return;
     }
     if (depositDateDisplay.replace(/\D/g, "").length > 0 && !depositDate) {
@@ -245,7 +281,7 @@ export default function TenantDetailScreen() {
         data: {
           name, email, phone, unitNumber,
           rentAmount: parseFloat(rentAmount),
-          status, leaseStart, leaseEnd,
+          status, leaseStart, leaseEnd: leaseEndToSubmit,
           securityDeposit: depositAmount ? parseFloat(depositAmount) : undefined,
           depositDate: depositDate || undefined,
           depositStatus,
@@ -1329,14 +1365,80 @@ export default function TenantDetailScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
-              <View style={styles.row}>
-                <View style={styles.flex1}>
-                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease Start (DD/MM/YYYY)</Text>
-                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={leaseStartDisplay} onChangeText={onLeaseStartChange} placeholder="DD/MM/YYYY" placeholderTextColor="#999" keyboardType="numeric" />
+              {/* Lease Start */}
+              <View style={{ marginBottom: 4 }}>
+                <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease Start (DD/MM/YYYY)</Text>
+                <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={leaseStartDisplay} onChangeText={onLeaseStartChange} placeholder="DD/MM/YYYY" placeholderTextColor="#999" keyboardType="numeric" />
+              </View>
+
+              {/* Lease Duration */}
+              <View style={{ marginBottom: 4 }}>
+                <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease Duration</Text>
+                <View style={styles.row}>
+                  <View style={styles.flex1}>
+                    <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Years (0 – 99)</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", height: 48, borderWidth: 1, borderRadius: 8, borderColor: colors.border, backgroundColor: colors.input, overflow: "hidden" }}>
+                      <TouchableOpacity
+                        style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border }}
+                        onPress={() => { setDurationYears(y => Math.max(0, y - 1)); setLeaseDurationDirty(true); }}
+                      >
+                        <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>−</Text>
+                      </TouchableOpacity>
+                      <TextInput
+                        style={{ flex: 1, textAlign: "center", fontSize: 17, fontWeight: "600", color: colors.text }}
+                        keyboardType="numeric"
+                        value={String(durationYears)}
+                        onChangeText={(v) => {
+                          const n = parseInt(v.replace(/\D/g, ""), 10);
+                          setDurationYears(isNaN(n) ? 0 : Math.min(99, n));
+                          setLeaseDurationDirty(true);
+                        }}
+                      />
+                      <TouchableOpacity
+                        style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.border }}
+                        onPress={() => { setDurationYears(y => Math.min(99, y + 1)); setLeaseDurationDirty(true); }}
+                      >
+                        <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <View style={styles.flex1}>
+                    <Text style={[styles.inputLabel, { color: colors.mutedForeground, fontSize: 12, fontWeight: "500", marginTop: 4 }]}>Months (0 – 11)</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", height: 48, borderWidth: 1, borderRadius: 8, borderColor: colors.border, backgroundColor: colors.input, overflow: "hidden" }}>
+                      <TouchableOpacity
+                        style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border }}
+                        onPress={() => { setDurationMonths(m => Math.max(0, m - 1)); setLeaseDurationDirty(true); }}
+                      >
+                        <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>−</Text>
+                      </TouchableOpacity>
+                      <TextInput
+                        style={{ flex: 1, textAlign: "center", fontSize: 17, fontWeight: "600", color: colors.text }}
+                        keyboardType="numeric"
+                        value={String(durationMonths)}
+                        onChangeText={(v) => {
+                          const n = parseInt(v.replace(/\D/g, ""), 10);
+                          setDurationMonths(isNaN(n) ? 0 : Math.min(11, n));
+                          setLeaseDurationDirty(true);
+                        }}
+                      />
+                      <TouchableOpacity
+                        style={{ width: 44, height: 48, justifyContent: "center", alignItems: "center", borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.border }}
+                        onPress={() => { setDurationMonths(m => Math.min(11, m + 1)); setLeaseDurationDirty(true); }}
+                      >
+                        <Text style={{ fontSize: 22, color: colors.foreground, lineHeight: 26 }}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 </View>
-                <View style={styles.flex1}>
-                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease End (DD/MM/YYYY)</Text>
-                  <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={leaseEndDisplay} onChangeText={onLeaseEndChange} placeholder="DD/MM/YYYY" placeholderTextColor="#999" keyboardType="numeric" />
+              </View>
+
+              {/* Lease End — auto-calculated, read-only */}
+              <View style={{ marginBottom: 4 }}>
+                <Text style={[styles.inputLabel, { color: colors.foreground }]}>Lease End (auto-calculated)</Text>
+                <View style={[styles.input, { backgroundColor: colors.card, justifyContent: "center", borderColor: colors.border }]}>
+                  <Text style={{ fontSize: 16, color: leaseEndToSubmit ? colors.foreground : colors.mutedForeground }}>
+                    {leaseEndToSubmit ? fmtDate(leaseEndToSubmit) : "— / — / ——"}
+                  </Text>
                 </View>
               </View>
               <View style={[styles.sectionDivider, { backgroundColor: colors.border }]} />
