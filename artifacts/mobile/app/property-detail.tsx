@@ -641,6 +641,7 @@ export default function PropertyDetailScreen() {
               {/* Occupied tenant rows */}
               {tenants.map((tenant) => {
                 const bal = (tenant as any).currentMonthDue ?? 0;
+                const totalBal = (tenant as any).balanceDue ?? 0;
                 return (
                   <View
                     key={tenant.id}
@@ -668,7 +669,7 @@ export default function PropertyDetailScreen() {
                     {/* Row 2: name */}
                     <Text style={[s.tenantName, { color: colors.foreground }]}>{tenant.name}</Text>
 
-                    {/* Row 3: rent + due */}
+                    {/* Row 3: rent + this month due + total due */}
                     <View style={s.amountRow}>
                       <View style={s.amountBox}>
                         <Text style={[s.amtLbl, { color: colors.mutedForeground }]}>Monthly Rent</Text>
@@ -677,9 +678,15 @@ export default function PropertyDetailScreen() {
                         </Text>
                       </View>
                       <View style={s.amountBox}>
-                        <Text style={[s.amtLbl, { color: colors.mutedForeground }]}>Total Due (Outstanding)</Text>
+                        <Text style={[s.amtLbl, { color: colors.mutedForeground }]}>This Month Due</Text>
                         <Text style={[s.amtVal, { color: bal > 0 ? colors.destructive : colors.success }]}>
                           {bal > 0 ? fmt(bal) : "Nil"}
+                        </Text>
+                      </View>
+                      <View style={s.amountBox}>
+                        <Text style={[s.amtLbl, { color: colors.mutedForeground }]}>Total Due (Outstanding)</Text>
+                        <Text style={[s.amtVal, { color: totalBal > 0 ? colors.destructive : colors.success }]}>
+                          {totalBal > 0 ? fmt(totalBal) : "Nil"}
                         </Text>
                       </View>
                     </View>
@@ -893,8 +900,8 @@ const s = StyleSheet.create({
   viewBtn: { flexDirection: "row", alignItems: "center", gap: 2, borderWidth: StyleSheet.hairlineWidth, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5 },
   viewBtnText: { fontSize: 12, fontWeight: "600" },
   tenantName: { fontSize: 16, fontWeight: "600", paddingHorizontal: 14, paddingBottom: 10 },
-  amountRow: { flexDirection: "row", paddingHorizontal: 14, paddingBottom: 10, gap: 28 },
-  amountBox: {},
+  amountRow: { flexDirection: "row", paddingHorizontal: 14, paddingBottom: 10, gap: 8 },
+  amountBox: { flex: 1 },
   amtLbl: { fontSize: 11, marginBottom: 2 },
   amtVal: { fontSize: 15, fontWeight: "700" },
   agrInfoRow: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 14, paddingVertical: 7, borderTopWidth: StyleSheet.hairlineWidth },
