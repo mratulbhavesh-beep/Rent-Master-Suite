@@ -81,8 +81,8 @@ function fmtBillingDate(dateStr: string | null | undefined): string {
 }
 
 function addOneDayStr(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00");
-  d.setDate(d.getDate() + 1);
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().split("T")[0];
 }
 
